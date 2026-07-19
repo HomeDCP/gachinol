@@ -1,0 +1,31 @@
+{
+  "name": "gachinol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "제주 마을방송국 통합 플랫폼 — 12개 지사(로컬 마을방송국)와 제주방송센터를 잇는 방송·송출·시청 플랫폼",
+  "packageManager": "pnpm@8.15.0",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=8"
+  },
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "turbo": "^2.1.0",
+    "typescript": "^5.6.2"
+  }
+}
