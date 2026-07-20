@@ -1,0 +1,57 @@
+{
+  "name": "@gachinol/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "가치놀 메인 API — 인증·사용자·지사·콘텐츠 워크플로우 (NestJS)",
+  "scripts": {
+    "build": "prisma generate && nest build",
+    "dev": "prisma generate && nest start --watch",
+    "start": "node dist/main.js",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "typecheck": "prisma generate && tsc --noEmit",
+    "test": "jest",
+    "test:e2e": "jest --config test/jest-e2e.json",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "node scripts/prisma-with-env.mjs migrate dev",
+    "prisma:deploy": "node scripts/prisma-with-env.mjs migrate deploy",
+    "prisma:seed": "node scripts/prisma-with-env.mjs db seed",
+    "clean": "rm -rf dist"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@gachinol/shared": "workspace:*",
+    "@nestjs/common": "^11",
+    "@nestjs/core": "^11",
+    "@nestjs/platform-express": "^11",
+    "@nestjs/config": "^4",
+    "@nestjs/jwt": "^11",
+    "@nestjs/swagger": "^11",
+    "@nestjs/terminus": "^11",
+    "@prisma/client": "^6",
+    "argon2": "^0.41",
+    "nestjs-zod": "^4",
+    "reflect-metadata": "^0.2",
+    "rxjs": "^7",
+    "uuid": "^11",
+    "zod": "^3.25"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11",
+    "@nestjs/testing": "^11",
+    "@types/express": "^5",
+    "@types/jest": "^29",
+    "@types/node": "^24",
+    "@types/supertest": "^6",
+    "eslint": "^9",
+    "jest": "^29",
+    "prisma": "^6",
+    "supertest": "^7",
+    "ts-jest": "^29",
+    "ts-node": "^10",
+    "tsx": "^4",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8"
+  }
+}

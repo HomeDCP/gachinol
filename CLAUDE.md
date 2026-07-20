@@ -34,11 +34,11 @@
 
 ## 4. 앱 3종 (모두 Android + iOS)
 
-| 앱 | 위치 | 사용자 | 핵심 기능 |
-|---|---|---|---|
-| **기자 앱** | `apps/reporter` | 12개 지사 기자 | 촬영 → 간단 편집 → 장면별 자막/내용 기입 → 분류 → 업로드. 메인서버가 최종편집해 반환 → 기자가 **저화질 미리보기** 확인 후 **승인** → 송출(현재 송출처: 기자 소속 카톡채널=지역방송국) |
-| **센터 관제 앱** | `apps/control-center` | 제주방송센터 | 지사 업로드물 **자동 분석·저장** → 화면+텍스트 분석 → **매주 콘텐츠 추천** → 승인 시 즉시 송출 / 수정사항 입력 시 반영해 재생성. 라이브 관제 + 채널별 댓글 프롬프터 |
-| **구독자 앱** | `apps/subscriber` | 시청자 | 12개 지사 콘텐츠 시청 + 센터 라이브 **실시간 참여·채팅** |
+| 앱               | 위치                  | 사용자         | 핵심 기능                                                                                                                                                                             |
+| ---------------- | --------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **기자 앱**      | `apps/reporter`       | 12개 지사 기자 | 촬영 → 간단 편집 → 장면별 자막/내용 기입 → 분류 → 업로드. 메인서버가 최종편집해 반환 → 기자가 **저화질 미리보기** 확인 후 **승인** → 송출(현재 송출처: 기자 소속 카톡채널=지역방송국) |
+| **센터 관제 앱** | `apps/control-center` | 제주방송센터   | 지사 업로드물 **자동 분석·저장** → 화면+텍스트 분석 → **매주 콘텐츠 추천** → 승인 시 즉시 송출 / 수정사항 입력 시 반영해 재생성. 라이브 관제 + 채널별 댓글 프롬프터                   |
+| **구독자 앱**    | `apps/subscriber`     | 시청자         | 12개 지사 콘텐츠 시청 + 센터 라이브 **실시간 참여·채팅**                                                                                                                              |
 
 > 참고: 센터 관제 앱은 대시보드 성격상 향후 **웹(관리자 콘솔)** 병행이 유력. 현재 스펙은 모바일 우선.
 
@@ -49,6 +49,9 @@
 - **AI 분석 워커**: **Python + FastAPI** (비전/STT/요약·추천) — 무거운 ML은 여기로 분리
 - **미디어 워커**: Node + **FFmpeg** (트랜스코딩·자동편집 오케스트레이션·저화질 프리뷰)
 - **데이터**: PostgreSQL(관계형) · Redis(큐·캐시·실시간 pub/sub) · S3 호환 오브젝트 스토리지(영상, 로컬은 MinIO)
+- **ORM**: Prisma 6 (PostgreSQL). enum은 DB에 shared snake_case 문자열(text) 저장 — Prisma enum 금지. ID는 앱 발급 UUID v7
+- **요청 검증**: zod + nestjs-zod — 스키마는 shared 계약에 satisfies로 정합 강제
+- **인증**: JWT(access 15m / refresh 14d 회전+재사용 탐지) + argon2id. passport 미도입
 - **큐**: BullMQ (Redis 기반). 트래픽 성장 시 Kafka 검토
 - **라이브**: RTMP ingest + HLS/LL-HLS 배포. 자체 구축 vs Mux/AWS IVS는 **미정(성장 시 결정)**
 - **모노레포**: pnpm workspaces + Turborepo
@@ -126,18 +129,19 @@ pnpm format           # prettier 포맷
 - 브랜치: `main`(보호) + `feat/*` · `fix/*` · `chore/*`. main 직접 커밋 지양, PR 경유.
 - 커밋: Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:` …).
 - 공용 타입은 반드시 `packages/shared`에 두고 앱·서비스가 import (계약 단일화).
+- `@gachinol/shared` 소비: Node 서비스는 dist(CJS), Expo 앱은 `react-native` 필드로 소스 — 소스 경로 직접 import 금지.
 - **시크릿은 절대 커밋 금지.** `.env`·키파일은 `.gitignore` 처리됨. 새 키가 생기면 `.env.example`에 "이름만" 추가.
 - 대용량 미디어(mp4 등)는 git 대신 오브젝트 스토리지. `.gitignore`가 막고 있음.
 
 ## 11. 현재 상태 / 로드맵
 
-- **지금**: 모노레포 기초 세팅 완료(구조·설정·문서·git·GitHub 비공개 레포). 앱/서비스는 **아직 스캐폴딩 전**.
+- **지금**: shared 완료 → **services/api 스캐폴딩+인증+콘텐츠 CRUD 완료**(Prisma·JWT 회전·상태 전이 전 구간·Swagger·시드),
+  `infra/docker-compose.yml`(항목 4 선행) 가동. 업로드 presigned URL·BullMQ·워커 연동은 다음 단계.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
-  1. `packages/shared` 도메인 모델 정의 (콘텐츠·지사·사용자·워크플로우 상태)
-  2. `services/api` NestJS 스캐폴딩 + 인증 + 콘텐츠 CRUD
-  3. `apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)
-  4. `infra` docker-compose (Postgres·Redis·MinIO) 로컬 개발환경
-  5. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
+  1. `apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)
+  2. 업로드 presigned URL + BullMQ + media-worker 연동
+  3. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
+  4. `infra` 배포 스크립트/IaC (docker-compose는 완료)
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
 ## 12. 미정 / 결정 대기 사항

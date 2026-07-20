@@ -1,13 +1,112 @@
 # services/api — 메인 API 서버
 
-**Node.js + TypeScript + NestJS**. 플랫폼의 중심.
+**NestJS 11 + TypeScript + Prisma 6(PostgreSQL)**. 인증·사용자·지사·콘텐츠 워크플로우의 중심.
+타입 원천은 `@gachinol/shared` 하나 — wire의 키는 camelCase, 열거 값은 snake_case.
 
-## 역할
-- 인증(JWT)·사용자·지사(Station) 관리
-- 콘텐츠 CRUD, 업로드 접수, 오브젝트 스토리지 저장, 큐(BullMQ) 등록
-- 워크플로우 상태머신 (업로드→처리→분석→승인→송출)
-- 다채널 송출 오케스트레이션 (카카오·YouTube·Meta·X·Threads 커넥터)
-- WebSocket 게이트웨이: 라이브 채팅·채널별 댓글 집계·프롬프터
+## 요구사항
 
-## 상태
-스캐폴딩 전. Phase 2 예정. (docs/ROADMAP.md)
+- Node 24 (`.nvmrc`) · pnpm 8+ · Docker (로컬 Postgres)
+
+## 시작하기
+
+```bash
+# 리포 루트에서
+pnpm infra:up                          # Postgres·Redis·MinIO 기동
+cp .env.example .env                   # JWT_ACCESS_SECRET/JWT_REFRESH_SECRET(각 32자+, 서로 다르게),
+                                       # SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD 채우기
+                                       # 루트 .env를 api가 직접 읽는다 (Nest envFilePath +
+                                       # prisma 스크립트의 scripts/prisma-with-env.mjs 래퍼).
+                                       # services/api/.env를 두면 그쪽이 루트보다 우선.
+pnpm install
+pnpm --filter @gachinol/shared build   # shared dist(CJS) 선행 빌드
+pnpm --filter @gachinol/api prisma:migrate
+pnpm --filter @gachinol/api prisma:seed
+pnpm --filter @gachinol/api dev        # http://localhost:4000 · Swagger /docs
+```
+
+## 모듈 지도
+
+```
+src/
+├── config/    # 환경변수 zod 검증(fail-fast) · REVIEW_POLICY_DEFAULTS
+├── common/    # newId(uuid v7) · zod 헬퍼 · DomainException · AllExceptionsFilter · 데코레이터 · 페이지네이션
+├── health/    # GET /health/liveness · /health/readiness (terminus — 도메인 계약 밖 유일 예외)
+├── prisma/    # PrismaService (@Global)
+├── auth/      # 로그인 · JWT 발급/회전 · 가드(JwtAuthGuard→RolesGuard) · argon2id
+├── users/     # 계정 관리 (admin) · row→shared User 매퍼
+├── stations/  # 지사 CRUD + 상태 전이 (dormant→operating 부활)
+└── contents/  # 초안 CRUD + ContentWorkflowService(★ 전이 단일 관문)
+```
+
+## 인증
+
+- **비밀번호**: argon2id (`argon2.options.ts` 상수 — 서버 사양 확정 시 그 파일만 조정).
+- **JWT**: access 15분(상태 비저장) / refresh 14일 **회전식** — 1회 사용 후 폐기.
+  - 폐기된 refresh **재사용 탐지** 시 해당 세션 계보(family) 전체 무효화 (탈취 대응).
+  - 다기기: 기기별 로그인 = 기기별 family. 로그아웃은 해당 family만 폐기.
+  - DB에는 sha256 해시만 저장 (원문·시크릿 저장 금지).
+- 가드: 전역 `JwtAuthGuard`(@Public 제외 Bearer 필수, DB에서 사용자 로드 — 정지 계정 즉시 차단) →
+  `RolesGuard`(@Roles 대조, **admin은 수퍼롤**). 소유권 검증은 서비스 계층.
+
+## 에러 규약 — shared `ApiError` 단일화 (봉투 래핑 금지)
+
+| code                 | HTTP | 의미                                                                      |
+| -------------------- | ---- | ------------------------------------------------------------------------- |
+| `validation_failed`  | 400  | zod 검증 실패 (details.issues)                                            |
+| `unauthorized`       | 401  | 인증 실패 (로그인 실패 3종 동일 메시지 — 계정 열거 방지)                  |
+| `forbidden`          | 403  | role·소유권·정책 가드 위반                                                |
+| `not_found`          | 404  | 대상 부재                                                                 |
+| `conflict`           | 409  | unique 충돌 · **CAS 동시 전이 경합**(재조회 후 재시도) · 비허용 상태 수정 |
+| `invalid_transition` | 409  | 상태머신 규칙 위반 — details `{ from, to, allowed }`                      |
+| `internal`           | 500  | 그 외 (스택은 로그로만)                                                   |
+
+## 콘텐츠 전이 엔드포인트 (§ 전이 규칙은 **shared가 유일한 진실** — api에 사본 금지)
+
+| 엔드포인트                               | 동작                                                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /v1/contents/:id/approve`          | 기자: `reporter_approved` → `afterReporterApproval(reviewPolicy)` **같은 트랜잭션 자동 연쇄**(로그 2건, 2건째 system) / 센터: `center_approved` (publishing 자동 연쇄 없음 — Distribute 단계 몫) |
+| `POST /v1/contents/:id/request-revision` | `revision_requested` + RevisionRequest 생성 **동일 트랜잭션** (이 경로로만 가능)                                                                                                                 |
+| `POST /v1/contents/:id/reject`           | `rejected` [종결] — 사유 필수                                                                                                                                                                    |
+| `POST /v1/contents/:id/cancel`           | `canceled` [종결] — 전이 맵상 가능한 모든 상태에서                                                                                                                                               |
+| `POST /v1/contents/:id/retry`            | `CONTENT_RETRY_TARGET[from]` — 기자는 `upload_failed`만. Job 재큐는 큐 단계 훅(TODO)                                                                                                             |
+| `POST /v1/contents/:id/transitions`      | 범용 (admin·center_operator) — 워커 부재 기간 수동 진행·운영 복구. §11-4 정책 가드 동일 적용                                                                                                     |
+| `GET /v1/contents/:id/transition-logs`   | 감사 이력 (최신순)                                                                                                                                                                               |
+
+모든 전이는 `ContentWorkflowService`(단일 관문)를 경유: 정책 가드(origin 분기·담당 기자) →
+`canTransitionContent` → 트랜잭션 내 **낙관적 CAS**(`updateMany where status=from`, affected 0 → 409 conflict) →
+상태별 효과(`published`→publishedAt, `regenerating`→generation+1) → `StatusTransitionLog`.
+
+지사도 동일 골격(`STATION_STATUS_TRANSITIONS`): `POST /v1/stations/:id/transitions` —
+`dormant→operating`이 MVP "애월·제주시 부활"의 실체.
+
+## Swagger
+
+비프로덕션에서만 `/docs` (JSON `/docs-json`). health 2종만 terminus 표준 응답(도메인 계약 밖 유일 예외).
+
+## 테스트
+
+```bash
+pnpm --filter @gachinol/api test       # 단위 — DB 불요(Prisma mock), 항상 실행
+pnpm --filter @gachinol/api test:e2e   # E2E — DB 프로브(2s) 후 migrate deploy+시드 자동.
+                                       # DB 없으면 DB 의존 스위트는 skip으로 "녹색" 종료
+```
+
+- E2E는 **전용 테스트 DB**를 쓴다 — 기본 `gachinol_test` (없으면 globalSetup이 생성).
+  스위트마다 TRUNCATE CASCADE를 실행하므로 개발 DB(`gachinol`)와 절대 공유 금지 —
+  DB 이름에 `test`가 없으면 안전장치가 실행을 거부한다(스위트 skip).
+  다른 테스트 DB를 쓰려면 `DATABASE_URL`을 export(이름에 `test` 포함 필수).
+
+## 결정 기록
+
+- **Prisma 6, enum은 text**: enum성 컬럼은 shared snake_case 문자열 그대로 저장 — 상태 추가 시 DDL 불요, 검증은 앱 경계(zod+상태머신). Prisma enum·CHECK 금지.
+- **ID는 앱 발급 UUID v7**: 시간순 정렬·커서 겸용, 트랜잭션 내 선참조 가능 (DB default 미사용).
+- **zod + nestjs-zod**: 스키마가 값이므로 `satisfies ZodSchemaOf<Shared계약>`로 정합을 tsc가 강제 — class-validator 재작성 드리프트 회피.
+- **shared는 dist(CJS) 소비**: shared에 런타임 순수 함수가 있어 JS 산출물 필수. Expo 앱은 `react-native` 필드로 소스 소비.
+- **passport 미도입**: `@nestjs/jwt` + 자체 가드로 충분 (의존 축소).
+- **refresh는 테이블(회전+family)**: 다기기 현실 대응 + 재사용 탐지는 지금 넣어야 싼 구조 결정.
+- **nestjs-zod×swagger 11.4 우회**: `patchNestJsSwagger`가 요구하는 SchemaObjectFactory를 절대 경로로 로드해 주입 (`src/setup-app.ts` 주석 참조).
+
+## 이번 단계 범위 밖 (다음 단계)
+
+업로드 presigned URL · BullMQ · media/ai-worker 연동 · MediaAsset/AiAnalysis/Publication/ChannelAccount
+테이블 · 다채널 송출 · WebSocket. 커머스·라이브·송출 도메인은 스키마·코드에 선반영하지 않았다.

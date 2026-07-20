@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "declaration": false,
+    "declarationMap": false,
+    "outDir": "dist",
+    "incremental": true,
+    "baseUrl": "./"
+  },
+  "include": ["src", "test", "prisma/seed.ts", "jest.config.ts", "eslint.config.mjs"]
+}
