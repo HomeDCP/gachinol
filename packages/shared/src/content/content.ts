@@ -43,7 +43,7 @@ export interface Content extends Timestamps {
   reviewPolicy: ReviewPolicy;
   /** 산출물 세대. 최초 1, 수정 반영 재생성마다 +1 — MediaAsset·AiAnalysis가 같은 번호로 정합 */
   generation: number;
-  /** 장면 배열 (order 오름차순). DB는 별도 scenes 테이블, 계약상 애그리거트에 포함 */
+  /** 장면 배열 (order 오름차순). phase-1 DB는 contents.scenes JSONB, 장면 단위 접근이 필요해지면 별도 테이블로 정규화(후속) */
   scenes: readonly Scene[];
   /** 사전 지정 송출처. 기본값: 기자 소속 지사의 kakao ChannelAccount 1개, origin='live_vod'는 라이브 세션의 targetChannelAccountIds 승계 (서버 규칙) */
   targetChannelAccountIds: readonly ChannelAccountId[];

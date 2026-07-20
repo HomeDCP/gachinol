@@ -77,6 +77,11 @@ venv/
 *.m4v
 *.ts
 !**/src/**/*.ts
+# (TransportStream 오인 방지 재포함 — src 밖의 TypeScript 소스)
+!**/test/**/*.ts
+!**/prisma/**/*.ts
+!**/*.config.ts
+!**/*.d.ts
 *.m3u8
 tmp/
 temp/
@@ -103,3 +108,5 @@ Thumbs.db
 # ── 테스트 / 커버리지 ──
 coverage/
 .nyc_output/
+# E2E DB 가용성 플래그 (jest globalSetup 산출물)
+services/api/test/.e2e-db.json

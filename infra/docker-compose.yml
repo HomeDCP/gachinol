@@ -1,0 +1,50 @@
+# infra/docker-compose.yml — 로컬 개발 전용 (기본 자격증명은 로컬 한정. 프로덕션 재사용 금지)
+# 사용: pnpm infra:up  (= docker compose -f infra/docker-compose.yml up -d)
+name: gachinol
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gachinol}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gachinol}
+      POSTGRES_DB: ${POSTGRES_DB:-gachinol}
+    ports: ['5432:5432']
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gachinol}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis: # phase-1 api 미사용 — BullMQ(로드맵 3~) 대비 선행 기동
+    image: redis:7-alpine
+    ports: ['6379:6379']
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio: # phase-1 api 미사용 — 업로드 단계 대비
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    ports: ['9000:9000', '9001:9001']
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init: # gachinol-media 버킷 1회 생성
+    image: minio/mc:latest
+    depends_on: { minio: { condition: service_healthy } }
+    entrypoint: >
+      /bin/sh -c "mc alias set local http://minio:9000 ${S3_ACCESS_KEY:-minioadmin} ${S3_SECRET_KEY:-minioadmin}
+      && mc mb --ignore-existing local/${S3_BUCKET:-gachinol-media}"
+
+volumes: { pgdata: {}, redisdata: {}, miniodata: {} }

@@ -11,11 +11,16 @@ export * from './common/pagination';
 export * from './common/api-error';
 export * from './common/state-machine';
 
+// auth
+export * from './auth/dto';
+
 // station
 export * from './station/station';
+export * from './station/dto';
 
 // user
 export * from './user/user';
+export * from './user/dto';
 export * from './user/community-figure';
 
 // content

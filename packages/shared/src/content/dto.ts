@@ -68,6 +68,22 @@ export interface CreateRevisionRequestBody {
   sceneNotes?: readonly { sceneId: SceneId; note: string }[];
 }
 
+/** POST /v1/contents/:id/transitions (운영 복구·워커 부재 기간 파이프라인 수동 진행용 범용 전이) */
+export interface TransitionContentRequest {
+  toStatus: ContentStatus;
+  note?: string;
+}
+
+/** 반려 — 사유 필수 */
+export interface RejectContentRequest {
+  note: string;
+}
+
+/** 취소 — 사유 선택 */
+export interface CancelContentRequest {
+  note?: string;
+}
+
 /** 상세 화면 합성 DTO — 기자 프리뷰 확인·관제 검토 공용 */
 export interface ContentDetail {
   content: Content;

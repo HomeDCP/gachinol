@@ -1,0 +1,355 @@
+import { Injectable } from '@nestjs/common';
+import type { ContentStatus, User } from '@gachinol/shared';
+import {
+  afterReporterApproval,
+  canTransitionContent,
+  CONTENT_RETRY_TARGET,
+  CONTENT_STATUS_TRANSITIONS,
+  isFailureStatus,
+  nextStates,
+} from '@gachinol/shared';
+import type { Content as ContentRow, Prisma } from '@prisma/client';
+import { v7 as uuidv7 } from 'uuid';
+import { DomainException } from '../common/errors/domain.exception';
+import { PrismaService } from '../prisma/prisma.service';
+import type { CreateRevisionRequestDto } from './schemas/content.schemas';
+
+/** 전이 액터 — phase-1 시스템 액터는 reporter approve 자동 연쇄뿐 (워커 도입 시 jobId 사용) */
+export type TransitionActor =
+  { type: 'user'; user: User } | { type: 'system'; jobId?: string; note?: string };
+
+interface HopOpts {
+  note?: string;
+  /** 상태별 효과 외 추가 필드 (approve의 approvedByUserId 등) */
+  mutate?: Prisma.ContentUncheckedUpdateManyInput;
+}
+
+type Tx = Prisma.TransactionClient;
+
+const REPORTER_REVIEW_DECISIONS: readonly ContentStatus[] = [
+  'reporter_approved',
+  'revision_requested',
+  'rejected',
+];
+
+/**
+ * ★ 콘텐츠 상태 전이의 단일 관문.
+ * 전이 규칙의 유일 원천은 shared(CONTENT_STATUS_TRANSITIONS·afterReporterApproval·
+ * CONTENT_RETRY_TARGET) — api에 전이 규칙 사본 금지. 여기는 정책 가드 + 원자성(CAS) + 감사 로그만 얹는다.
+ */
+@Injectable()
+export class ContentWorkflowService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * 기자 승인(awaiting_reporter_review): reporter_approved → 같은 트랜잭션에서
+   * afterReporterApproval(reviewPolicy) 자동 연쇄 (중간 상태 노출 없음, 로그 2건).
+   * 센터 승인(awaiting_center_review): center_approved. publishing 자동 연쇄는 하지 않는다 —
+   * 송출 트리거는 Distribute 단계의 몫.
+   */
+  async approve(contentId: string, user: User): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    const actor: TransitionActor = { type: 'user', user };
+
+    // to 결정 정책 — from 목록 하드코딩 대신 canTransitionContent가 최종 판정
+    if (from === 'awaiting_center_review') {
+      this.requireCenterActor(user);
+      this.assertAllowed(from, 'center_approved');
+      const now = new Date();
+      await this.prisma.$transaction(async (tx) => {
+        await this.applyHop(tx, content, from, 'center_approved', actor, {
+          mutate: { approvedByUserId: user.id, approvedAt: now },
+        });
+      });
+      return this.load(contentId);
+    }
+
+    const to: ContentStatus = 'reporter_approved';
+    this.policyGuard(content, from, to, actor);
+    this.assertAllowed(from, to);
+
+    const chained = afterReporterApproval(
+      content.reviewPolicy as 'reporter_only' | 'reporter_then_center',
+    );
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, actor, {
+        mutate: { approvedByUserId: user.id, approvedAt: now },
+      });
+      // 자동 연쇄 — 2건째 로그는 system 액터
+      await this.applyHop(
+        tx,
+        content,
+        to,
+        chained,
+        { type: 'system' },
+        { note: `reviewPolicy=${content.reviewPolicy} 자동 진행` },
+      );
+    });
+    return this.load(contentId);
+  }
+
+  /** 수정 요청 — RevisionRequest 생성과 동일 트랜잭션 (revision_requested 전이의 유일 경로) */
+  async requestRevision(
+    contentId: string,
+    user: User,
+    body: CreateRevisionRequestDto,
+  ): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    const to: ContentStatus = 'revision_requested';
+    const actor: TransitionActor = { type: 'user', user };
+
+    this.policyGuard(content, from, to, actor);
+    if (from === 'awaiting_center_review') this.requireCenterActor(user);
+    this.assertAllowed(from, to);
+
+    // requesterRole은 인증 role 매핑 — body로 받지 않는다
+    const requesterRole = user.role === 'reporter' ? 'reporter' : 'center_operator';
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, actor, { note: body.note.slice(0, 200) });
+      await tx.revisionRequest.create({
+        data: {
+          id: uuidv7(),
+          targetKind: 'content',
+          contentId: content.id,
+          requestedByUserId: user.id,
+          requesterRole,
+          message: body.note,
+          sceneNotes: body.sceneNotes
+            ? (body.sceneNotes as unknown as Prisma.InputJsonValue)
+            : undefined,
+        },
+      });
+    });
+    return this.load(contentId);
+  }
+
+  /** 반려 [종결] — 사유 필수. 재작업은 새 콘텐츠 + remakeOfContentId */
+  async reject(contentId: string, user: User, note: string): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    const to: ContentStatus = 'rejected';
+    const actor: TransitionActor = { type: 'user', user };
+
+    this.policyGuard(content, from, to, actor);
+    if (from === 'awaiting_center_review') this.requireCenterActor(user);
+    this.assertAllowed(from, to);
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, actor, { note });
+    });
+    return this.load(contentId);
+  }
+
+  /** 취소 [종결] — 전이 맵상 canceled로 갈 수 있는 모든 상태 (맵이 유일 진실 — from 하드코딩 금지) */
+  async cancel(contentId: string, user: User, note?: string): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    const to: ContentStatus = 'canceled';
+    const actor: TransitionActor = { type: 'user', user };
+
+    this.requireOwnerOrCenter(content, user);
+    this.assertAllowed(from, to);
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, actor, { note });
+    });
+    return this.load(contentId);
+  }
+
+  /** 재시도 — 목적지는 shared CONTENT_RETRY_TARGET이 유일 원천. Job 재큐는 큐 단계 훅 */
+  async retry(contentId: string, user: User): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+
+    if (!isFailureStatus(from)) {
+      throw new DomainException(
+        'invalid_transition',
+        `재시도 가능한 실패 상태가 아닙니다: ${from}`,
+        {
+          from,
+          allowed: Object.keys(CONTENT_RETRY_TARGET),
+        },
+      );
+    }
+    // 소유 reporter는 upload_failed만, 그 외 실패는 center_operator·admin
+    if (user.role === 'reporter') {
+      this.requireOwnerReporter(content, user);
+      if (from !== 'upload_failed') {
+        throw new DomainException('forbidden', '기자는 upload_failed만 재시도할 수 있습니다');
+      }
+    } else {
+      this.requireCenterActor(user);
+    }
+
+    const to = CONTENT_RETRY_TARGET[from as keyof typeof CONTENT_RETRY_TARGET];
+    this.assertAllowed(from, to);
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
+      // TODO(queue): BullMQ 도입 시 여기서 해당 단계 Job 재큐
+    });
+    return this.load(contentId);
+  }
+
+  /**
+   * 범용 전이 — 워커 부재 기간 파이프라인 수동 진행·시뮬레이션·운영 복구 (admin·center_operator).
+   * §11-4 정책 가드 동일 적용 — 관리자라도 계약 위반 전이는 불가.
+   * 워커 도입 시 시스템 전이는 내부 인증 경로로 이관(미결).
+   */
+  async transition(
+    contentId: string,
+    to: ContentStatus,
+    user: User,
+    note?: string,
+  ): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    const actor: TransitionActor = { type: 'user', user };
+
+    if (to === 'revision_requested') {
+      // RevisionRequest 생성과 동일 트랜잭션 강제 — request-revision 엔드포인트로만
+      throw new DomainException(
+        'forbidden',
+        'revision_requested 전이는 POST /v1/contents/:id/request-revision으로만 가능합니다',
+      );
+    }
+    this.policyGuard(content, from, to, actor);
+    this.assertAllowed(from, to);
+
+    // center_approved는 경로와 무관하게 승인자 기록 — approve()와 동일 효과 (감사 필드 경로 독립)
+    const mutate: Prisma.ContentUncheckedUpdateManyInput | undefined =
+      to === 'center_approved' ? { approvedByUserId: user.id, approvedAt: new Date() } : undefined;
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, actor, { note, mutate });
+    });
+    return this.load(contentId);
+  }
+
+  // ── 내부 ──────────────────────────────────────────────
+
+  private async load(contentId: string): Promise<ContentRow> {
+    const content = await this.prisma.content.findUnique({ where: { id: contentId } });
+    if (!content) throw new DomainException('not_found', '콘텐츠를 찾을 수 없습니다');
+    return content;
+  }
+
+  private assertAllowed(from: ContentStatus, to: ContentStatus): void {
+    if (!canTransitionContent(from, to)) {
+      throw new DomainException('invalid_transition', `허용되지 않는 전이: ${from} → ${to}`, {
+        from,
+        to,
+        allowed: nextStates(CONTENT_STATUS_TRANSITIONS, from),
+      });
+    }
+  }
+
+  /**
+   * §11-4 정책 가드 — 전이 맵(구조적 상한) 위의 서버 몫.
+   * ① preview_generating→awaiting_reporter_review: origin='reporter_upload'만
+   * ② preview_generating→awaiting_center_review: origin='live_vod'만 (기자 승인 생략 경로)
+   * ③ awaiting_reporter_review 계열 결정(승인·수정요청·반려)의 user 액터는 담당 기자만
+   */
+  private policyGuard(
+    content: ContentRow,
+    from: ContentStatus,
+    to: ContentStatus,
+    actor: TransitionActor,
+  ): void {
+    if (from === 'preview_generating' && to === 'awaiting_reporter_review') {
+      if (content.origin !== 'reporter_upload') {
+        throw new DomainException(
+          'invalid_transition',
+          "origin='live_vod'는 기자 검토를 생략하고 센터 검토로 직행합니다",
+          { from, to, origin: content.origin },
+        );
+      }
+    }
+    if (from === 'preview_generating' && to === 'awaiting_center_review') {
+      if (content.origin !== 'live_vod') {
+        throw new DomainException(
+          'invalid_transition',
+          "origin='reporter_upload'는 기자 검토(awaiting_reporter_review)를 거쳐야 합니다",
+          { from, to, origin: content.origin },
+        );
+      }
+    }
+    if (
+      from === 'awaiting_reporter_review' &&
+      REPORTER_REVIEW_DECISIONS.includes(to) &&
+      actor.type === 'user'
+    ) {
+      this.requireOwnerReporter(content, actor.user);
+    }
+  }
+
+  private requireOwnerReporter(content: ContentRow, user: User): void {
+    if (!(user.role === 'reporter' && content.reporterId === user.id)) {
+      throw new DomainException(
+        'forbidden',
+        '기자 검토 단계 액션은 담당 기자만 수행할 수 있습니다',
+      );
+    }
+  }
+
+  private requireCenterActor(user: User): void {
+    if (user.role !== 'center_operator' && user.role !== 'admin') {
+      throw new DomainException('forbidden', '센터 운영자 또는 관리자만 수행할 수 있습니다');
+    }
+  }
+
+  private requireOwnerOrCenter(content: ContentRow, user: User): void {
+    if (user.role === 'reporter') {
+      this.requireOwnerReporter(content, user);
+      return;
+    }
+    this.requireCenterActor(user);
+  }
+
+  /**
+   * 단일 홉 실행 — 낙관적 CAS(조건부 UPDATE) + 상태별 효과 + 감사 로그.
+   * affected 0이면 동시 경합 → 409 conflict (규칙 위반 invalid_transition과 구분 — 클라이언트 대응이 다르다).
+   */
+  private async applyHop(
+    tx: Tx,
+    content: ContentRow,
+    from: ContentStatus,
+    to: ContentStatus,
+    actor: TransitionActor,
+    opts: HopOpts,
+  ): Promise<void> {
+    const now = new Date();
+    const data: Prisma.ContentUncheckedUpdateManyInput = { status: to, ...(opts.mutate ?? {}) };
+    // 상태별 효과 (shared 규약)
+    if (to === 'published' && !content.publishedAt) data.publishedAt = now; // 비정규화: 최초 송출 시각
+    if (to === 'regenerating') data.generation = { increment: 1 }; // 산출물 세대 +1
+
+    const res = await tx.content.updateMany({ where: { id: content.id, status: from }, data });
+    if (res.count === 0) {
+      throw new DomainException('conflict', '동시 전이 경합 — 재조회 후 재시도하세요', {
+        from,
+        to,
+      });
+    }
+
+    await tx.statusTransitionLog.create({
+      data: {
+        id: uuidv7(),
+        entityType: 'content',
+        entityId: content.id,
+        fromStatus: from,
+        toStatus: to,
+        actorType: actor.type,
+        // shared 불변식: actorType='user' ⇒ actorUserId 필수
+        actorUserId: actor.type === 'user' ? actor.user.id : null,
+        jobId: actor.type === 'system' ? (actor.jobId ?? null) : null,
+        note: opts.note ?? null,
+        at: now,
+      },
+    });
+  }
+}
