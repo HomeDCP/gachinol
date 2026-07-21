@@ -1,0 +1,16 @@
+{
+  // 순서 중요: 뒤가 이긴다 — RN 필수 옵션(jsx·lib 등)은 expo 프리셋이 확정
+  "extends": ["../../tsconfig.base.json", "expo/tsconfig.base"],
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    // 루트 강성 옵션 재확정 (expo 프리셋이 완화해도 유지)
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["jest"]
+  },
+  "include": ["app", "src", "app.config.ts", "expo-env.d.ts"]
+}

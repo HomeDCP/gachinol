@@ -5,7 +5,9 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "build/**", ".expo/**"]
+      "outputs": ["dist/**", "build/**", ".expo/**"],
+      "env": ["EXPO_PUBLIC_*"],
+      "inputs": ["$TURBO_DEFAULT$", ".env"]
     },
     "dev": {
       "cache": false,
