@@ -123,6 +123,13 @@ pnpm format           # prettier 포맷
 
 앱/서비스별 개별 실행은 각 워크스페이스의 README 참고 (아직 스캐폴딩 전이면 부재).
 
+```bash
+# 기자 앱 (apps/reporter — Expo). API 선행 기동 + apps/reporter/.env에 EXPO_PUBLIC_API_URL 설정
+pnpm --filter @gachinol/reporter dev        # Expo dev 서버 (Expo Go)
+pnpm --filter @gachinol/reporter test       # jest-expo 단위 테스트
+pnpm --filter @gachinol/reporter typecheck  # shared dist 선행 빌드 필요
+```
+
 ## 10. 컨벤션
 
 - 언어: **한국어 우선** (커밋 메시지·문서·주석). 코드 식별자·기술용어는 영어.
@@ -136,12 +143,13 @@ pnpm format           # prettier 포맷
 ## 11. 현재 상태 / 로드맵
 
 - **지금**: shared 완료 → **services/api 스캐폴딩+인증+콘텐츠 CRUD 완료**(Prisma·JWT 회전·상태 전이 전 구간·Swagger·시드),
-  `infra/docker-compose.yml`(항목 4 선행) 가동. 업로드 presigned URL·BullMQ·워커 연동은 다음 단계.
+  `infra/docker-compose.yml`(항목 4 선행) 가동 → **apps/reporter Expo 스캐폴딩 완료**(로그인·목록·작성·상세·프리뷰 승인 —
+  영상 업로드는 UploadService Mock, 실 업로드·프리뷰 재생은 미디어 파이프라인 단계).
 - **다음 후보 (docs/ROADMAP.md 참고)**:
-  1. `apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)
-  2. 업로드 presigned URL + BullMQ + media-worker 연동
-  3. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
-  4. `infra` 배포 스크립트/IaC (docker-compose는 완료)
+  1. 업로드 presigned URL + BullMQ + media-worker 연동 (+기자 앱 RealUploadService 교체)
+  2. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
+  3. `infra` 배포 스크립트/IaC (docker-compose는 완료)
+  - ~~`apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)~~ ✅ 완료
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
 ## 12. 미정 / 결정 대기 사항
