@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { AnalysisModule } from './analysis/analysis.module';
 import { AppConfigModule } from './config/config.module';
 import { ContentsModule } from './contents/contents.module';
 import { HealthModule } from './health/health.module';
@@ -26,6 +27,7 @@ import { UsersModule } from './users/users.module';
     StationsModule,
     MediaModule,
     QueueModule,
+    AnalysisModule,
     ContentsModule,
     UploadModule,
     PipelineModule,

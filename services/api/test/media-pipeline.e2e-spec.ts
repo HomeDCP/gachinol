@@ -96,6 +96,10 @@ d('media pipeline (withDb + embedded redis/s3)', () => {
     if (!embedded) return;
 
     // ① 인프라 env 주입 — createE2eApp(ConfigModule) 부팅 전에 설정
+    // AI 비활성 회귀 가드 — 분석 홉을 스킵(processing→preview_generating 직행)해 이 파이프라인이
+    // AI 미구성 배포와 동일하게 도는지 실증한다. 빈 문자열로 고정(dotenv가 루트 .env AI_WORKER_URL을
+    // 재주입하지 못하게 — dotenv는 이미 존재하는 process.env 키를 덮지 않는다). 결정성·테스트 순서 무관.
+    process.env.AI_WORKER_URL = '';
     process.env.REDIS_URL = embedded.redisUrl;
     process.env.S3_ENDPOINT = embedded.s3Endpoint;
     process.env.S3_PUBLIC_ENDPOINT = embedded.s3Endpoint;

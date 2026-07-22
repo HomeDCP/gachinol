@@ -105,6 +105,7 @@ model Content {
   approvedBy       User?             @relation("ContentApprover", fields: [approvedByUserId], references: [id])
   revisionRequests RevisionRequest[]
   mediaAssets      MediaAsset[]
+  aiAnalyses       AiAnalysis[]
 
   @@index([stationId, status, publishedAt(sort: Desc)]) // shared 권고: "지사별 최신 송출"
   @@index([stationId, createdAt(sort: Desc)]) // 지사별 목록
@@ -159,6 +160,28 @@ model MediaAsset {
   @@unique([bucket, storageKey]) // ★ 멱등 생성 가드 + upsert 키 (QueueEvents 다중 수신에도 1행)
   @@index([contentId, kind, generation]) // "이 콘텐츠 현 세대 프리뷰/썸네일" 단건 조회 최빈
   @@map("media_assets")
+}
+
+// AI 분석 결과 — ai-worker HTTP(/analyze) 산출물의 유일 DB 기록처(AiAnalysesService가 유일 기록자).
+// MediaAsset 동형: enum성 없음, vision/text/modelInfo는 구조적 JSON(Json?, scenes/last_error 선례).
+// (content_id, generation) unique = 멱등 upsert 키(QueueEvents 다중 수신·리컨사일에도 1행).
+model AiAnalysis {
+  id                  String    @id
+  contentId           String    @map("content_id")
+  generation          Int       @default(1) // Content.generation 대응
+  vision              Json? // wire VisionAnalysis (camelCase)
+  text                Json?     @map("text_analysis") // wire TextAnalysis
+  recommendationScore Float?    @map("recommendation_score") // 0~1
+  modelInfo           Json?     @map("model_info")
+  createdByJobId      String?   @map("created_by_job_id") // BullMQ jobId (jobs 테이블 없음)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  completedAt         DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  content Content @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([contentId, generation]) // ★ 멱등 upsert 키 (재수신·리컨사일 하드 가드)
+  @@index([contentId, generation]) // "이 콘텐츠 현 세대 분석" 단건 조회
+  @@map("ai_analyses")
 }
 
 model StatusTransitionLog {

@@ -16,6 +16,8 @@ import { DomainException } from '../common/errors/domain.exception';
 import { newId } from '../common/ids';
 import { toPaginated, toSkipTake } from '../common/pagination/pagination.util';
 import type { PageParams } from '../common/pagination/pagination.util';
+import { AiAnalysesService } from '../analysis/ai-analyses.service';
+import { toAiAnalysis } from '../analysis/ai-analysis.mapper';
 import { REVIEW_POLICY_DEFAULTS } from '../config/review-policy.config';
 import { MediaAssetsService } from '../media/media-assets.service';
 import { toMediaAsset } from '../media/media-asset.mapper';
@@ -41,6 +43,7 @@ export class ContentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly assets: MediaAssetsService,
+    private readonly aiAnalyses: AiAnalysesService,
   ) {}
 
   /**
@@ -105,7 +108,14 @@ export class ContentsService {
     });
     // 현 세대 산출물 (미업로드면 행 0 → assets:[])
     const assetRows = await this.assets.listForContent(id, row.generation);
-    return toContentDetail(row, revisions, assetRows.map(toMediaAsset));
+    // 현 세대 AI 분석 (미분석이면 null → undefined)
+    const analysisRow = await this.aiAnalyses.findCurrent(id, row.generation);
+    return toContentDetail(
+      row,
+      revisions,
+      assetRows.map(toMediaAsset),
+      analysisRow ? toAiAnalysis(analysisRow) : undefined,
+    );
   }
 
   /** 소유 reporter는 전체 필드, center_operator·admin은 targetChannelAccountIds만 */
