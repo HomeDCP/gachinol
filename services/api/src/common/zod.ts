@@ -32,3 +32,18 @@ export const zPage = z.object({
     .default(20)
     .transform((v) => Math.min(v, 100)),
 });
+
+/**
+ * CursorQuery — 커서 기반 무한스크롤(피드·채팅). 리포 최초 커서 계약(zPage와 대칭).
+ * cursor는 서버 발급 opaque 문자열(최대 512자). limit 기본 20·최대 100 서버 clamp(거부 아닌 절삭).
+ * satisfies 미부착 — coerce/default로 입력≠출력 변성(zPage 선례와 동일).
+ */
+export const zCursor = z.object({
+  cursor: z.string().max(512).optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .default(20)
+    .transform((v) => Math.min(v, 100)),
+});
