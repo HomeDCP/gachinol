@@ -128,6 +128,11 @@ pnpm format           # prettier 포맷
 pnpm --filter @gachinol/reporter dev        # Expo dev 서버 (Expo Go)
 pnpm --filter @gachinol/reporter test       # jest-expo 단위 테스트
 pnpm --filter @gachinol/reporter typecheck  # shared dist 선행 빌드 필요
+
+# 센터 관제 앱 (apps/control-center — Expo). API 선행 기동 + apps/control-center/.env에 EXPO_PUBLIC_API_URL 설정
+pnpm --filter @gachinol/control-center dev        # Expo dev 서버 (Expo Go)
+pnpm --filter @gachinol/control-center test       # jest-expo 단위 테스트
+pnpm --filter @gachinol/control-center typecheck  # shared dist 선행 빌드 필요
 ```
 
 ```bash
@@ -170,6 +175,10 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   Analysis 워커가 `AI_WORKER_URL/analyze` 호출 → `ai_analyses`((content_id,generation) unique, api 유일 기록자) 멱등
   기록 + `analyzing→preview_generating`. 긴급(urgent)·AI 비활성(AI_WORKER_URL 미설정)은 `preview_generating` 직행
   패스트트랙 보존(무회귀). 계약은 `packages/shared/src/analysis/analysis-job.ts`(AnalyzeRequest/Response·큐 wire)가 단일 원천.
+  → **apps/control-center Expo 스캐폴딩 완료**: 센터 role 게이트(`center_operator`·`admin`만)·검토 보드(전 지사 횡단·상태/지사/분류 필터)·
+  상세(저화질 프리뷰·AI분석 vision/text·장면·수정요청·전이 이력)·센터 결정(승인/수정요청/반려 + 실패 재시도)·지사 로스터(read-only 딥링크).
+  reporter 인증/클라이언트 패턴(refresh single-flight·auth 게이트·TanStack Query·secure-store·metro) 동형 이식, **shared·api 무변경**.
+  주간추천·라이브 관제는 백엔드 부재로 플레이스홀더. jest-expo 단위 테스트(client·token-store·role-gate·status·actions·analysis·validation).
 - **다음 후보 (docs/ROADMAP.md 참고)**:
   1. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
   2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
@@ -178,6 +187,7 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   - ~~`apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)~~ ✅ 완료
   - ~~업로드 presigned URL + BullMQ 생산자/QueueEvents (api 측)~~ ✅ 완료
   - ~~media-worker(순수 FFmpeg) + reporter 실업로드 교체 → 풀 루프 실증~~ ✅ 완료
+  - ~~`apps/control-center` Expo 스캐폴딩 (센터 검토·결정 MVP)~~ ✅ 완료
   - ~~`analyzing`(ai-worker 비전/STT) 홉 — HTTP 통합·ai_analyses·전이 재배선~~ ✅ 완료
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
