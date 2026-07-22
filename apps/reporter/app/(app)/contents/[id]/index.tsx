@@ -274,7 +274,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
         ) : null}
         {actions.canStartMockUpload ? (
           <Button
-            label="업로드 시작 (시뮬레이션)"
+            label="업로드 시작"
             variant="secondary"
             onPress={() =>
               router.push({ pathname: '/contents/new/upload', params: { id: contentId } })

@@ -1,7 +1,8 @@
 // 규약: 테이블·컬럼 snake_case(@map/@@map), enum성 컬럼은 전부 String(text) —
 // 값은 @gachinol/shared의 snake_case 문자열 그대로 (Prisma enum·CHECK 제약 금지, 검증은 앱 경계).
 // ID는 앱이 UUID v7 발급 (시간순 정렬·커서 겸용). 타임스탬프는 timestamptz(3).
-// 이번 범위 밖 도메인(media_assets·publications·channel_accounts·커머스·라이브) 테이블 선반영 금지.
+// 이번 범위 밖 도메인(publications·channel_accounts·커머스·라이브) 테이블 선반영 금지.
+// media_assets는 media-worker 연동 단계에서 도입됨(아래 model MediaAsset).
 
 generator client {
   provider = "prisma-client-js"
@@ -103,6 +104,7 @@ model Content {
   reporter         User?             @relation("ContentReporter", fields: [reporterId], references: [id])
   approvedBy       User?             @relation("ContentApprover", fields: [approvedByUserId], references: [id])
   revisionRequests RevisionRequest[]
+  mediaAssets      MediaAsset[]
 
   @@index([stationId, status, publishedAt(sort: Desc)]) // shared 권고: "지사별 최신 송출"
   @@index([stationId, createdAt(sort: Desc)]) // 지사별 목록
@@ -128,6 +130,35 @@ model RevisionRequest {
 
   @@index([contentId, createdAt(sort: Desc)])
   @@map("revision_requests")
+}
+
+model MediaAsset {
+  id             String   @id
+  ownerKind      String   @map("owner_kind") // MediaAssetOwner.kind: 'content' (라이브는 미도입)
+  contentId      String?  @map("content_id")
+  kind           String // MediaAssetKind (shared snake_case)
+  status         String   @default("pending") // MediaAssetStatus
+  generation     Int      @default(1) // Content.generation 대응 (original은 항상 1)
+  bucket         String // 항상 해석된 실 버킷 저장 — (bucket, storageKey) unique 성립 위해 non-null
+  storageKey     String   @map("storage_key") // 'contents/{contentId}/g{n}/...'
+  mimeType       String   @map("mime_type")
+  sizeBytes      BigInt?  @map("size_bytes") // 영상은 Int(2.1GB) 초과 가능 → BigInt. 매퍼에서 Number()
+  durationSec    Int?     @map("duration_sec")
+  width          Int?
+  height         Int?
+  bitrateKbps    Int?     @map("bitrate_kbps")
+  videoCodec     String?  @map("video_codec")
+  audioCodec     String?  @map("audio_codec")
+  renditionLabel String?  @map("rendition_label")
+  checksumSha256 String?  @map("checksum_sha256")
+  createdByJobId String?  @map("created_by_job_id") // BullMQ jobId (jobs 테이블 없음)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  content Content? @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([bucket, storageKey]) // ★ 멱등 생성 가드 + upsert 키 (QueueEvents 다중 수신에도 1행)
+  @@index([contentId, kind, generation]) // "이 콘텐츠 현 세대 프리뷰/썸네일" 단건 조회 최빈
+  @@map("media_assets")
 }
 
 model StatusTransitionLog {

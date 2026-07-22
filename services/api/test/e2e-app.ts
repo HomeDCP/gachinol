@@ -27,7 +27,7 @@ export const resetDb = async (): Promise<void> => {
   const prisma = new PrismaClient();
   try {
     await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE status_transition_logs, revision_requests, contents, refresh_tokens, users, stations CASCADE',
+      'TRUNCATE TABLE media_assets, status_transition_logs, revision_requests, contents, refresh_tokens, users, stations CASCADE',
     );
     await runSeed(prisma, { email: info.adminEmail!, password: info.adminPassword! });
   } finally {

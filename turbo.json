@@ -6,7 +6,7 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "build/**", ".expo/**"],
-      "env": ["EXPO_PUBLIC_*"],
+      "env": ["EXPO_PUBLIC_*", "S3_*", "REDIS_URL", "MEDIA_*", "PREVIEW_*"],
       "inputs": ["$TURBO_DEFAULT$", ".env"]
     },
     "dev": {
@@ -20,7 +20,9 @@
         "JWT_*",
         "SEED_ADMIN_*",
         "REDIS_URL",
-        "S3_*"
+        "S3_*",
+        "MEDIA_*",
+        "PREVIEW_*"
       ]
     },
     "lint": {},
@@ -30,7 +32,15 @@
     "test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"],
-      "env": ["DATABASE_URL", "JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET"]
+      "env": [
+        "DATABASE_URL",
+        "JWT_ACCESS_SECRET",
+        "JWT_REFRESH_SECRET",
+        "REDIS_URL",
+        "S3_*",
+        "MEDIA_*",
+        "PREVIEW_*"
+      ]
     },
     "clean": {
       "cache": false

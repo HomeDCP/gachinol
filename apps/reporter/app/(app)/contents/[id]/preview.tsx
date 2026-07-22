@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,7 +16,8 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { toId } from '@gachinol/shared';
 import type { ContentId, SceneId } from '@gachinol/shared';
 import { isApiClientError, userMessageForError } from '../../../../src/api/errors';
-import { useReporter } from '../../../../src/auth/auth-context';
+import { getMediaAccessUrl } from '../../../../src/api/media';
+import { useApiClient, useReporter } from '../../../../src/auth/auth-context';
 import { formatDateTime } from '../../../../src/features/contents/format';
 import {
   useApprove,
@@ -36,8 +38,7 @@ import { colors, radii, spacing, typo } from '../../../../src/ui/theme';
 import { showToast } from '../../../../src/ui/toast';
 
 /**
- * 프리뷰 플레이어 격리 — URL만 오면 재생되도록 배선 완성.
- * TODO(media): GET /v1/media-assets/:id/url (shared MediaAccessUrl) 도입 시 소스 연결
+ * 프리뷰 플레이어 격리 — 서명 GET URL(getMediaAccessUrl)이 오면 재생, 준비 전엔 placeholder.
  */
 function PreviewPlayer({ sourceUrl }: { sourceUrl: string | null }): React.JSX.Element {
   const player = useVideoPlayer(sourceUrl);
@@ -60,8 +61,28 @@ export default function PreviewScreen(): React.JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
   const contentId = toId<ContentId>(id ?? '');
   const me = useReporter();
+  const client = useApiClient();
   const detail = useContentDetail(contentId);
   const approve = useApprove(contentId);
+
+  // 현 세대 ready 프리뷰 자산 → 서명 GET URL 발급(프리뷰 재생). 자산 준비 전엔 비활성
+  const previewAsset = useMemo(
+    () =>
+      detail.data?.assets.find(
+        (a) =>
+          a.kind === 'preview' &&
+          a.generation === detail.data?.content.generation &&
+          a.status === 'ready',
+      ),
+    [detail.data],
+  );
+  const previewUrlQuery = useQuery({
+    queryKey: ['media-access-url', previewAsset?.id],
+    queryFn: () => getMediaAccessUrl(client, previewAsset!.id),
+    enabled: previewAsset != null,
+    // 서명 URL 만료(DOWNLOAD_URL_TTL_SEC 기본 900s) 전에 재발급되도록 짧게
+    staleTime: 5 * 60 * 1000,
+  });
   const requestRevision = useRequestRevision(contentId);
   const reject = useReject(contentId);
 
@@ -107,13 +128,8 @@ export default function PreviewScreen(): React.JSX.Element {
     );
   }
 
-  // 현 세대 ready 프리뷰 자산 — phase-1은 항상 부재 (assets 빈 배열)
-  const previewAsset = detail.data.assets.find(
-    (a) => a.kind === 'preview' && a.generation === content.generation && a.status === 'ready',
-  );
-  // TODO(media): GET /v1/media-assets/:id/url (shared MediaAccessUrl) 도입 시
-  // previewAsset.id로 서명 URL을 발급받아 전달 — 배선은 완성돼 URL만 오면 재생된다.
-  const previewSourceUrl: string | null = previewAsset ? null : null;
+  // 서명 URL이 도착하면 재생(프리뷰 자산 미준비/URL 발급 전이면 placeholder)
+  const previewSourceUrl: string | null = previewUrlQuery.data?.url ?? null;
   const revisions = detail.data.revisions;
   const anyPending = approve.isPending || requestRevision.isPending || reject.isPending;
 

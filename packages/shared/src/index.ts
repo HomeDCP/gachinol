@@ -32,6 +32,7 @@ export * from './content/dto';
 
 // media
 export * from './media/media-asset';
+export * from './media/media-job';
 
 // job
 export * from './job/job';

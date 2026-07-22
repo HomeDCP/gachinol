@@ -8,8 +8,12 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AppConfigModule } from './config/config.module';
 import { ContentsModule } from './contents/contents.module';
 import { HealthModule } from './health/health.module';
+import { MediaModule } from './media/media.module';
+import { PipelineModule } from './pipeline/pipeline.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { QueueModule } from './queue/queue.module';
 import { StationsModule } from './stations/stations.module';
+import { UploadModule } from './upload/upload.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -20,7 +24,11 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     UsersModule,
     StationsModule,
+    MediaModule,
+    QueueModule,
     ContentsModule,
+    UploadModule,
+    PipelineModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

@@ -9,6 +9,7 @@ import {
   reporterUser,
   sceneJson,
 } from '../test-support/fixtures';
+import { MediaAssetsService } from '../media/media-assets.service';
 import { ContentsService } from './contents.service';
 
 describe('ContentsService', () => {
@@ -23,7 +24,8 @@ describe('ContentsService', () => {
       ...contentRow(),
       ...data,
     }));
-    return { prisma, service: new ContentsService(prisma) };
+    const assets = new MediaAssetsService(prisma, { bucket: 'gachinol-media' } as never);
+    return { prisma, service: new ContentsService(prisma, assets) };
   };
 
   const draftDto = (over: Record<string, unknown> = {}) => ({

@@ -10,6 +10,7 @@ import type {
 } from '@gachinol/shared';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { QueueProducerService } from '../queue/queue-producer.service';
 import { toContent } from './content.mapper';
 import { ContentWorkflowService } from './content-workflow.service';
 import { ContentsService } from './contents.service';
@@ -32,6 +33,7 @@ export class ContentsController {
   constructor(
     private readonly contents: ContentsService,
     private readonly workflow: ContentWorkflowService,
+    private readonly producer: QueueProducerService,
   ) {}
 
   @Post()
@@ -120,7 +122,10 @@ export class ContentsController {
   @Roles('reporter', 'center_operator')
   @ApiOperation({ summary: '실패 재시도 — 목적지는 shared CONTENT_RETRY_TARGET' })
   async retry(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
-    return toContent(await this.workflow.retry(id, user));
+    const updated = await this.workflow.retry(id, user);
+    // 인큐-애프터-커밋 — 해당 실패 복귀 상태의 잡 재큐(Redis 미설정 시 무동작)
+    await this.producer.requeueForStatus(updated);
+    return toContent(updated);
   }
 
   @Post(':id/transitions')

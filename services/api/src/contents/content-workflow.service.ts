@@ -190,7 +190,7 @@ export class ContentWorkflowService {
 
     await this.prisma.$transaction(async (tx) => {
       await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
-      // TODO(queue): BullMQ 도입 시 여기서 해당 단계 Job 재큐
+      // 재큐: ContentsController.retry가 커밋 후 QueueProducerService.requeueForStatus로 수행(인큐-애프터-커밋)
     });
     return this.load(contentId);
   }
@@ -226,6 +226,58 @@ export class ContentWorkflowService {
 
     await this.prisma.$transaction(async (tx) => {
       await this.applyHop(tx, content, from, to, actor, { note, mutate });
+    });
+    return this.load(contentId);
+  }
+
+  /**
+   * 시스템 액터 전이 — QueueEvents 소비자(PipelineService) 전용. HTTP 컨트롤러에 연결하지 않는다.
+   * 멱등·순서무관: 현재 status가 expectedFrom이 아니면(재전송·경합·추월) 무해 무시 → {applied:false}.
+   * ensure 체이닝: 연속 호출로 유실/재수신을 수렴 (예: uploaded→processing 후 processing→preview_generating).
+   */
+  async applySystemTransition(
+    contentId: string,
+    expectedFrom: ContentStatus,
+    to: ContentStatus,
+    jobId: string,
+    opts: { note?: string; mutate?: Prisma.ContentUncheckedUpdateManyInput } = {},
+  ): Promise<{ applied: boolean }> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    if (from !== expectedFrom) return { applied: false }; // 재전송/추월 → no-op
+
+    const actor: TransitionActor = { type: 'system', jobId };
+    this.policyGuard(content, from, to, actor); // origin 가드 유효(user 분기는 system이라 skip)
+    this.assertAllowed(from, to); // 맵 합법성
+
+    const applied = await this.prisma.$transaction((tx) =>
+      this.applyHop(tx, content, from, to, actor, opts, /* idempotent */ true),
+    );
+    return { applied };
+  }
+
+  /** 업로드 시작 — {draft|upload_failed} → uploading (소유 기자). 자산 생성·인큐는 UploadService 몫 */
+  async beginUpload(contentId: string, user: User): Promise<ContentRow> {
+    return this.userHop(contentId, user, 'uploading');
+  }
+
+  /** 업로드 완료 — uploading → uploaded (소유 기자) */
+  async completeUpload(contentId: string, user: User): Promise<ContentRow> {
+    return this.userHop(contentId, user, 'uploaded');
+  }
+
+  /** 업로드 실패 — uploading → upload_failed (소유 기자). 오브젝트 검증 실패 시 교착 회피 */
+  async failUpload(contentId: string, user: User): Promise<ContentRow> {
+    return this.userHop(contentId, user, 'upload_failed');
+  }
+
+  private async userHop(contentId: string, user: User, to: ContentStatus): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    this.requireOwnerReporter(content, user);
+    this.assertAllowed(from, to);
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
     });
     return this.load(contentId);
   }
@@ -321,7 +373,8 @@ export class ContentWorkflowService {
     to: ContentStatus,
     actor: TransitionActor,
     opts: HopOpts,
-  ): Promise<void> {
+    idempotent = false,
+  ): Promise<boolean> {
     const now = new Date();
     const data: Prisma.ContentUncheckedUpdateManyInput = { status: to, ...(opts.mutate ?? {}) };
     // 상태별 효과 (shared 규약)
@@ -330,6 +383,8 @@ export class ContentWorkflowService {
 
     const res = await tx.content.updateMany({ where: { id: content.id, status: from }, data });
     if (res.count === 0) {
+      // 시스템 경로(idempotent): 이미 적용됨/경합 → 무해 무시(로그 미기록). 사용자 경로: 409 그대로
+      if (idempotent) return false;
       throw new DomainException('conflict', '동시 전이 경합 — 재조회 후 재시도하세요', {
         from,
         to,
@@ -351,5 +406,6 @@ export class ContentWorkflowService {
         at: now,
       },
     });
+    return true;
   }
 }
