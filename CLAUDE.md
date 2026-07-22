@@ -133,6 +133,11 @@ pnpm --filter @gachinol/reporter typecheck  # shared dist 선행 빌드 필요
 pnpm --filter @gachinol/control-center dev        # Expo dev 서버 (Expo Go)
 pnpm --filter @gachinol/control-center test       # jest-expo 단위 테스트
 pnpm --filter @gachinol/control-center typecheck  # shared dist 선행 빌드 필요
+
+# 구독자 앱 (apps/subscriber — Expo, 익명 시청). API 선행 기동 + apps/subscriber/.env에 EXPO_PUBLIC_API_URL 설정
+pnpm --filter @gachinol/subscriber dev        # Expo dev 서버 (Expo Go)
+pnpm --filter @gachinol/subscriber test       # jest-expo 단위 테스트
+pnpm --filter @gachinol/subscriber typecheck  # shared dist 선행 빌드 필요
 ```
 
 ```bash
@@ -189,6 +194,17 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   - ~~media-worker(순수 FFmpeg) + reporter 실업로드 교체 → 풀 루프 실증~~ ✅ 완료
   - ~~`apps/control-center` Expo 스캐폴딩 (센터 검토·결정 MVP)~~ ✅ 완료
   - ~~`analyzing`(ai-worker 비전/STT) 홉 — HTTP 통합·ai_analyses·전이 재배선~~ ✅ 완료
+  - ~~**구독자 공개 피드 API**(services/api `FeedModule`) — `@Public` 익명 read 3종:
+    `GET /v1/feed`(published `FeedItem` 커서목록·stationId/category 필터),
+    `GET /v1/feed/:id/playback`(`PlaybackInfo` — 720p rendition 서명 GET URL을 hlsUrl에·포스터·Scene 자막파생, 비published 404),
+    `GET /v1/feed/stations`(operating+dormant branch만). published-only 화이트리스트 투영(내부필드 유출 차단)·
+    keyset 커서(publishedAt DESC,id DESC)·썸네일 서명 best-effort(피드 500 금지). `seed.ts`에 `seedFeedDemo`(published 3건+rendition/thumbnail/ai_analyses,
+    resetDb 불호출로 기존 e2e 무회귀). shared·schema 무변경.~~ ✅ 완료
+  - ~~**구독자 앱(apps/subscriber) Expo 스캐폴딩 완료**: 로그인 없는 익명 시청 — 피드 무한스크롤(지사·분류 칩 필터)·
+    공개 지사 탐색(크로스탭 딥링크)·상세 재생(expo-video로 720p 서명 URL 재생 + Scene 자막 오버레이 `selectActiveCue`)·
+    라이브 정적 플레이스홀더. 공개 GET 전용 클라이언트(reporter/control-center에서 tokenStore·refresh·401 재시도 전면 제거,
+    Authorization 미부착). reporter/control-center Expo 패턴(metro·jest·expo-router·TanStack Query) 동형 이식, **shared·api 무변경**.
+    jest-expo 단위(client·captions·format·labels·pagination) 28건.~~ ✅ 완료
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
 ## 12. 미정 / 결정 대기 사항
