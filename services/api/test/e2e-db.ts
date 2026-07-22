@@ -7,6 +7,10 @@ export interface E2eDbInfo {
   available: boolean;
   adminEmail?: string;
   adminPassword?: string;
+  /** BullMQ 실 Redis 필요(ioredis-mock 불가) — media-worker 파이프라인 e2e 가드 */
+  redisAvailable?: boolean;
+  /** MinIO/S3 presign 필요 — 업로드 e2e 가드 */
+  s3Available?: boolean;
 }
 
 /** globalSetup이 기록한 플래그 파일 동기 확인 — DB 없으면 스위트를 skip으로 녹색 종료 */

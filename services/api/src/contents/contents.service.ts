@@ -17,6 +17,8 @@ import { newId } from '../common/ids';
 import { toPaginated, toSkipTake } from '../common/pagination/pagination.util';
 import type { PageParams } from '../common/pagination/pagination.util';
 import { REVIEW_POLICY_DEFAULTS } from '../config/review-policy.config';
+import { MediaAssetsService } from '../media/media-assets.service';
+import { toMediaAsset } from '../media/media-asset.mapper';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   toContent,
@@ -36,7 +38,10 @@ const EDITABLE_STATUSES = ['draft', 'revision_requested'] as const;
 
 @Injectable()
 export class ContentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assets: MediaAssetsService,
+  ) {}
 
   /**
    * 초안 생성 — stationId·reporterId는 토큰에서(바디 수신 금지), origin='reporter_upload',
@@ -98,7 +103,9 @@ export class ContentsService {
       where: { contentId: id },
       orderBy: { createdAt: 'desc' },
     });
-    return toContentDetail(row, revisions);
+    // 현 세대 산출물 (미업로드면 행 0 → assets:[])
+    const assetRows = await this.assets.listForContent(id, row.generation);
+    return toContentDetail(row, revisions, assetRows.map(toMediaAsset));
   }
 
   /** 소유 reporter는 전체 필드, center_operator·admin은 targetChannelAccountIds만 */

@@ -7,5 +7,6 @@
   "globalSetup": "<rootDir>/global-setup.ts",
   "setupFiles": ["<rootDir>/e2e-env.ts"],
   "testTimeout": 30000,
-  "maxWorkers": 1
+  "maxWorkers": 1,
+  "forceExit": true
 }

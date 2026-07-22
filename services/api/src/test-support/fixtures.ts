@@ -120,6 +120,15 @@ export const makePrismaMock = () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     revisionRequest: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    mediaAsset: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     statusTransitionLog: {
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),

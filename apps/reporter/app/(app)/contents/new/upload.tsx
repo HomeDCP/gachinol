@@ -4,12 +4,13 @@ import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { toId } from '@gachinol/shared';
 import type { ContentId } from '@gachinol/shared';
 import { useDraft } from '../../../../src/features/contents/draft-context';
-import { UploadAbortedError, uploadService } from '../../../../src/upload/upload-service';
+import { UploadAbortedError } from '../../../../src/upload/upload-service';
 import type { UploadProgress } from '../../../../src/upload/upload-service';
+import { useUploadService } from '../../../../src/upload/use-upload-service';
 import { Button } from '../../../../src/ui/button';
 import { ProgressBar } from '../../../../src/ui/progress-bar';
 import { Screen } from '../../../../src/ui/screen';
-import { colors, radii, spacing, typo } from '../../../../src/ui/theme';
+import { colors, spacing, typo } from '../../../../src/ui/theme';
 
 type UploadPhase = 'running' | 'done' | 'aborted' | 'failed';
 
@@ -18,12 +19,13 @@ export default function UploadScreen(): React.JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
   const contentId: ContentId | null = id ? toId<ContentId>(id) : null;
   const { media: draftMedia } = useDraft();
-  // 상세 화면의 [업로드 시작] 경유(위저드 메모리 없음) — 시뮬레이션용 placeholder로 대체
+  const uploadService = useUploadService();
+  // 상세 화면의 [업로드 시작] 경유(위저드 메모리 없음) — 원본 없이 진입 시 placeholder
   const media = useMemo(
     () =>
       draftMedia ?? {
         uri: 'mock://placeholder',
-        fileName: '원본 영상 (시뮬레이션)',
+        fileName: '원본 영상',
         mimeType: 'video/mp4',
         sizeBytes: 0,
       },
@@ -78,7 +80,7 @@ export default function UploadScreen(): React.JSX.Element {
         setPhase(err instanceof UploadAbortedError ? 'aborted' : 'failed');
       });
     return () => controller.abort();
-  }, [contentId, media]);
+  }, [contentId, media, uploadService]);
 
   const goDetail = (): void => {
     if (contentId) router.replace(`/contents/${contentId}`);
@@ -99,10 +101,6 @@ export default function UploadScreen(): React.JSX.Element {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.container}>
-        {/* 상단 상시 배지 — Mock임을 명시 */}
-        <View style={styles.simBadge}>
-          <Text style={styles.simBadgeLabel}>업로드 API 준비 전 — 시뮬레이션 모드</Text>
-        </View>
         <Text style={styles.fileName}>{media.fileName}</Text>
         <ProgressBar ratio={progress.ratio} />
         <Text style={styles.percent}>{Math.round(progress.ratio * 100)}%</Text>
@@ -112,21 +110,20 @@ export default function UploadScreen(): React.JSX.Element {
         {phase === 'done' ? (
           <>
             <Text style={styles.message}>
-              업로드 완료(시뮬레이션) — 파일은 서버로 전송되지 않았고 상태는 &apos;작성 중&apos;으로
-              유지됩니다. 자동편집·프리뷰는 미디어 파이프라인 연동 후 진행됩니다.
+              업로드 완료 — 자동편집·프리뷰 생성이 시작됩니다. 준비되면 확인 요청이 옵니다.
             </Text>
             <Button label="상세 보기" onPress={goDetail} />
           </>
         ) : null}
         {phase === 'aborted' ? (
           <>
-            <Text style={styles.message}>업로드(시뮬레이션)를 취소했습니다.</Text>
+            <Text style={styles.message}>업로드를 취소했습니다.</Text>
             <Button label="상세 보기" onPress={goDetail} />
           </>
         ) : null}
         {phase === 'failed' ? (
           <>
-            <Text style={styles.message}>업로드 시뮬레이션 중 오류가 발생했습니다.</Text>
+            <Text style={styles.message}>업로드 중 오류가 발생했습니다. 다시 시도해 주세요.</Text>
             <Button label="상세 보기" onPress={goDetail} />
           </>
         ) : null}
@@ -137,14 +134,6 @@ export default function UploadScreen(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   container: { padding: spacing.lg, gap: spacing.lg, flexGrow: 1, justifyContent: 'center' },
-  simBadge: {
-    alignSelf: 'center',
-    backgroundColor: '#FBEEDC',
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  simBadgeLabel: { color: colors.warning, fontSize: typo.caption, fontWeight: '700' },
   fileName: { fontSize: typo.body, color: colors.text, textAlign: 'center' },
   percent: { fontSize: typo.title, fontWeight: '700', color: colors.text, textAlign: 'center' },
   message: { fontSize: typo.body, color: colors.textMuted, lineHeight: 22, textAlign: 'center' },

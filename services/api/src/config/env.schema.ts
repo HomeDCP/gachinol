@@ -12,9 +12,24 @@ export const envSchema = z
     JWT_REFRESH_SECRET: z.string().min(32),
     JWT_ACCESS_EXPIRES_IN: z.string().default('900s'),
     JWT_REFRESH_EXPIRES_IN: z.string().default('14d'),
-    // 이번 단계 미사용 — compose 정합 확인용 (BullMQ·업로드 단계 예약)
+    // 미디어 파이프라인 — 미설정 시 기능만 비활성(부팅은 성공). REDIS_URL 있으면 큐·파이프라인 활성
     REDIS_URL: z.string().optional(),
     S3_ENDPOINT: z.string().optional(),
+    S3_REGION: z.string().default('ap-northeast-2'),
+    S3_BUCKET: z.string().default('gachinol-media'),
+    S3_ACCESS_KEY: z.string().optional(), // 시크릿 — .env로만. 미설정 시 S3Service 첫 사용에 도메인 예외
+    S3_SECRET_KEY: z.string().optional(),
+    S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true), // MinIO
+    // 실기기 presign 호스트 분리 — 미설정 시 S3_ENDPOINT 사용
+    S3_PUBLIC_ENDPOINT: z.string().optional(),
+    S3_PRESIGN_EXPIRES_SEC: z.coerce.number().int().default(900), // = UPLOAD_URL_TTL_SEC
+    DOWNLOAD_URL_TTL_SEC: z.coerce.number().int().default(900),
+    MEDIA_JOB_ATTEMPTS: z.coerce.number().int().default(3),
+    MEDIA_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
+    // 프리뷰/트랜스코딩 프로파일 (worker와 공유 — payload 조립값)
+    MEDIA_RENDITION_HEIGHT: z.coerce.number().int().default(720),
+    MEDIA_PREVIEW_HEIGHT: z.coerce.number().int().default(360),
+    MEDIA_PREVIEW_BITRATE_KBPS: z.coerce.number().int().default(600),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',

@@ -13,10 +13,10 @@ import { FLAG_FILE } from './e2e-db';
 
 const API_ROOT = join(__dirname, '..');
 
-const probeTcp = (url: string, timeoutMs: number): Promise<boolean> =>
+const probeTcp = (url: string, timeoutMs: number, defaultPort = 5432): Promise<boolean> =>
   new Promise((resolve) => {
     let host = 'localhost';
-    let port = 5432;
+    let port = defaultPort;
     try {
       const u = new URL(url);
       host = u.hostname || host;
@@ -34,6 +34,15 @@ const probeTcp = (url: string, timeoutMs: number): Promise<boolean> =>
     socket.once('connect', () => done(true));
     socket.once('error', () => done(false));
   });
+
+/** 미디어 파이프라인 e2e용 부가 프로브 — REDIS_URL·S3_ENDPOINT 도달성(미가용 시 해당 스위트만 skip) */
+const probeMediaInfra = async (): Promise<{ redis: boolean; s3: boolean }> => {
+  const redisUrl = process.env.REDIS_URL;
+  const s3Endpoint = process.env.S3_ENDPOINT;
+  const redis = redisUrl ? await probeTcp(redisUrl, 1500, 6379) : false;
+  const s3 = s3Endpoint ? await probeTcp(s3Endpoint, 1500, 9000) : false;
+  return { redis, s3 };
+};
 
 /** 테스트 DB가 없으면 같은 서버의 postgres 유지보수 DB로 접속해 생성 (best-effort) */
 const ensureDatabase = async (url: string): Promise<void> => {
@@ -80,7 +89,18 @@ export default async function globalSetup(): Promise<void> {
     await ensureDatabase(databaseUrl);
     execSync('pnpm exec prisma migrate deploy', { cwd: API_ROOT, stdio: 'inherit' });
     execSync('pnpm exec tsx prisma/seed.ts', { cwd: API_ROOT, stdio: 'inherit' });
-    writeFileSync(FLAG_FILE, JSON.stringify({ available: true, adminEmail, adminPassword }));
+    // 미디어 파이프라인 e2e는 DB+Redis+S3 모두 필요 — 부가 프로브로 해당 스위트만 정직하게 skip
+    const media = await probeMediaInfra();
+    writeFileSync(
+      FLAG_FILE,
+      JSON.stringify({
+        available: true,
+        adminEmail,
+        adminPassword,
+        redisAvailable: media.redis,
+        s3Available: media.s3,
+      }),
+    );
   } catch (e) {
     console.warn(
       `\n[e2e] DB 준비 실패(migrate/seed) — DB 의존 스위트를 건너뜁니다: ${e instanceof Error ? e.message : e}\n`,

@@ -38,5 +38,9 @@ export interface UploadService {
   ): Promise<UploadResult>;
 }
 
-/** ★ 교체 지점 단일화 — 업로드 API 도입 시 이 한 줄만 HttpUploadService로 바꾼다 */
+/**
+ * 기본 export는 Mock(테스트·스토리북용). ★ 실사용 교체 지점은 useUploadService() 훅 —
+ * 인증된 ApiClient(AuthProvider 컨텍스트) 주입이 필요해 모듈 싱글턴이 아니라 훅으로 제공한다.
+ * 화면은 useUploadService()로 HttpUploadService를 얻는다.
+ */
 export const uploadService: UploadService = mockUploadService;

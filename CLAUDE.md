@@ -130,6 +130,15 @@ pnpm --filter @gachinol/reporter test       # jest-expo 단위 테스트
 pnpm --filter @gachinol/reporter typecheck  # shared dist 선행 빌드 필요
 ```
 
+```bash
+# 미디어 워커 (services/media-worker — BullMQ+FFmpeg). Redis+S3(MinIO) 선행: pnpm infra:up
+pnpm --filter @gachinol/media-worker dev        # tsx watch (인프로세스 부팅)
+pnpm --filter @gachinol/media-worker test       # 프로파일 + 실 FFmpeg 프로세서 단위 테스트
+
+# 미디어 파이프라인 E2E (업로드→트랜스코딩→프리뷰 완주). Postgres 필요, Redis/S3는 인프로세스 자동 조달
+pnpm --filter @gachinol/api test:e2e -- media-pipeline
+```
+
 ## 10. 컨벤션
 
 - 언어: **한국어 우선** (커밋 메시지·문서·주석). 코드 식별자·기술용어는 영어.
@@ -143,13 +152,27 @@ pnpm --filter @gachinol/reporter typecheck  # shared dist 선행 빌드 필요
 ## 11. 현재 상태 / 로드맵
 
 - **지금**: shared 완료 → **services/api 스캐폴딩+인증+콘텐츠 CRUD 완료**(Prisma·JWT 회전·상태 전이 전 구간·Swagger·시드),
-  `infra/docker-compose.yml`(항목 4 선행) 가동 → **apps/reporter Expo 스캐폴딩 완료**(로그인·목록·작성·상세·프리뷰 승인 —
-  영상 업로드는 UploadService Mock, 실 업로드·프리뷰 재생은 미디어 파이프라인 단계).
+  `infra/docker-compose.yml`(항목 4 선행) 가동 → **apps/reporter Expo 스캐폴딩 완료** →
+  **api 미디어 파이프라인 슬라이스(shared+api) 완료**: `media_assets` Prisma 모델·마이그레이션,
+  UploadModule(presigned PUT 발급 `POST /v1/contents/:id/upload-url` + 완료검증 `.../upload-complete`),
+  QueueModule(BullMQ 생산자 + QueueEvents 인프로세스 리스너 = **api 유일 DB 기록자**),
+  PipelineModule(잡이벤트→상태전이 매핑), ContentWorkflowService의 system-액터 전이(`applySystemTransition`, HTTP 미노출)·
+  업로드 user 전이(`beginUpload`/`completeUpload`/`failUpload`), MediaModule(S3 presign·MediaAssets 멱등 upsert),
+  `GET /v1/media-assets/:id/url`. 큐/S3 계약은 `packages/shared/src/media/media-job.ts`가 단일 원천.
+  Redis·S3 미설정 시 부팅은 유지(기능만 비활성) → **services/media-worker + reporter 실업로드 + E2E 완료**:
+  media-worker(BullMQ Worker·ffmpeg-static/ffprobe-static 트랜스코딩·프리뷰·썸네일·sha256, DB·토큰 무접근·S3만),
+  reporter `HttpUploadService`(presigned PUT·진행률·취소, `useUploadService()` 훅으로 교체)·프리뷰 서명URL 재생,
+  E2E 하네스(`services/api/test/media-pipeline.e2e-spec.ts` — 실 FFmpeg·실 BullMQ·인프로세스 Redis(redis-memory-server)·
+  S3(s3rver)·docker Postgres로 업로드→트랜스코딩→프리뷰→`awaiting_reporter_review` 한 바퀴 실증).
+  **풀 루프 완성**: 업로드→720p 렌디션·360p 프리뷰·썸네일 생성→기자 승인 대기까지 실제로 돈다.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
-  1. 업로드 presigned URL + BullMQ + media-worker 연동 (+기자 앱 RealUploadService 교체)
-  2. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
-  3. `infra` 배포 스크립트/IaC (docker-compose는 완료)
+  1. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
+  2. `analyzing`(ai-worker 비전/STT) 홉 도입 — 현재 `processing→preview_generating` 직행(map-legal)
+  3. `auto_edit`(자동편집 마스터·`edited_master`) · HLS 패키징 · 실시간 WS 진행률 푸시
+  4. `infra` 배포 스크립트/IaC (docker-compose는 완료)
   - ~~`apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)~~ ✅ 완료
+  - ~~업로드 presigned URL + BullMQ 생산자/QueueEvents (api 측)~~ ✅ 완료
+  - ~~media-worker(순수 FFmpeg) + reporter 실업로드 교체 → 풀 루프 실증~~ ✅ 완료
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
 ## 12. 미정 / 결정 대기 사항
