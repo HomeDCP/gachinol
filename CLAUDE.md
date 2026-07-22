@@ -165,14 +165,20 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   E2E 하네스(`services/api/test/media-pipeline.e2e-spec.ts` — 실 FFmpeg·실 BullMQ·인프로세스 Redis(redis-memory-server)·
   S3(s3rver)·docker Postgres로 업로드→트랜스코딩→프리뷰→`awaiting_reporter_review` 한 바퀴 실증).
   **풀 루프 완성**: 업로드→720p 렌디션·360p 프리뷰·썸네일 생성→기자 승인 대기까지 실제로 돈다.
+  → **services/ai-worker(analyzing 홉) 연동 완료**: ai-worker(Python/FastAPI 순수 컴퓨트 `POST /analyze` — DB·큐·토큰 무접근,
+  결정적 스텁+플러그블)를 api가 HTTP로 소비. 일반 콘텐츠는 `processing→analyzing`(analysis 큐 인큐)→ 인프로세스
+  Analysis 워커가 `AI_WORKER_URL/analyze` 호출 → `ai_analyses`((content_id,generation) unique, api 유일 기록자) 멱등
+  기록 + `analyzing→preview_generating`. 긴급(urgent)·AI 비활성(AI_WORKER_URL 미설정)은 `preview_generating` 직행
+  패스트트랙 보존(무회귀). 계약은 `packages/shared/src/analysis/analysis-job.ts`(AnalyzeRequest/Response·큐 wire)가 단일 원천.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
   1. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
-  2. `analyzing`(ai-worker 비전/STT) 홉 도입 — 현재 `processing→preview_generating` 직행(map-legal)
-  3. `auto_edit`(자동편집 마스터·`edited_master`) · HLS 패키징 · 실시간 WS 진행률 푸시
+  2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
+  3. ai-worker 실 제공자(OpenAI Whisper/비전) 주입 + 주간 추천(recommendationScore→weekly_recommendation) 파이프라인
   4. `infra` 배포 스크립트/IaC (docker-compose는 완료)
   - ~~`apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)~~ ✅ 완료
   - ~~업로드 presigned URL + BullMQ 생산자/QueueEvents (api 측)~~ ✅ 완료
   - ~~media-worker(순수 FFmpeg) + reporter 실업로드 교체 → 풀 루프 실증~~ ✅ 완료
+  - ~~`analyzing`(ai-worker 비전/STT) 홉 — HTTP 통합·ai_analyses·전이 재배선~~ ✅ 완료
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
 ## 12. 미정 / 결정 대기 사항

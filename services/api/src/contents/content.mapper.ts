@@ -1,4 +1,5 @@
 import type {
+  AiAnalysis,
   ChannelAccountId,
   Content,
   ContentDetail,
@@ -126,15 +127,16 @@ export const toStatusTransitionLog = (row: StatusTransitionLogRow): StatusTransi
   at: row.at.toISOString(),
 });
 
-/** 상세 합성 DTO — analysis/publications는 해당 테이블 도입 단계에서 채움 (계약 형태는 지금부터 준수) */
+/** 상세 합성 DTO — publications는 Distribute 단계에서 채움 (계약 형태는 지금부터 준수) */
 export const toContentDetail = (
   row: ContentRow,
   revisions: readonly RevisionRequestRow[],
   assets: readonly MediaAsset[] = [], // 미업로드 콘텐츠는 [] (기존 e2e 정합 보존)
+  analysis?: AiAnalysis, // 현 세대 분석 (미분석이면 undefined — 기존 정합 보존)
 ): ContentDetail => ({
   content: toContent(row),
   assets,
-  analysis: undefined, // ai_analyses 미도입 (다음 단계)
+  analysis,
   revisions: revisions.map(toRevisionRequest),
   publications: [], // publications 미도입 (Distribute 단계)
 });

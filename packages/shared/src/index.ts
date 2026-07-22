@@ -39,6 +39,7 @@ export * from './job/job';
 
 // analysis
 export * from './analysis/ai-analysis';
+export * from './analysis/analysis-job';
 
 // recommendation
 export * from './recommendation/weekly-recommendation';

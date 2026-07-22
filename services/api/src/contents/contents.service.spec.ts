@@ -25,7 +25,8 @@ describe('ContentsService', () => {
       ...data,
     }));
     const assets = new MediaAssetsService(prisma, { bucket: 'gachinol-media' } as never);
-    return { prisma, service: new ContentsService(prisma, assets) };
+    const aiAnalyses = { findCurrent: jest.fn().mockResolvedValue(null) };
+    return { prisma, service: new ContentsService(prisma, assets, aiAnalyses as never) };
   };
 
   const draftDto = (over: Record<string, unknown> = {}) => ({

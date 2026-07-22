@@ -149,6 +149,19 @@ export class MediaAssetsService {
     });
   }
 
+  /**
+   * 실측 durationSec 조회 — 트랜스코딩 산출물이 프로브해 저장한 값(원본 자산엔 없음, 항상 null).
+   * 분석 인큐가 duration 힌트를 채우는 데 쓴다. durationSec은 세대 불변이라 세대 무관 최신값을 취한다.
+   */
+  async findDurationSec(contentId: string): Promise<number | null> {
+    const row = await this.prisma.mediaAsset.findFirst({
+      where: { contentId, durationSec: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { durationSec: true },
+    });
+    return row?.durationSec ?? null;
+  }
+
   /** 상세 DTO용 — 현 세대 산출물 (original 포함) */
   async listForContent(contentId: string, generation: number): Promise<MediaAssetRow[]> {
     return this.prisma.mediaAsset.findMany({

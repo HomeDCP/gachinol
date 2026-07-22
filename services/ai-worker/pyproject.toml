@@ -1,0 +1,34 @@
+[project]
+name = "gachinol-ai-worker"
+version = "0.1.0"
+description = "gachinol AI 분석 워커 — 순수 HTTP 컴퓨트(비전+텍스트). DB·큐·JWT 미접근."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+]
+
+[project.optional-dependencies]
+# httpx: FastAPI TestClient(+실 제공자 fetch). pytest/ruff: 테스트·린트
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.7"]
+# AI_PROVIDER=openai 확장점 (기본 미설치)
+real = ["openai>=1.50"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app", "app.analyzers"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -30,6 +30,14 @@ export const envSchema = z
     MEDIA_RENDITION_HEIGHT: z.coerce.number().int().default(720),
     MEDIA_PREVIEW_HEIGHT: z.coerce.number().int().default(360),
     MEDIA_PREVIEW_BITRATE_KBPS: z.coerce.number().int().default(600),
+    // AI 분석 홉 — AI_WORKER_URL 미설정 시 분석 큐 비활성(transcode→preview_generating 직행 폴백).
+    // REDIS_URL && AI_WORKER_URL 둘 다 설정돼야 analysis 큐·워커 생성(회귀0 게이트).
+    // OPENAI_API_KEY 등 ai-worker 전용 env는 여기에 넣지 않는다(ai-worker 전용).
+    AI_WORKER_URL: z.string().optional(),
+    AI_WORKER_TIMEOUT_MS: z.coerce.number().int().default(120000), // 실 STT 여유
+    AI_ANALYSIS_JOB_ATTEMPTS: z.coerce.number().int().default(3),
+    AI_ANALYSIS_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
+    AI_ANALYSIS_CONCURRENCY: z.coerce.number().int().default(4),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',

@@ -22,7 +22,8 @@
         "REDIS_URL",
         "S3_*",
         "MEDIA_*",
-        "PREVIEW_*"
+        "PREVIEW_*",
+        "AI_*"
       ]
     },
     "lint": {},
@@ -39,7 +40,8 @@
         "REDIS_URL",
         "S3_*",
         "MEDIA_*",
-        "PREVIEW_*"
+        "PREVIEW_*",
+        "AI_*"
       ]
     },
     "clean": {

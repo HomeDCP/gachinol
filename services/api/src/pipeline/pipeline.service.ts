@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import type { JobResultMap, MediaJobData } from '@gachinol/shared';
+import type { AnalysisJobData, AnalysisJobResult, JobResultMap, MediaJobData } from '@gachinol/shared';
 import type { Job, Queue, QueueEvents } from 'bullmq';
 import type { Prisma } from '@prisma/client';
 import { ContentWorkflowService } from '../contents/content-workflow.service';
@@ -7,14 +7,18 @@ import { MediaAssetsService } from '../media/media-assets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueProducerService } from '../queue/queue-producer.service';
 import { MEDIA_QUEUE, MEDIA_QUEUE_EVENTS } from '../queue/queue.constants';
+import { ANALYSIS_QUEUE, ANALYSIS_QUEUE_EVENTS } from '../analysis/analysis.constants';
+import { AnalysisProducerService } from '../analysis/analysis-producer.service';
+import { AiAnalysesService } from '../analysis/ai-analyses.service';
 
 /**
- * QueueEvents 소비자 — api가 유일한 DB 기록자. 워커 잡 결과를 인프로세스로 수신해
- * MediaAsset upsert + ContentWorkflowService.applySystemTransition으로 상태전이.
+ * QueueEvents 소비자 — api가 유일한 DB 기록자. media·analysis 두 큐를 인프로세스로 소비해
+ * MediaAsset/AiAnalysis upsert + ContentWorkflowService.applySystemTransition으로 상태전이.
  * worker→api HTTP 콜백 없음. 잡이벤트→상태전이 매핑은 shared 전이맵을 준수(전부 map-legal).
  *
- * analyzing 홉 스킵(유보): processing→preview_generating 직행(map-legal, 긴급 패스트트랙 경로 재사용).
- * AI 분석 도입 시 transcode-completed 타깃을 analyzing으로 확장(analysis-completed에서 analyzing→preview_generating).
+ * analyzing 홉(구현됨): 일반 콘텐츠는 transcode 완료 후 processing→analyzing으로 가서 분석 잡을 인큐하고,
+ * 분석 완료 시 analyzing→preview_generating으로 진행한다. 긴급(priority='urgent') 또는 AI 비활성
+ * (AI_WORKER_URL 미설정)일 때만 processing→preview_generating 직행(긴급 패스트트랙·무회귀 폴백).
  */
 @Injectable()
 export class PipelineService implements OnModuleInit {
@@ -27,11 +31,20 @@ export class PipelineService implements OnModuleInit {
     private readonly assets: MediaAssetsService,
     private readonly producer: QueueProducerService,
     private readonly prisma: PrismaService,
+    @Inject(ANALYSIS_QUEUE_EVENTS) private readonly analysisEvents: QueueEvents | null,
+    @Inject(ANALYSIS_QUEUE) private readonly analysisQueue: Queue | null,
+    private readonly analysisProducer: AnalysisProducerService,
+    private readonly aiAnalyses: AiAnalysesService,
   ) {}
 
   onModuleInit(): void {
+    this.initMediaListeners();
+    this.initAnalysisListeners();
+  }
+
+  private initMediaListeners(): void {
     if (!this.events || !this.queue) {
-      this.logger.warn('Redis 미설정 — 파이프라인 리스너 비활성(잡 이벤트 미수신)');
+      this.logger.warn('Redis 미설정 — 미디어 파이프라인 리스너 비활성(잡 이벤트 미수신)');
       return;
     }
     const q = this.queue;
@@ -50,9 +63,34 @@ export class PipelineService implements OnModuleInit {
     // 부팅 리컨사일 — QueueEvents는 lastEventId 미지정 시 '$'(신규 이벤트만)로 동작하므로
     // api 다운타임/재시작 중 워커가 끝낸 completed/failed는 재전달되지 않는다.
     // 종단 잡을 스캔해 미반영분을 재조정한다(핸들러는 ensure 체이닝·(bucket,storageKey) 멱등이라 재적용 안전).
-    // 베스트에포트 — Redis 미가용/종료 시엔 경고만(라이브 리스너는 별개로 동작).
     void this.reconcilePending(q).catch((e) =>
       this.logger.warn(`파이프라인 부팅 리컨사일 생략: ${e instanceof Error ? e.message : e}`),
+    );
+  }
+
+  private initAnalysisListeners(): void {
+    if (!this.analysisEvents || !this.analysisQueue) {
+      this.logger.warn('분석 큐 미설정 — 분석 파이프라인 리스너 비활성(직행 폴백)');
+      return;
+    }
+    const aq = this.analysisQueue;
+    this.analysisEvents.on(
+      'active',
+      ({ jobId }) => void this.safe('analysis-active', () => this.onAnalysisActive(aq, jobId)),
+    );
+    this.analysisEvents.on(
+      'completed',
+      ({ jobId }) =>
+        void this.safe('analysis-completed', () => this.onAnalysisCompleted(aq, jobId)),
+    );
+    this.analysisEvents.on(
+      'failed',
+      ({ jobId }) => void this.safe('analysis-failed', () => this.onAnalysisFailed(aq, jobId)),
+    );
+    this.logger.log('분석 파이프라인 리스너 활성');
+
+    void this.reconcileAnalysisPending(aq).catch((e) =>
+      this.logger.warn(`분석 부팅 리컨사일 생략: ${e instanceof Error ? e.message : e}`),
     );
   }
 
@@ -75,6 +113,25 @@ export class PipelineService implements OnModuleInit {
     );
   }
 
+  /** 분석 큐 부팅 리컨사일 — onAnalysisCompleted/onAnalysisFailed 재사용(멱등 upsert·ensure 체이닝) */
+  private async reconcileAnalysisPending(queue: Queue): Promise<void> {
+    const completed = await queue.getJobs(['completed'], 0, -1, true);
+    for (const job of completed) {
+      if (job?.id)
+        await this.safe('reconcile-analysis-completed', () =>
+          this.onAnalysisCompleted(queue, job.id!),
+        );
+    }
+    const failed = await queue.getJobs(['failed'], 0, -1, true);
+    for (const job of failed) {
+      if (job?.id)
+        await this.safe('reconcile-analysis-failed', () => this.onAnalysisFailed(queue, job.id!));
+    }
+    this.logger.log(
+      `분석 리컨사일 완료 — completed=${completed.length}, failed=${failed.length}`,
+    );
+  }
+
   private async safe(evt: string, fn: () => Promise<void>): Promise<void> {
     try {
       await fn();
@@ -82,6 +139,8 @@ export class PipelineService implements OnModuleInit {
       this.logger.error(`파이프라인 ${evt} 처리 실패: ${e instanceof Error ? e.message : e}`);
     }
   }
+
+  // ── media 큐 핸들러 ──────────────────────────────────────
 
   private async onActive(queue: Queue, jobId: string): Promise<void> {
     const job = await queue.getJob(jobId);
@@ -110,18 +169,32 @@ export class PipelineService implements OnModuleInit {
         for (const asset of result.assets) {
           await this.assets.upsertOutput(contentId, generation, jobId, asset);
         }
-        // ensure(active 유실 방어) → processing→preview_generating (analyzing 스킵)
+        // ensure(active 유실 방어)
         await this.workflow.applySystemTransition(contentId, 'uploaded', 'processing', jobId);
-        const hop = await this.workflow.applySystemTransition(
-          contentId,
-          'processing',
-          'preview_generating',
-          jobId,
-        );
-        // 커밋 후 후속 인큐 (preview + thumbnail 병렬)
-        if (hop.applied) {
-          const content = await this.loadContentRow(contentId);
-          if (content) {
+
+        // 분기: 일반 + AI 활성 → analyzing(분석 인큐) / 긴급 or AI 비활성 → preview_generating 직행
+        const content = await this.loadContentRow(contentId);
+        const analyze = content?.priority !== 'urgent' && this.analysisProducer.enabled;
+        if (analyze) {
+          const hop = await this.workflow.applySystemTransition(
+            contentId,
+            'processing',
+            'analyzing',
+            jobId,
+          );
+          if (hop.applied && content) {
+            await this.analysisProducer.enqueueAnalysis(content); // 분석(임계경로)
+            await this.producer.enqueueThumbnail(content); // 썸네일 병렬(비차단)
+          }
+        } else {
+          // 긴급 패스트트랙 또는 AI 비활성 → 기존 직행(map-legal) 보존(무회귀 폴백)
+          const hop = await this.workflow.applySystemTransition(
+            contentId,
+            'processing',
+            'preview_generating',
+            jobId,
+          );
+          if (hop.applied && content) {
             await this.producer.enqueuePreview(content);
             await this.producer.enqueueThumbnail(content);
           }
@@ -159,33 +232,103 @@ export class PipelineService implements OnModuleInit {
       return; // BullMQ 자동 재시도 — 콘텐츠 무변
     }
 
-    const lastError: Prisma.ContentUncheckedUpdateManyInput = {
-      lastError: {
-        message: (job.failedReason ?? '알 수 없는 실패').slice(0, 500),
-        at: new Date().toISOString(),
-      } as unknown as Prisma.InputJsonValue,
-    };
+    const lastError = this.lastErrorMutate(job);
 
     if (type === 'transcode') {
       await this.workflow.applySystemTransition(contentId, 'uploaded', 'processing', jobId);
-      await this.workflow.applySystemTransition(contentId, 'processing', 'processing_failed', jobId, {
-        mutate: lastError,
-      });
+      await this.workflow.applySystemTransition(
+        contentId,
+        'processing',
+        'processing_failed',
+        jobId,
+        lastError,
+      );
     } else if (type === 'preview') {
       await this.workflow.applySystemTransition(
         contentId,
         'preview_generating',
         'preview_failed',
         jobId,
-        { mutate: lastError },
+        lastError,
       );
     }
     // thumbnail failed: 무시(best-effort)
   }
 
+  // ── analysis 큐 핸들러 ───────────────────────────────────
+
+  /** 분석 active: 무동작(디버그 로그) — 전이는 transcode-completed의 인큐-애프터-커밋이 보장 */
+  private async onAnalysisActive(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const { payload } = job.data as AnalysisJobData;
+    this.logger.debug(`analysis active (contentId=${payload.contentId as unknown as string})`);
+  }
+
+  /**
+   * 분석 완료 — ai_analyses upsert(유일 기록자) 먼저 → ensure 체이닝 → analyzing→preview_generating.
+   * ensure 홉은 from 불일치 시 무해 no-op(유실/재수신 수렴). hop.applied 가드로 reconcile 재적용 시 중복 인큐 방지.
+   */
+  private async onAnalysisCompleted(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const { payload, generation } = job.data as AnalysisJobData;
+    const contentId = payload.contentId as unknown as string;
+    const result = job.returnvalue as AnalysisJobResult;
+
+    await this.aiAnalyses.upsert(contentId, generation, jobId, result); // 유일 기록자, 멱등
+    // ensure 체이닝(유실/재수신 수렴)
+    await this.workflow.applySystemTransition(contentId, 'uploaded', 'processing', jobId);
+    await this.workflow.applySystemTransition(contentId, 'processing', 'analyzing', jobId);
+    const hop = await this.workflow.applySystemTransition(
+      contentId,
+      'analyzing',
+      'preview_generating',
+      jobId,
+    );
+    if (hop.applied) {
+      const content = await this.loadContentRow(contentId);
+      if (content) await this.producer.enqueuePreview(content); // 프리뷰는 여기서(임계경로)
+    }
+  }
+
+  /** 분석 실패 소진 — analyzing→analysis_failed(+lastError). 미소진은 BullMQ 자동 재시도. */
+  private async onAnalysisFailed(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const { payload } = job.data as AnalysisJobData;
+    const contentId = payload.contentId as unknown as string;
+
+    if (!this.isExhausted(job)) {
+      this.logger.warn(`분석 잡 실패(재시도 예정) jobId=${jobId}`);
+      return;
+    }
+    const lastError = this.lastErrorMutate(job);
+    await this.workflow.applySystemTransition(contentId, 'uploaded', 'processing', jobId);
+    await this.workflow.applySystemTransition(contentId, 'processing', 'analyzing', jobId);
+    await this.workflow.applySystemTransition(
+      contentId,
+      'analyzing',
+      'analysis_failed',
+      jobId,
+      lastError,
+    );
+  }
+
   private onProgress(jobId: string, data: unknown): void {
     // 형태 정합만 확인(ContentProgressPayload) — 실제 WS emit은 후속 슬라이스
     this.logger.debug(`progress jobId=${jobId} ${JSON.stringify(data)}`);
+  }
+
+  private lastErrorMutate(job: Job): { mutate: Prisma.ContentUncheckedUpdateManyInput } {
+    return {
+      mutate: {
+        lastError: {
+          message: (job.failedReason ?? '알 수 없는 실패').slice(0, 500),
+          at: new Date().toISOString(),
+        } as unknown as Prisma.InputJsonValue,
+      },
+    };
   }
 
   /** 소진 판정 — attemptsMade >= (opts.attempts ?? 1)이면 terminal(dead) */

@@ -10,6 +10,7 @@ import type {
 } from '@gachinol/shared';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
+import { AnalysisProducerService } from '../analysis/analysis-producer.service';
 import { QueueProducerService } from '../queue/queue-producer.service';
 import { toContent } from './content.mapper';
 import { ContentWorkflowService } from './content-workflow.service';
@@ -34,6 +35,7 @@ export class ContentsController {
     private readonly contents: ContentsService,
     private readonly workflow: ContentWorkflowService,
     private readonly producer: QueueProducerService,
+    private readonly analysisProducer: AnalysisProducerService,
   ) {}
 
   @Post()
@@ -123,8 +125,10 @@ export class ContentsController {
   @ApiOperation({ summary: '실패 재시도 — 목적지는 shared CONTENT_RETRY_TARGET' })
   async retry(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
     const updated = await this.workflow.retry(id, user);
-    // 인큐-애프터-커밋 — 해당 실패 복귀 상태의 잡 재큐(Redis 미설정 시 무동작)
+    // 인큐-애프터-커밋 — 해당 실패 복귀 상태의 잡 재큐(Redis 미설정 시 무동작).
+    // media(processing/preview_generating)·analysis(analyzing) 생산자는 자기 상태만 처리·그 외 no-op이라 안전 병존.
     await this.producer.requeueForStatus(updated);
+    await this.analysisProducer.requeueForStatus(updated);
     return toContent(updated);
   }
 
