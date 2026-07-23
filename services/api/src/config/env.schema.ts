@@ -38,6 +38,13 @@ export const envSchema = z
     AI_ANALYSIS_JOB_ATTEMPTS: z.coerce.number().int().default(3),
     AI_ANALYSIS_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
     AI_ANALYSIS_CONCURRENCY: z.coerce.number().int().default(4),
+    // 다채널 송출(Distribute) — 큐 게이트는 REDIS_URL만(카카오 목이 배포 기본, 외부 URL 불요).
+    // KAKAO_* 둘 다 설정 시에만 실 카카오 어댑터 주입(아니면 목). 시크릿 — 값은 .env로만.
+    KAKAO_REST_API_KEY: z.string().optional(),
+    KAKAO_CHANNEL_ADMIN_KEY: z.string().optional(),
+    PUBLISH_JOB_ATTEMPTS: z.coerce.number().int().default(3),
+    PUBLISH_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
+    PUBLISH_CONCURRENCY: z.coerce.number().int().default(4),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',

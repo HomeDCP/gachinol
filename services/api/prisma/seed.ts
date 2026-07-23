@@ -72,6 +72,33 @@ export async function runSeed(prisma: PrismaClient, admin: SeedAdminCredentials)
     });
   }
 
+  // 지사 카톡 채널 시드 — 애월·제주시 부활 MVP의 기본 송출처(vod_publish, connected).
+  // 멱등 키 (platform, externalChannelId). credentialRef는 이름만(시크릿 값 금지).
+  const channelSeeds: { stationCode: 'aewol' | 'jeju-si'; externalChannelId: string; credentialRef: string }[] = [
+    { stationCode: 'aewol', externalChannelId: 'kakao-aewol', credentialRef: 'kakao:aewol' },
+    { stationCode: 'jeju-si', externalChannelId: 'kakao-jeju-si', credentialRef: 'kakao:jeju-si' },
+  ];
+  for (const ch of channelSeeds) {
+    const station = await prisma.station.findUnique({ where: { code: ch.stationCode } });
+    if (!station) continue;
+    await prisma.channelAccount.upsert({
+      where: { platform_externalChannelId: { platform: 'kakao', externalChannelId: ch.externalChannelId } },
+      create: {
+        id: uuidv7(),
+        platform: 'kakao',
+        stationId: station.id,
+        name: `${station.name} 카카오톡 채널`,
+        externalChannelId: ch.externalChannelId,
+        credentialRef: ch.credentialRef,
+        capabilities: ['vod_publish'],
+        status: 'connected',
+        connectedAt: now,
+      },
+      // 멱등 갱신 — 이름·연결 상태만 보정(운영 회수 결과 보존 위해 status는 건드리지 않는다)
+      update: { name: `${station.name} 카카오톡 채널`, stationId: station.id },
+    });
+  }
+
   const email = admin.email.trim().toLowerCase();
   const passwordHash = await argon2.hash(admin.password, { type: argon2.argon2id });
   await prisma.user.upsert({

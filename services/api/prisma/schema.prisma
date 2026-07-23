@@ -1,8 +1,9 @@
 // 규약: 테이블·컬럼 snake_case(@map/@@map), enum성 컬럼은 전부 String(text) —
 // 값은 @gachinol/shared의 snake_case 문자열 그대로 (Prisma enum·CHECK 제약 금지, 검증은 앱 경계).
 // ID는 앱이 UUID v7 발급 (시간순 정렬·커서 겸용). 타임스탬프는 timestamptz(3).
-// 이번 범위 밖 도메인(publications·channel_accounts·커머스·라이브) 테이블 선반영 금지.
+// 이번 범위 밖 도메인(커머스·라이브) 테이블 선반영 금지.
 // media_assets는 media-worker 연동 단계에서 도입됨(아래 model MediaAsset).
+// channel_accounts·publications는 다채널 송출 슬라이스에서 도입됨(아래 model ChannelAccount·Publication).
 
 generator client {
   provider = "prisma-client-js"
@@ -28,8 +29,9 @@ model Station {
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  users    User[]
-  contents Content[]
+  users           User[]
+  contents        Content[]
+  channelAccounts ChannelAccount[]
 
   @@index([kind, status])
   @@map("stations")
@@ -106,6 +108,7 @@ model Content {
   revisionRequests RevisionRequest[]
   mediaAssets      MediaAsset[]
   aiAnalyses       AiAnalysis[]
+  publications     Publication[]
 
   @@index([stationId, status, publishedAt(sort: Desc)]) // shared 권고: "지사별 최신 송출"
   @@index([stationId, createdAt(sort: Desc)]) // 지사별 목록
@@ -182,6 +185,63 @@ model AiAnalysis {
   @@unique([contentId, generation]) // ★ 멱등 upsert 키 (재수신·리컨사일 하드 가드)
   @@index([contentId, generation]) // "이 콘텐츠 현 세대 분석" 단건 조회
   @@map("ai_analyses")
+}
+
+// 송출 채널 계정 — 지사별 카톡채널 + 센터 SNS 계정들이 이 테이블의 행.
+// enum성 없음(platform·status는 shared snake_case 문자열). credential_ref는 시크릿 저장소 키 '이름만'.
+model ChannelAccount {
+  id                String    @id
+  platform          String // Platform (kakao/youtube/…)
+  stationId         String?   @map("station_id") // 지사 소유면 지사 id, null = 센터 공용 SNS
+  name              String // 예: '애월 마을방송국 카카오톡 채널'
+  externalChannelId String    @map("external_channel_id") // 플랫폼 측 채널 id
+  credentialRef     String    @map("credential_ref") // ★ 시크릿 저장소 키 이름만 — 토큰값 저장 금지
+  capabilities      String[]  @default([]) // ChannelCapability[] — 카톡='vod_publish'
+  status            String    @default("connected") // ChannelAccountStatus
+  connectedAt       DateTime? @map("connected_at") @db.Timestamptz(3)
+  expiresAt         DateTime? @map("expires_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  station      Station?      @relation(fields: [stationId], references: [id])
+  publications Publication[]
+
+  @@unique([platform, externalChannelId]) // shared: "(platform, externalChannelId) unique"
+  @@index([stationId, platform, status]) // 기본 송출처 해석("지사 X의 connected kakao 채널") 핫패스
+  @@map("channel_accounts")
+}
+
+// 송출 기록: (소스 × 채널) 1건. 재송출은 새 행(이력 보존). Content 상태와 독립된 채널 단위 상태머신.
+// live_session_id는 FK 없는 nullable 예약(live_sessions 미도입) — 이번 슬라이스는 항상 source_kind='content'.
+// requested_by_user_id는 FK 없음(StatusTransitionLog.actorUserId 선례, null=시스템).
+// ★ 부분 유니크(멱등 하드가드)는 Prisma 미지원 → 마이그레이션 수기 SQL:
+//   UNIQUE (content_id, channel_account_id) WHERE status IN ('queued','publishing','published') AND content_id IS NOT NULL
+//   (failed/retracted/canceled 제외 → 재송출은 새 행 허용).
+model Publication {
+  id                String    @id
+  sourceKind        String    @map("source_kind") // PublicationSource.kind — 항상 'content'
+  contentId         String?   @map("content_id") // source=content일 때. FK→contents Cascade
+  liveSessionId     String?   @map("live_session_id") // FK 없음(live 미도입) — 항상 null
+  channelAccountId  String    @map("channel_account_id") // FK→channel_accounts Restrict
+  platform          String // 채널서 복사 비정규화(조회 편의)
+  status            String    @default("queued") // PublicationStatus 6종
+  externalPostId    String?   @map("external_post_id")
+  externalUrl       String?   @map("external_url")
+  attempts          Int       @default(0)
+  errorMessage      String?   @map("error_message")
+  requestedByUserId String?   @map("requested_by_user_id") // FK 없음. null=시스템
+  queuedAt          DateTime  @default(now()) @map("queued_at") @db.Timestamptz(3)
+  publishedAt       DateTime? @map("published_at") @db.Timestamptz(3)
+  retractedAt       DateTime? @map("retracted_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  content        Content?       @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Restrict)
+
+  @@index([contentId, createdAt(sort: Desc)]) // GET /contents/:id/publications + ContentDetail
+  @@index([status]) // 관제/리컨사일 스캔
+  @@map("publications")
 }
 
 model StatusTransitionLog {

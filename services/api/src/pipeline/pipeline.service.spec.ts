@@ -23,7 +23,8 @@ const makeJob = (over: Record<string, unknown>) => ({
 /**
  * setup — analysisEnabled 토글로 AI 활성/비활성 두 경로를 특성화.
  * 생성자 인자 순서: (mediaEvents, mediaQueue, workflow, assets, producer, prisma,
- *   analysisEvents, analysisQueue, analysisProducer, aiAnalyses)
+ *   analysisEvents, analysisQueue, analysisProducer, aiAnalyses,
+ *   distributionEvents, distributionQueue, publications)
  */
 const setup = (opts: { analysisEnabled?: boolean; content?: ReturnType<typeof contentRow> } = {}) => {
   const analysisEnabled = opts.analysisEnabled ?? false;
@@ -36,12 +37,21 @@ const setup = (opts: { analysisEnabled?: boolean; content?: ReturnType<typeof co
   };
   const prisma = {
     content: { findUnique: jest.fn().mockResolvedValue(opts.content ?? contentRow()) },
+    publication: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const analysisProducer = {
     enabled: analysisEnabled,
     enqueueAnalysis: jest.fn().mockResolvedValue(undefined),
   };
   const aiAnalyses = { upsert: jest.fn().mockResolvedValue(undefined) };
+  const publications = {
+    beginPublishing: jest.fn().mockResolvedValue(true),
+    resolveResult: jest.fn().mockResolvedValue(undefined),
+    failExhausted: jest.fn().mockResolvedValue(undefined),
+    summarizeForContent: jest
+      .fn()
+      .mockResolvedValue({ anyPending: false, anyFailed: false, allPublished: false }),
+  };
   const service = new PipelineService(
     {} as never,
     queue as never,
@@ -53,8 +63,11 @@ const setup = (opts: { analysisEnabled?: boolean; content?: ReturnType<typeof co
     queue as never,
     analysisProducer as never,
     aiAnalyses as never,
+    {} as never,
+    queue as never,
+    publications as never,
   );
-  return { queue, workflow, assets, producer, analysisProducer, aiAnalyses, service };
+  return { queue, workflow, assets, producer, analysisProducer, aiAnalyses, publications, prisma, service };
 };
 
 describe('PipelineService — 잡이벤트→상태전이 매핑', () => {

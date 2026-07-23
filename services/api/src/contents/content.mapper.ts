@@ -13,6 +13,7 @@ import type {
   ISODateString,
   JobId,
   ProgramCategory,
+  Publication,
   RevisionRequest,
   RevisionRequestId,
   RevisionRequesterRole,
@@ -127,16 +128,17 @@ export const toStatusTransitionLog = (row: StatusTransitionLogRow): StatusTransi
   at: row.at.toISOString(),
 });
 
-/** 상세 합성 DTO — publications는 Distribute 단계에서 채움 (계약 형태는 지금부터 준수) */
+/** 상세 합성 DTO — publications는 매퍼가 이미 shared 투영한 배열을 주입받는다(미송출=[]). */
 export const toContentDetail = (
   row: ContentRow,
   revisions: readonly RevisionRequestRow[],
   assets: readonly MediaAsset[] = [], // 미업로드 콘텐츠는 [] (기존 e2e 정합 보존)
   analysis?: AiAnalysis, // 현 세대 분석 (미분석이면 undefined — 기존 정합 보존)
+  publications: readonly Publication[] = [], // 미송출 콘텐츠는 [] (기존 e2e 정합 보존)
 ): ContentDetail => ({
   content: toContent(row),
   assets,
   analysis,
   revisions: revisions.map(toRevisionRequest),
-  publications: [], // publications 미도입 (Distribute 단계)
+  publications,
 });

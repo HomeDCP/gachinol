@@ -256,6 +256,33 @@ export class ContentWorkflowService {
     return { applied };
   }
 
+  /**
+   * 송출 트리거 CAS — center_approved → publishing (센터 액터). 트리거 멱등의 1차 관문:
+   * 동시/중복 distribute 중 하나만 승리(count=0이면 applyHop이 409 conflict throw).
+   * 규칙은 shared assertAllowed(center_approved→publishing)로 검증(사본 없음). Publication 생성과 동일 tx에서 호출.
+   * publishing 자동 연쇄는 없다 — 실제 채널 송출은 Distribute 생산자(인큐-애프터-커밋)의 몫.
+   */
+  async beginPublishing(tx: Tx, content: ContentRow, user: User): Promise<void> {
+    const from: ContentStatus = 'center_approved';
+    const to: ContentStatus = 'publishing';
+    this.requireCenterActor(user);
+    this.assertAllowed(from, to);
+    await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
+  }
+
+  /**
+   * 채널 단위 재시도 시 content publish_failed → publishing 복귀 (센터 액터).
+   * 이미 publishing(다른 채널이 진행 중)이면 무해 skip. idempotent CAS라 경합도 무해.
+   */
+  async resumePublishing(tx: Tx, content: ContentRow, user: User): Promise<void> {
+    if (content.status !== 'publish_failed') return; // 이미 publishing 등 — skip
+    const from: ContentStatus = 'publish_failed';
+    const to: ContentStatus = 'publishing';
+    this.requireCenterActor(user);
+    this.assertAllowed(from, to);
+    await this.applyHop(tx, content, from, to, { type: 'user', user }, {}, /* idempotent */ true);
+  }
+
   /** 업로드 시작 — {draft|upload_failed} → uploading (소유 기자). 자산 생성·인큐는 UploadService 몫 */
   async beginUpload(contentId: string, user: User): Promise<ContentRow> {
     return this.userHop(contentId, user, 'uploading');

@@ -19,6 +19,8 @@ import type { PageParams } from '../common/pagination/pagination.util';
 import { AiAnalysesService } from '../analysis/ai-analyses.service';
 import { toAiAnalysis } from '../analysis/ai-analysis.mapper';
 import { REVIEW_POLICY_DEFAULTS } from '../config/review-policy.config';
+import { PublicationsService } from '../distribution/publications.service';
+import { toPublication } from '../distribution/publication.mapper';
 import { MediaAssetsService } from '../media/media-assets.service';
 import { toMediaAsset } from '../media/media-asset.mapper';
 import { PrismaService } from '../prisma/prisma.service';
@@ -44,6 +46,7 @@ export class ContentsService {
     private readonly prisma: PrismaService,
     private readonly assets: MediaAssetsService,
     private readonly aiAnalyses: AiAnalysesService,
+    private readonly publications: PublicationsService,
   ) {}
 
   /**
@@ -110,11 +113,14 @@ export class ContentsService {
     const assetRows = await this.assets.listForContent(id, row.generation);
     // 현 세대 AI 분석 (미분석이면 null → undefined)
     const analysisRow = await this.aiAnalyses.findCurrent(id, row.generation);
+    // 채널별 송출 상태 (미송출이면 행 0 → publications:[])
+    const publicationRows = await this.publications.listForContent(id);
     return toContentDetail(
       row,
       revisions,
       assetRows.map(toMediaAsset),
       analysisRow ? toAiAnalysis(analysisRow) : undefined,
+      publicationRows.map(toPublication),
     );
   }
 

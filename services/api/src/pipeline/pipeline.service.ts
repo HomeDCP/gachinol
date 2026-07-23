@@ -10,6 +10,9 @@ import { MEDIA_QUEUE, MEDIA_QUEUE_EVENTS } from '../queue/queue.constants';
 import { ANALYSIS_QUEUE, ANALYSIS_QUEUE_EVENTS } from '../analysis/analysis.constants';
 import { AnalysisProducerService } from '../analysis/analysis-producer.service';
 import { AiAnalysesService } from '../analysis/ai-analyses.service';
+import { DISTRIBUTION_QUEUE, DISTRIBUTION_QUEUE_EVENTS } from '../distribution/distribution.constants';
+import { PublicationsService } from '../distribution/publications.service';
+import type { PublishJobData, PublishJobResult } from '../distribution/distribution-job';
 
 /**
  * QueueEvents 소비자 — api가 유일한 DB 기록자. media·analysis 두 큐를 인프로세스로 소비해
@@ -35,11 +38,15 @@ export class PipelineService implements OnModuleInit {
     @Inject(ANALYSIS_QUEUE) private readonly analysisQueue: Queue | null,
     private readonly analysisProducer: AnalysisProducerService,
     private readonly aiAnalyses: AiAnalysesService,
+    @Inject(DISTRIBUTION_QUEUE_EVENTS) private readonly distributionEvents: QueueEvents | null,
+    @Inject(DISTRIBUTION_QUEUE) private readonly distributionQueue: Queue | null,
+    private readonly publications: PublicationsService,
   ) {}
 
   onModuleInit(): void {
     this.initMediaListeners();
     this.initAnalysisListeners();
+    this.initDistributionListeners();
   }
 
   private initMediaListeners(): void {
@@ -94,6 +101,31 @@ export class PipelineService implements OnModuleInit {
     );
   }
 
+  private initDistributionListeners(): void {
+    if (!this.distributionEvents || !this.distributionQueue) {
+      this.logger.warn('송출 큐 미설정 — 송출 파이프라인 리스너 비활성(distribute는 queued만)');
+      return;
+    }
+    const dq = this.distributionQueue;
+    this.distributionEvents.on(
+      'active',
+      ({ jobId }) => void this.safe('publish-active', () => this.onPublishActive(dq, jobId)),
+    );
+    this.distributionEvents.on(
+      'completed',
+      ({ jobId }) => void this.safe('publish-completed', () => this.onPublishCompleted(dq, jobId)),
+    );
+    this.distributionEvents.on(
+      'failed',
+      ({ jobId }) => void this.safe('publish-failed', () => this.onPublishFailed(dq, jobId)),
+    );
+    this.logger.log('송출 파이프라인 리스너 활성');
+
+    void this.reconcileDistributionPending(dq).catch((e) =>
+      this.logger.warn(`송출 부팅 리컨사일 생략: ${e instanceof Error ? e.message : e}`),
+    );
+  }
+
   /**
    * 부팅 시 큐의 completed/failed 잡을 스캔해 상태전이/자산 upsert 미반영분을 재조정한다.
    * onCompleted/onFailed와 동일 경로를 재사용 — 이미 반영된 잡은 전이맵이 map-legal이 아니거나
@@ -129,6 +161,23 @@ export class PipelineService implements OnModuleInit {
     }
     this.logger.log(
       `분석 리컨사일 완료 — completed=${completed.length}, failed=${failed.length}`,
+    );
+  }
+
+  /** 송출 큐 부팅 리컨사일 — onPublishCompleted/onPublishFailed 재사용(상태 CAS·applySystemTransition from-가드 멱등) */
+  private async reconcileDistributionPending(queue: Queue): Promise<void> {
+    const completed = await queue.getJobs(['completed'], 0, -1, true);
+    for (const job of completed) {
+      if (job?.id)
+        await this.safe('reconcile-publish-completed', () => this.onPublishCompleted(queue, job.id!));
+    }
+    const failed = await queue.getJobs(['failed'], 0, -1, true);
+    for (const job of failed) {
+      if (job?.id)
+        await this.safe('reconcile-publish-failed', () => this.onPublishFailed(queue, job.id!));
+    }
+    this.logger.log(
+      `송출 리컨사일 완료 — completed=${completed.length}, failed=${failed.length}`,
     );
   }
 
@@ -313,6 +362,105 @@ export class PipelineService implements OnModuleInit {
       jobId,
       lastError,
     );
+  }
+
+  // ── distribution 큐 핸들러 ───────────────────────────────
+
+  /** 송출 active: 각 Publication queued→publishing CAS(+attempts). 완료에서도 ensure(유실 방어). */
+  private async onPublishActive(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const { publications } = job.data as PublishJobData;
+    for (const p of publications) {
+      await this.publications.beginPublishing(p.publicationId as unknown as string);
+    }
+  }
+
+  /**
+   * 송출 완료 — 채널 결과 반영(Publication 기록 먼저) → content 판정 전이(관제 재조회 정합).
+   * resolveResult·applySystemTransition from-가드가 멱등이라 재수신/리컨사일 재적용 무해.
+   */
+  private async onPublishCompleted(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const result = job.returnvalue as PublishJobResult;
+
+    // ① Publication 채널 결과 반영(유일 기록자)
+    for (const r of result.results) {
+      await this.publications.resolveResult(r);
+    }
+
+    // ② content 판정 — 결과 publicationId → contentId(들)
+    const publicationIds = result.results.map((r) => r.publicationId as unknown as string);
+    const contentIds = await this.contentIdsForPublications(publicationIds);
+    for (const contentId of contentIds) {
+      const summary = await this.publications.summarizeForContent(contentId);
+      if (summary.allPublished) {
+        await this.workflow.applySystemTransition(contentId, 'publishing', 'published', jobId);
+      } else if (summary.anyFailed && !summary.anyPending) {
+        await this.workflow.applySystemTransition(
+          contentId,
+          'publishing',
+          'publish_failed',
+          jobId,
+          this.lastErrorNote('일부 채널 송출 실패'),
+        );
+      }
+      // anyPending: 유지(다음 이벤트 수렴)
+    }
+  }
+
+  /** 송출 잡 소진(인프라 장애) — queued/publishing Publication을 failed로 + content publishing→publish_failed. */
+  private async onPublishFailed(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const { publications } = job.data as PublishJobData;
+
+    if (!this.isExhausted(job)) {
+      this.logger.warn(`송출 잡 실패(재시도 예정) jobId=${jobId}`);
+      return; // BullMQ 자동 재시도
+    }
+    const errMsg = job.failedReason ?? '송출 잡 소진';
+    const publicationIds = publications.map((p) => p.publicationId as unknown as string);
+    for (const id of publicationIds) {
+      await this.publications.failExhausted(id, errMsg);
+    }
+    const contentIds = await this.contentIdsForPublications(publicationIds);
+    for (const contentId of contentIds) {
+      const summary = await this.publications.summarizeForContent(contentId);
+      if (summary.anyFailed && !summary.anyPending) {
+        await this.workflow.applySystemTransition(
+          contentId,
+          'publishing',
+          'publish_failed',
+          jobId,
+          this.lastErrorNote(errMsg),
+        );
+      }
+    }
+  }
+
+  /** 결과 publicationId 집합 → 소속 content id 집합(중복 제거) */
+  private async contentIdsForPublications(publicationIds: readonly string[]): Promise<string[]> {
+    if (publicationIds.length === 0) return [];
+    const rows = await this.prisma.publication.findMany({
+      where: { id: { in: [...publicationIds] } },
+      select: { contentId: true },
+    });
+    const set = new Set<string>();
+    for (const r of rows) if (r.contentId) set.add(r.contentId);
+    return [...set];
+  }
+
+  private lastErrorNote(message: string): { mutate: Prisma.ContentUncheckedUpdateManyInput } {
+    return {
+      mutate: {
+        lastError: {
+          message: message.slice(0, 500),
+          at: new Date().toISOString(),
+        } as unknown as Prisma.InputJsonValue,
+      },
+    };
   }
 
   private onProgress(jobId: string, data: unknown): void {
