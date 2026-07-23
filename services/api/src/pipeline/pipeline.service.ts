@@ -13,6 +13,15 @@ import { AiAnalysesService } from '../analysis/ai-analyses.service';
 import { DISTRIBUTION_QUEUE, DISTRIBUTION_QUEUE_EVENTS } from '../distribution/distribution.constants';
 import { PublicationsService } from '../distribution/publications.service';
 import type { PublishJobData, PublishJobResult } from '../distribution/distribution-job';
+import {
+  RECOMMENDATION_QUEUE,
+  RECOMMENDATION_QUEUE_EVENTS,
+} from '../recommendations/recommendation.constants';
+import { RecommendationsService } from '../recommendations/recommendations.service';
+import type {
+  RecommendationJobData,
+  RecommendationJobResult,
+} from '../recommendations/recommendation-job';
 
 /**
  * QueueEvents 소비자 — api가 유일한 DB 기록자. media·analysis 두 큐를 인프로세스로 소비해
@@ -41,12 +50,16 @@ export class PipelineService implements OnModuleInit {
     @Inject(DISTRIBUTION_QUEUE_EVENTS) private readonly distributionEvents: QueueEvents | null,
     @Inject(DISTRIBUTION_QUEUE) private readonly distributionQueue: Queue | null,
     private readonly publications: PublicationsService,
+    @Inject(RECOMMENDATION_QUEUE_EVENTS) private readonly recommendationEvents: QueueEvents | null,
+    @Inject(RECOMMENDATION_QUEUE) private readonly recommendationQueue: Queue | null,
+    private readonly recommendations: RecommendationsService,
   ) {}
 
   onModuleInit(): void {
     this.initMediaListeners();
     this.initAnalysisListeners();
     this.initDistributionListeners();
+    this.initRecommendationListeners();
   }
 
   private initMediaListeners(): void {
@@ -126,6 +139,30 @@ export class PipelineService implements OnModuleInit {
     );
   }
 
+  private initRecommendationListeners(): void {
+    if (!this.recommendationEvents || !this.recommendationQueue) {
+      // 큐 미설정은 기능 비활성이 아니다 — 생산자가 인라인 계산으로 폴백하므로 결과는 동일하다.
+      this.logger.warn('추천 큐 미설정 — 추천 파이프라인 리스너 비활성(생성은 인라인 폴백)');
+      return;
+    }
+    const rq = this.recommendationQueue;
+    this.recommendationEvents.on(
+      'completed',
+      ({ jobId }) =>
+        void this.safe('recommendation-completed', () => this.onRecommendationCompleted(rq, jobId)),
+    );
+    this.recommendationEvents.on(
+      'failed',
+      ({ jobId }) =>
+        void this.safe('recommendation-failed', () => this.onRecommendationFailed(rq, jobId)),
+    );
+    this.logger.log('추천 파이프라인 리스너 활성');
+
+    void this.reconcileRecommendationPending(rq).catch((e) =>
+      this.logger.warn(`추천 부팅 리컨사일 생략: ${e instanceof Error ? e.message : e}`),
+    );
+  }
+
   /**
    * 부팅 시 큐의 completed/failed 잡을 스캔해 상태전이/자산 upsert 미반영분을 재조정한다.
    * onCompleted/onFailed와 동일 경로를 재사용 — 이미 반영된 잡은 전이맵이 map-legal이 아니거나
@@ -179,6 +216,25 @@ export class PipelineService implements OnModuleInit {
     this.logger.log(
       `송출 리컨사일 완료 — completed=${completed.length}, failed=${failed.length}`,
     );
+  }
+
+  /** 추천 큐 부팅 리컨사일 — 핸들러가 상태·세대 CAS라 재적용 무해(멱등) */
+  private async reconcileRecommendationPending(queue: Queue): Promise<void> {
+    const completed = await queue.getJobs(['completed'], 0, -1, true);
+    for (const job of completed) {
+      if (job?.id)
+        await this.safe('reconcile-recommendation-completed', () =>
+          this.onRecommendationCompleted(queue, job.id!),
+        );
+    }
+    const failed = await queue.getJobs(['failed'], 0, -1, true);
+    for (const job of failed) {
+      if (job?.id)
+        await this.safe('reconcile-recommendation-failed', () =>
+          this.onRecommendationFailed(queue, job.id!),
+        );
+    }
+    this.logger.log(`추천 리컨사일 완료 — completed=${completed.length}, failed=${failed.length}`);
   }
 
   private async safe(evt: string, fn: () => Promise<void>): Promise<void> {
@@ -438,6 +494,39 @@ export class PipelineService implements OnModuleInit {
         );
       }
     }
+  }
+
+  // ── recommendation 큐 핸들러 ─────────────────────────────
+
+  /**
+   * 추천 잡 완료 — items·summary 기록 + generating|regenerating→pending_review.
+   * 기록·판정은 전부 RecommendationsService.applyGenerationResult 하나(인라인 폴백과 동일 경로).
+   * 상태·세대 CAS라 재수신·리컨사일 재적용이 무해하다. 후보 0건 판정도 거기서 한다.
+   */
+  private async onRecommendationCompleted(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const { recommendationId, generation } = job.data as RecommendationJobData;
+    const result = job.returnvalue as RecommendationJobResult;
+    if (!result) return; // returnvalue 미보존(만료) — 재큐로 복구
+    await this.recommendations.applyGenerationResult(recommendationId, generation, jobId, result);
+  }
+
+  /** 추천 잡 소진 — generating|regenerating→generation_failed(note=실패 사유). 미소진은 BullMQ 자동 재시도 */
+  private async onRecommendationFailed(queue: Queue, jobId: string): Promise<void> {
+    const job = await queue.getJob(jobId);
+    if (!job) return;
+    const { recommendationId } = job.data as RecommendationJobData;
+
+    if (!this.isExhausted(job)) {
+      this.logger.warn(`추천 잡 실패(재시도 예정) jobId=${jobId}`);
+      return;
+    }
+    await this.recommendations.failGeneration(
+      recommendationId,
+      jobId,
+      job.failedReason ?? '추천 생성 잡 소진',
+    );
   }
 
   /** 결과 publicationId 집합 → 소속 content id 집합(중복 제거) */

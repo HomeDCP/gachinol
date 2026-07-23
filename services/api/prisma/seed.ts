@@ -143,6 +143,11 @@ interface FeedDemoContent {
   publishedAt: string;
   summary: string;
   keywords: string[];
+  /**
+   * 주간추천 랭킹 소재 — ai_analyses.recommendation_score(0~1).
+   * feed.mapper는 이 필드를 투영하지 않아 피드 계약에 무회귀(값만 심는다).
+   */
+  recommendationScore: number;
   tags: string[];
   scenes: FeedDemoScene[];
   renditionAssetId: string;
@@ -161,6 +166,7 @@ const FEED_DEMO_CONTENTS: FeedDemoContent[] = [
     publishedAt: '2026-07-20T09:00:00.000Z',
     summary: '애월 해녀들의 물질 현장을 동행 취재했다. 물때·채취물·공동체 이야기.',
     keywords: ['해녀', '애월', '물질'],
+    recommendationScore: 0.91,
     tags: ['해녀', '애월'],
     scenes: [
       { id: '01920000-0000-7000-8000-0000000000b1', order: 0, caption: '오프닝 — 애월 포구', startSec: 0, endSec: 6 },
@@ -181,6 +187,7 @@ const FEED_DEMO_CONTENTS: FeedDemoContent[] = [
     publishedAt: '2026-07-19T09:00:00.000Z',
     summary: '애월 오일장의 제철 먹거리와 생산자들을 소개한다.',
     keywords: ['오일장', '먹거리', '생산자'],
+    recommendationScore: 0.74,
     tags: ['오일장', '먹거리'],
     scenes: [
       { id: '01920000-0000-7000-8000-0000000000b4', order: 0, caption: '오일장 입구', startSec: 0, endSec: 8 },
@@ -200,6 +207,7 @@ const FEED_DEMO_CONTENTS: FeedDemoContent[] = [
     publishedAt: '2026-07-18T09:00:00.000Z',
     summary: '오래 산 촌장의 감으로 짚어보는 내일 제주시 날씨와 추천 활동.',
     keywords: ['날씨', '촌장', '제주시'],
+    recommendationScore: 0.68,
     tags: ['날씨'],
     scenes: [
       { id: '01920000-0000-7000-8000-0000000000b6', order: 0, caption: '촌장 인사', startSec: 0, endSec: 10 },
@@ -311,9 +319,10 @@ export async function seedFeedDemo(prisma: PrismaClient): Promise<void> {
         contentId: c.id,
         generation: 1,
         text: textJson,
+        recommendationScore: c.recommendationScore,
         completedAt: now,
       },
-      update: { text: textJson, completedAt: now },
+      update: { text: textJson, recommendationScore: c.recommendationScore, completedAt: now },
     });
   }
 }

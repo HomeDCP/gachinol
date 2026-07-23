@@ -229,10 +229,45 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
   `app/(app)/live/[id].tsx`(라이프사이클 제어 버튼+아나운서 프롬프터 패널·플랫폼 뱃지·질문 강조). 앱 단위 테스트=socketFactory DI 목(jest-expo transform 무변경):
   구독자 20건(chat-store·nickname·format·live-socket)·관제 27건(labels·validation·prompter-store·live-socket). **shared·api 무변경**(client.ts는 앱 로컬).
   검증: subscriber typecheck·test 48·control-center typecheck·test 95·양 앱 expo export(ios+android)·expo-doctor 18/18.
+  → **주간추천(Weekly Recommendation) 슬라이스 — api 백엔드 완료**: 추천 생성 워커를 api **인프로세스**(analysis/distribution 동형)로 두고,
+  `REDIS_URL` 미설정 시 **인라인 계산 폴백**(추천은 외부 HTTP 0회·순수 DB 집계라 `generating` 고착이 무가치 — 송출과 다른 판단).
+  Prisma 신규 1테이블 `weekly_recommendations`(`week_of` DATE **UNIQUE**=주 1건 멱등 키, items JSONB, enum성=text, UUID v7,
+  `approved_by_user_id` FK→users SetNull) + `revision_requests.recommendation_id` **FK 활성**(Restrict — 수정지시는 감사 원천).
+  센터 엔드포인트 5종(전부 `center_operator`·`admin`): `POST /v1/recommendations`(weekOf를 그 주 월요일 KST로 서버 정규화·인큐-애프터-커밋),
+  `GET /v1/recommendations`(weekOf DESC), `GET /v1/recommendations/:id`(`RecommendationReview` — items를 rank순 `ContentSummary` 조인),
+  `POST /v1/recommendations/:id/{approve,request-revision}`. 랭킹은 **결정적**: 후보=그 주 published ∧ 같은 세대 완료분석,
+  정렬=`recommendationScore DESC(null→0)`→`publishedAt DESC`→`contentId ASC`, 상위 `RECOMMENDATION_TOP_N`(기본 7).
+  `reason`은 `ai_analyses.text`(요약 첫 문장·키워드) 파생 — **ai-worker 재호출·실 ML 재랭킹 없음**(기존 점수 재사용), `highlights` 미채움.
+  전이는 shared `RECOMMENDATION_STATUS_TRANSITIONS`만 소비(사본 금지)하며 `RecommendationWorkflowService.applyHop`(CAS+감사,
+  `entityType='weekly_recommendation'`) 단일 관문. 수정요청은 `revision_requested`→`regenerating` **2홉 자동 연쇄**(gen+1, 2번째 로그는 system),
+  `RevisionRequest`는 `targetKind='recommendation'` 재사용(재생성 완료 시 `resolvedAt`/`resolvedByJobId` 해소).
+  멱등 3키: `week_of` unique(동시 POST=P2002→409) · 상태별 분기(`generation_failed`만 재시도 200, 그 외 409+`details{id,status}`) ·
+  결과 기록의 **세대 CAS**(구세대 결과가 신세대를 못 덮음). 후보 0건은 랭킹이 아니라 **기록자**가 `generation_failed`(note='대상 콘텐츠 0건')로 판정 —
+  빈 검토 화면 금지. 실패 사유의 유일 원천은 `status_transition_logs.note`(shared에 lastError가 없어 컬럼 미생성).
+  큐 wire는 api-내부 `recommendations/recommendation-job.ts`. shared 추가는 `GenerateRecommendationRequest` DTO 1건뿐.
+  E2E(`test/recommendation-pipeline.e2e-spec.ts` — embedded redis-memory-server, S3·FFmpeg·ai-worker 전부 불요, 외부 네트워크 0):
+  생성→랭킹 순서·reason 3분기→수정요청→재생성(gen=2, 새 콘텐츠 편입)→승인 실증. **큐 경로/인라인 폴백 양쪽 완주**(`REC_E2E_FORCE_INLINE=1`로 폴백 강제).
+  **견고화 4건**(리뷰 반영): ① 고착 복구 — `generating|regenerating`이 `RECOMMENDATION_STUCK_MS`(기본 10분) 초과면 재요청이
+  `generation_failed` 강제 강등 후 재시도(`week_of` unique라 대체 행이 없어 잡 유실 시 그 주차가 영구 차단되던 문제),
+  ② 재시도가 미해소 `RevisionRequest`를 재패킹 + 해소 조건에서 `from==='regenerating'` 제약 제거(수정지시 접두·해소 레코드 유실 방지),
+  ③ items **쓰기 경계**도 `zRecommendationItems` 통과 후 기록(계약 밖 score 1건이 목록·상세를 영구 500으로 만들던 읽기/쓰기 비대칭),
+  ④ `weekOf` 스키마가 실존 날짜까지 검증(`2026-02-31`이 500 internal→400 validation_failed).
+  회귀 0(api 유닛 294→381·e2e 41→52).
+  → **관제 앱 주간추천 탭 실배선 완료**(플레이스홀더 제거, **shared·api 무변경**): 목록 탭(`(tabs)/recommendations.tsx` — 주차 카드
+  `2026-06-01 주 · 6/1~6/7`·상태 칩 6종·`항목 N건 · 산출물 v{n}`·`needsCenterAction` 테두리 강조·무한스크롤 id dedupe·
+  `[이번 주 추천 생성]`) + 상세(`(app)/recommendations/[id].tsx` — 상태 카드·총평(재생성 접두가 수정지시 노출 통로)·
+  rank순 항목(점수·근거·지사/기자/분류/길이 + `/contents/{id}` 크로스 딥링크)·조인 누락 경고·승인/수정요청 액션바·2000자 note 시트).
+  기존 패턴 그대로 재사용: 인증 `ApiClient`·`@Roles` 게이트·TanStack Query(`recommendationKeys{all,list,detail}`)·
+  **낙관적 업데이트 금지**(onSuccess detail 병합 → `invalidateQueries(all)`, 409는 invalidate+토스트).
+  `generating|regenerating`이면 상세 **10s 폴링**(포커스 시에만). 생성 409의 `details.id`는 기존 주차 상세로 딥링크 유도.
+  배지·설명 맵은 `RecommendationStatus` **10종 전수** `satisfies`(미도달 5종 포함 — 활성화 시 tsc가 잡는다),
+  `needsCenterAction`은 정확히 `pending_review`·`generation_failed` 2종. `currentWeekOfKst`는 +09:00 오프셋 후 **UTC getter만**
+  (기기 시간대 무관). 목 데이터 0. jest-expo 단위 +58(status·week·validation·selectors) → **control-center 95→153/15스위트**,
+  subscriber 48·reporter 74·media-worker 13 불변, expo export(ios+android)·expo-doctor 18/18 통과.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
   1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD·`reporter_only` 자동 송출 후킹
   2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
-  3. ai-worker 실 제공자(OpenAI Whisper/비전) 주입 + 주간 추천(recommendationScore→weekly_recommendation) 파이프라인
+  3. ai-worker 실 제공자(OpenAI Whisper/비전) 주입 + 추천 **승인→송출(publishing/published)** 배선 + 주간 자동 생성 스케줄(BullMQ repeatable)
   4. `infra` 배포 스크립트/IaC (docker-compose는 완료)
   - ~~`apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)~~ ✅ 완료
   - ~~업로드 presigned URL + BullMQ 생산자/QueueEvents (api 측)~~ ✅ 완료
@@ -250,6 +285,11 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
     라이브 정적 플레이스홀더. 공개 GET 전용 클라이언트(reporter/control-center에서 tokenStore·refresh·401 재시도 전면 제거,
     Authorization 미부착). reporter/control-center Expo 패턴(metro·jest·expo-router·TanStack Query) 동형 이식, **shared·api 무변경**.
     jest-expo 단위(client·captions·format·labels·pagination) 28건.~~ ✅ 완료
+  - ~~**주간추천(Weekly Recommendation) api 백엔드** — `weekly_recommendations` 1테이블 + 결정적 랭킹(기존 recommendationScore 재사용) +
+    상태머신 CAS·감사(shared 전이맵 소비) + 센터 엔드포인트 5종 + 수정→재생성 루프(RevisionRequest targetKind='recommendation').
+    큐(api 인프로세스)·인라인 폴백 양쪽 E2E 완주.~~ ✅ 완료
+  - ~~**관제 앱 주간추천 탭 실배선** — 목록(주차 카드·상태 칩·무한스크롤·[이번 주 추천 생성]) + 상세(총평·rank 항목·콘텐츠 딥링크·
+    승인/수정요청) + 10s 폴링·409 경합 처리. 배지 10종 전수 satisfies, 목 데이터 0. **shared·api 무변경**.~~ ✅ 완료
   - ~~**다채널 송출(Distribute) 슬라이스** — api 인프로세스 송출 워커 + 카카오 목 어댑터 + `channel_accounts`·`publications`
     2테이블 + 센터 엔드포인트 4종(distribute·publications·retry·retract). 카톡 채널 송출 한 바퀴 실증.~~ ✅ 완료
   - ~~**라이브 + WebSocket 슬라이스** — api WS 게이트웨이(채팅·프롬프터·프레즌스) + `live_sessions`·`live_comments`·`chat_messages`

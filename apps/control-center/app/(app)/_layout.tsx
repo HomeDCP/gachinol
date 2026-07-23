@@ -12,6 +12,7 @@ export default function AppLayout(): React.JSX.Element | null {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="contents/[id]" options={{ title: '콘텐츠 검토' }} />
+        <Stack.Screen name="recommendations/[id]" options={{ title: '주간 추천 검토' }} />
         <Stack.Screen name="live/[id]" options={{ title: '라이브 관제' }} />
       </Stack>
     </BoardFilterProvider>

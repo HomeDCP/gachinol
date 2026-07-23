@@ -32,7 +32,10 @@
 
 - [ ] `services/media-worker`: FFmpeg 트랜스코딩·프리뷰
 - [ ] `services/ai-worker`: 화면+텍스트 분석·태깅·주간 추천
-- [ ] `apps/control-center`: 추천 검토·승인/수정 대시보드
+  - [x] 주간 추천 **api 백엔드** — `weekly_recommendations` + 결정적 랭킹(기존 `recommendationScore` 재사용) +
+        상태머신(생성→검토→승인/수정재생성) + 센터 엔드포인트 5종. ai-worker 실 재랭킹은 미착수
+- [x] `apps/control-center`: 추천 검토·승인/수정 대시보드 — 주간추천 탭 실배선(목록·상세·승인/수정요청·10s 폴링).
+      승인→송출(publishing) 배선과 주간 자동 생성 스케줄은 후속
 
 ## Phase 5 — 송출 & 구독자
 

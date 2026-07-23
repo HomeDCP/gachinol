@@ -39,7 +39,8 @@ src/
 ├── media/·queue/ # S3 presign·MediaAssets · BullMQ 미디어 큐 생산자
 ├── analysis/     # ai-worker HTTP 소비 + ai_analyses 기록 (analyzing 홉)
 ├── distribution/ # 다채널 송출 코어 — 채널·Publication·큐·카카오 어댑터(목 기본) + 인프로세스 송출 워커
-├── pipeline/     # QueueEvents 소비자(★ 유일 DB 기록자) — media·analysis·distribution 잡이벤트→상태전이
+├── recommendations/ # 주간 콘텐츠 추천 — 결정적 랭킹·상태머신·센터 5종 + 인프로세스 큐(폴백 인라인)
+├── pipeline/     # QueueEvents 소비자(★ 유일 DB 기록자) — media·analysis·distribution·recommendation 잡이벤트→상태전이
 ├── feed/         # 구독자 공개 피드(@Public read 3종)
 └── live/         # 라이브+WebSocket — 게이트웨이·LiveSession REST·채팅(익명)·프롬프터·댓글수집(어댑터+목)
 ```
@@ -105,6 +106,52 @@ src/
 - 전이 규칙 원천: content=shared `CONTENT_STATUS_TRANSITIONS`, Publication=shared `PUBLICATION_STATUS_TRANSITIONS`(api에 사본 금지).
 - 큐 wire는 api-내부 `distribution/distribution-job.ts`(워커 인프로세스라 shared 불요). shared 추가는 `DistributeContentRequest` DTO 1건뿐.
 
+## 주간 콘텐츠 추천 (Weekly Recommendation — 전부 `center_operator`·`admin`)
+
+| 엔드포인트 | 동작 |
+| --- | --- |
+| `POST /v1/recommendations` | 생성 트리거. body `{weekOf}`는 주중 아무 날짜 — 서버가 **그 주 월요일(Asia/Seoul)로 내림 정규화**. 형식뿐 아니라 **실존 날짜**까지 스키마가 검증(`2026-02-31`→400 `validation_failed`). 응답 `WeeklyRecommendation` |
+| `GET /v1/recommendations` | 목록 `Paginated<WeeklyRecommendation>` (`weekOf` 내림차순, `status?` 필터) |
+| `GET /v1/recommendations/:id` | `RecommendationReview` — items를 rank순 `ContentSummary`로 조인 |
+| `POST /v1/recommendations/:id/approve` | `pending_review→approved` (바디 없음). 승인자·승인시각 기록 |
+| `POST /v1/recommendations/:id/request-revision` | body `{note}` → `revision_requested` 후 **같은 tx에서 `regenerating` 자동 연쇄**(generation+1). 응답 status=`regenerating` |
+
+- **상태머신**: shared `RECOMMENDATION_STATUS_TRANSITIONS`가 유일 원천(api에 사본 금지).
+  `generating→pending_review→{approved | revision_requested→regenerating→pending_review}` 루프.
+  전이는 전부 `RecommendationWorkflowService.applyHop`(CAS + `status_transition_logs`, `entityType='weekly_recommendation'`).
+  범용 transition 엔드포인트는 만들지 않았다 — 각 전이의 진입점은 하나뿐.
+- **랭킹 규칙(결정적 · ai-worker 재호출 없음)**: 후보 = `contents.status='published'` ∧ `published_at ∈ [weekOf 00:00 KST, +7d)`
+  ∧ 같은 세대 완료 분석 존재. 정렬 = `recommendationScore DESC(null→0)` → `publishedAt DESC` → `contentId ASC`(3단 전순서라 흔들림 0).
+  상위 `RECOMMENDATION_TOP_N`(기본 7) 절단, rank 1부터. `reason`은 `ai_analyses.text`(요약 첫 문장·키워드) 파생 —
+  **실 ML 재랭킹 없음**(기존 점수 재사용). `highlights`는 채우지 않는다(샷 경계 ≠ 하이라이트).
+- **큐 vs 인라인**: 워커는 api **인프로세스**. `REDIS_URL` 설정 시 `recommendation` 큐를 돌고
+  `PipelineService`(유일 DB 기록자)가 완료를 반영한다. 미설정 시 **인라인 계산 폴백** —
+  추천은 외부 HTTP 0회·순수 DB 집계라 `generating` 고착이 무가치하기 때문(송출과 다른 판단, 코드 주석 참조).
+  계산 진입점은 `RecommendationRankingService.rank` 하나, 기록 진입점은 `RecommendationsService.applyGenerationResult` 하나.
+- **멱등 3키**: ① `week_of` UNIQUE(주 1건 하드가드, 동시 POST는 P2002→409) ② 상태별 분기
+  (`generation_failed`만 재시도 200 · `generating|regenerating`→409 "이미 생성 중"(고착 아닐 때, 아래 참조) ·
+  그 외→409 "이미 있음" + `details{id,status}`)
+  ③ 결과 기록의 **세대 CAS**(`where {id, generation}`) — 늦게 온 구세대 결과가 신세대를 덮지 못한다.
+- **고착 복구**: `generating|regenerating`이 `RECOMMENDATION_STUCK_MS`(기본 10분)보다 오래 머물면, 같은 주차 재요청이
+  `generation_failed`로 **강제 강등(system 전이, note=`생성 고착 N초 …`)한 뒤 재시도**한다. `week_of`가 unique라 대체 행을
+  만들 수 없어, 잡 유실(Redis flush·재기동)·프로세스 사망·완료 처리 중 일시 오류로 진행 중에 남으면 그 주차가 API로 영구
+  차단되기 때문(부팅 리컨사일은 큐에 잡이 남아 있을 때만 동작). 고착이 아니면 그대로 409.
+- **재시도의 수정지시 재패킹**: 재생성이 실패한 뒤의 재시도(`generation_failed→generating`, 세대 유지)는 **미해소
+  `RevisionRequest`(최신 1건)를 다시 잡에 싣는다** — 안 그러면 총평의 `[재생성 gN — 수정 지시: …]` 접두(센터가 "무엇을
+  반영한 세대인지" 아는 유일 통로)가 사라지고 해소 레코드가 영구 미해소로 남는다. 해소 조건도 `from==='regenerating'`이
+  아니라 **완주(`→pending_review`) 시 미해소분 전체** — 최초 생성엔 미해소 지시가 존재할 수 없어 무해하다.
+- **기록 순서**: items·summary 먼저 → 전이. 관제가 `pending_review`를 관측할 땐 items가 이미 있다.
+- **items 쓰기 경계 검증**: `applyGenerationResult`가 `zRecommendationItems`로 **읽기(mapper)와 같은 스키마**를 통과시킨
+  뒤에만 JSONB에 기록한다. 위반 시 기록하지 않고 `generation_failed`(note=`items 계약 위반 — …`). 계약 밖 값(예: 0~1을
+  벗어난 `recommendationScore` — ai-worker 응답에 강제 지점이 없다)을 영속시키면 그 주차 행이 목록·상세를 생 `ZodError`로
+  영구 500으로 만들고, 고칠 API 진입점이 없다.
+- **후보 0건**: 랭킹은 실패 개념 없이 `items:[]`를 돌려주고, 기록자가 `generation_failed`(note=`대상 콘텐츠 0건`)로 판정한다 —
+  빈 검토 화면(승인할 게 없는 `pending_review`)을 만들지 않는다.
+- **실패 사유의 유일 원천**은 `status_transition_logs.note` — shared `WeeklyRecommendation`에 `lastError`가 없어 컬럼을 만들지 않았다.
+- 큐 wire는 api-내부 `recommendations/recommendation-job.ts`(워커 인프로세스라 shared 불요). shared 추가는 `GenerateRecommendationRequest` 1건뿐.
+- **범위 밖**: `approved→publishing→published` 배선(승인 후 '송출'의 실체가 운영 미확정) · `discarded` 엔드포인트 ·
+  주간 자동 생성 스케줄 · ai-worker 실 재랭킹 · 추천→라이브 큐시트(`live_sessions.weekly_recommendation_id` 예약 유지).
+
 ## 라이브 + WebSocket (Live)
 
 **WS 게이트웨이** (`live.gateway.ts`, 단일 네임스페이스). 룸·이벤트는 shared `realtime/{rooms,events}.ts` 소비(재정의 금지). 각 핸들러는 try/catch→`ws-ack.ts`로 `WsAck` 직렬화(전역 `AllExceptionsFilter`는 HTTP 전용이라 우회).
@@ -165,5 +212,5 @@ pnpm --filter @gachinol/api test:e2e   # E2E — DB 프로브(2s) 후 migrate de
 
 ## 이번 단계 범위 밖 (다음 단계)
 
-채널 계정 CRUD · `reporter_only` 자동 송출 후킹 · 실 카카오/SNS 어댑터 구현 · 실 RTMP/HLS 스트리밍 인프라(현재 env 플레이스홀더) ·
+채널 계정 CRUD · 주간추천 승인→송출(`publishing`) 배선 · 실 카카오/SNS 어댑터 구현 · 실 RTMP/HLS 스트리밍 인프라(현재 env 플레이스홀더) ·
 라이브 종료→VOD(`vodContentId`) · SNS 댓글 실 수집 어댑터 · 커머스(라이브커머스·B2B). 커머스 도메인은 스키마·코드에 선반영하지 않았다.
