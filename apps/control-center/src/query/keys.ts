@@ -4,9 +4,11 @@ import type {
   LiveSessionId,
   LiveSessionStatus,
   ProgramCategory,
+  RecommendationStatus,
   StationId,
   StationKind,
   StationStatus,
+  WeeklyRecommendationId,
 } from '@gachinol/shared';
 
 /** 캐시 키는 팩토리로만 생성 — 리터럴 산개 금지 */
@@ -69,6 +71,25 @@ function normalizeLiveFilter(filter: LiveSessionFilter): Record<string, string> 
   if (filter.status !== undefined) normalized.status = filter.status;
   return normalized;
 }
+
+/** 주간 추천 목록 필터 — 서버 status는 단일 값 계약 */
+export interface RecommendationFilter {
+  status?: RecommendationStatus;
+}
+
+function normalizeRecommendationFilter(filter: RecommendationFilter): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  if (filter.status !== undefined) normalized.status = filter.status;
+  return normalized;
+}
+
+export const recommendationKeys = {
+  /** prefix 앵커 — 전이 후 invalidate 대상 */
+  all: ['recommendations'] as const,
+  list: (filter: RecommendationFilter) =>
+    ['recommendations', 'list', normalizeRecommendationFilter(filter)] as const,
+  detail: (id: WeeklyRecommendationId) => ['recommendations', 'detail', id] as const,
+};
 
 export const liveKeys = {
   all: ['live-sessions'] as const,

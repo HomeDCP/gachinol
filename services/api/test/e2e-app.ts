@@ -27,7 +27,9 @@ export const resetDb = async (): Promise<void> => {
   const prisma = new PrismaClient();
   try {
     await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE chat_messages, live_comments, live_sessions, publications, channel_accounts, media_assets, status_transition_logs, revision_requests, contents, refresh_tokens, users, stations CASCADE',
+      // ★ weekly_recommendations는 맨 앞 — 누락 시 행이 누수돼 week_of unique가 다른 스위트를 깨뜨린다
+      //   (revision_requests가 FK로 참조하므로 CASCADE 순서상 앞에 둔다)
+      'TRUNCATE TABLE weekly_recommendations, chat_messages, live_comments, live_sessions, publications, channel_accounts, media_assets, status_transition_logs, revision_requests, contents, refresh_tokens, users, stations CASCADE',
     );
     await runSeed(prisma, { email: info.adminEmail!, password: info.adminPassword! });
   } finally {

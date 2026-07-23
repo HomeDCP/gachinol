@@ -16,6 +16,7 @@ import { MediaModule } from './media/media.module';
 import { PipelineModule } from './pipeline/pipeline.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
 import { StationsModule } from './stations/stations.module';
 import { UploadModule } from './upload/upload.module';
 import { UsersModule } from './users/users.module';
@@ -34,6 +35,7 @@ import { UsersModule } from './users/users.module';
     DistributionCoreModule,
     ContentsModule,
     UploadModule,
+    RecommendationsModule, // 주간 콘텐츠 추천(센터) — PipelineModule보다 앞
     PipelineModule,
     FeedModule, // 구독자 공개 피드(@Public read 3종)
     LiveModule, // 라이브 + WebSocket(게이트웨이·LiveSession·채팅·댓글수집)

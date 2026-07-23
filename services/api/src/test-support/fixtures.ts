@@ -8,6 +8,7 @@ import type {
   LiveSession as LiveSessionRow,
   Publication as PublicationRow,
   Station as StationRow,
+  WeeklyRecommendation as RecommendationRow,
 } from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 
@@ -183,6 +184,23 @@ export const chatMessageRow = (over: Partial<ChatMessageRow> = {}): ChatMessageR
   ...over,
 });
 
+/** 주간추천 행 — week_of는 Prisma `@db.Date`(UTC 자정) */
+export const recommendationRow = (over: Partial<RecommendationRow> = {}): RecommendationRow => ({
+  id: 'wr-1',
+  weekOf: new Date('2026-06-01T00:00:00.000Z'),
+  status: 'generating',
+  generation: 1,
+  summary: null,
+  items: [],
+  generatedByJobId: null,
+  approvedByUserId: null,
+  approvedAt: null,
+  publishedAt: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...over,
+});
+
 export const sceneJson = (order: number, id: string = uuidv7()) => ({
   id,
   order,
@@ -218,7 +236,25 @@ export const makePrismaMock = () => {
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    revisionRequest: { create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    revisionRequest: {
+      create: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    weeklyRecommendation: {
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    aiAnalysis: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn(),
+    },
     mediaAsset: {
       findMany: jest.fn().mockResolvedValue([]),
       findFirst: jest.fn(),

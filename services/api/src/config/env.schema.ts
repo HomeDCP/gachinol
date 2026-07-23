@@ -45,6 +45,16 @@ export const envSchema = z
     PUBLISH_JOB_ATTEMPTS: z.coerce.number().int().default(3),
     PUBLISH_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
     PUBLISH_CONCURRENCY: z.coerce.number().int().default(4),
+    // 주간추천(Weekly Recommendation) — 큐 게이트는 REDIS_URL 단독(계산이 순수 로컬 DB 집계라
+    // 외부 URL 불요). 미설정 시 생성 요청이 인라인 계산으로 폴백한다(generating 고착 방지). 신규 시크릿 0.
+    RECOMMENDATION_TOP_N: z.coerce.number().int().min(1).default(7), // 주간뉴스 꼭지 수 가정
+    RECOMMENDATION_JOB_ATTEMPTS: z.coerce.number().int().default(3),
+    RECOMMENDATION_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
+    RECOMMENDATION_CONCURRENCY: z.coerce.number().int().default(2),
+    // 고착 복구 임계 — generating|regenerating이 이 시간(ms)보다 오래면 재요청 시 강제 실패 후 재시도.
+    // week_of unique라 대체 행을 만들 수 없어, 잡 유실·프로세스 사망으로 진행 중에 남으면
+    // 그 주차가 API로 영구 차단된다(복구 진입점이 여기뿐).
+    RECOMMENDATION_STUCK_MS: z.coerce.number().int().min(1000).default(600000),
     // 라이브+WS — WS 게이트웨이는 상시 활성(코어). Redis는 다중 인스턴스 socket.io 어댑터만 게이트
     // (미설정=단일 인스턴스 우아한 저하). RTMP/HLS는 실 인프라 미구축 — env 플레이스홀더.
     LIVE_RTMP_INGEST_URL: z.string().optional(), // 이미 .env.example 존재 — 스키마 반영

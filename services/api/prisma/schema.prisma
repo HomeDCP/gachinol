@@ -5,6 +5,9 @@
 // media_assets는 media-worker 연동 단계에서 도입됨(아래 model MediaAsset).
 // channel_accounts·publications는 다채널 송출 슬라이스에서 도입됨(아래 model ChannelAccount·Publication).
 // Publication.live_session_id는 FK 없는 예약 유지(라이브 소스 송출은 후속) → distribution 무변경.
+// weekly_recommendations는 주간추천 슬라이스에서 도입됨(아래 model WeeklyRecommendation).
+// revision_requests.recommendation_id는 그 슬라이스에서 FK 활성화(Restrict — 수정지시는 감사 원천이라 부모 삭제로 유실 금지).
+// LiveSession.weekly_recommendation_id는 FK 없는 예약 유지(추천→라이브 큐시트는 후속) → live 무변경.
 
 generator client {
   provider = "prisma-client-js"
@@ -52,10 +55,11 @@ model User {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  station          Station?       @relation(fields: [stationId], references: [id])
-  refreshTokens    RefreshToken[]
-  reportedContents Content[]      @relation("ContentReporter")
-  approvedContents Content[]      @relation("ContentApprover")
+  station                 Station?               @relation(fields: [stationId], references: [id])
+  refreshTokens           RefreshToken[]
+  reportedContents        Content[]              @relation("ContentReporter")
+  approvedContents        Content[]              @relation("ContentApprover")
+  approvedRecommendations WeeklyRecommendation[] @relation("RecommendationApprover")
 
   @@index([role, stationId])
   @@map("users")
@@ -121,9 +125,9 @@ model Content {
 
 model RevisionRequest {
   id                String    @id
-  targetKind        String    @map("target_kind") // RevisionTarget.kind — phase-1은 'content'만
+  targetKind        String    @map("target_kind") // RevisionTarget.kind — 'content' | 'recommendation'
   contentId         String?   @map("content_id")
-  recommendationId  String?   @map("recommendation_id") // FK 없음 (테이블 미도입)
+  recommendationId  String?   @map("recommendation_id") // FK→weekly_recommendations Restrict (감사 원천 — 부모 삭제로 유실 금지)
   requestedByUserId String    @map("requested_by_user_id")
   requesterRole     String    @map("requester_role") // RevisionRequesterRole
   message           String
@@ -132,10 +136,42 @@ model RevisionRequest {
   resolvedAt        DateTime? @map("resolved_at") @db.Timestamptz(3)
   resolvedByJobId   String?   @map("resolved_by_job_id") // BullMQ jobId 문자열 (jobs 테이블 없음)
 
-  content Content? @relation(fields: [contentId], references: [id])
+  content        Content?              @relation(fields: [contentId], references: [id])
+  // ★ Restrict 명시 — Prisma의 optional 관계 기본값은 SetNull이지만, 수정지시는 감사 원천이라
+  //   부모 추천 삭제로 대상을 조용히 잃으면 안 된다(추천 행 삭제 API 자체가 없어 무비용).
+  recommendation WeeklyRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: Restrict)
 
   @@index([contentId, createdAt(sort: Desc)])
+  @@index([recommendationId, createdAt(sort: Desc)])
   @@map("revision_requests")
+}
+
+// 주간 콘텐츠 추천 — 주 1건(week_of unique = 멱등 키 + 하드가드). 센터 검토·승인·수정재생성 루프.
+// items는 JSONB 단일 컬럼(별도 recommendation_items 테이블 없음): 재생성은 집합 통째 교체이고
+// 항목 단위 상태·질의가 없다(contents.scenes·ai_analyses.vision 선례). (id, rank) unique는 생성 시
+// 구성 + zod refine으로 앱 경계에서 강제 — DB 제약 아님.
+// enum성 전부 text(Prisma enum 금지). published_at은 컬럼만 예약(approved→publishing 배선은 후속).
+// ★ 실패 사유 컬럼 없음 — shared WeeklyRecommendation에 없어 wire로 못 나간다.
+//   generation_failed 사유의 유일 원천은 status_transition_logs.note(entity_type='weekly_recommendation').
+model WeeklyRecommendation {
+  id               String    @id
+  weekOf           DateTime  @unique @map("week_of") @db.Date // 대상 주차 월요일(Asia/Seoul). 정렬 겸용
+  status           String    @default("generating") // RecommendationStatus 10종
+  generation       Int       @default(1) // 재생성마다 +1 (같은 행 갱신, items 교체)
+  summary          String? // AI 총평(결정적 파생 문자열)
+  items            Json      @default("[]") // wire RecommendationItem[] 그대로(camelCase)
+  generatedByJobId String?   @map("generated_by_job_id") // BullMQ jobId (jobs 테이블 없음)
+  approvedByUserId String?   @map("approved_by_user_id") // FK→users SetNull (Content.approvedByUserId 선례)
+  approvedAt       DateTime? @map("approved_at") @db.Timestamptz(3)
+  publishedAt      DateTime? @map("published_at") @db.Timestamptz(3) // 예약(이번 슬라이스 미기입)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  approvedBy       User?             @relation("RecommendationApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  revisionRequests RevisionRequest[]
+
+  @@index([status, weekOf(sort: Desc)]) // 관제 목록 — 검토대기 우선
+  @@map("weekly_recommendations")
 }
 
 model MediaAsset {
