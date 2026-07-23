@@ -1,6 +1,8 @@
 import type {
   ContentId,
   ContentStatus,
+  LiveSessionId,
+  LiveSessionStatus,
   ProgramCategory,
   StationId,
   StationKind,
@@ -56,4 +58,22 @@ export const mediaKeys = {
 
 export const authKeys = {
   me: ['auth', 'me'] as const,
+};
+
+export interface LiveSessionFilter {
+  status?: LiveSessionStatus;
+}
+
+function normalizeLiveFilter(filter: LiveSessionFilter): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  if (filter.status !== undefined) normalized.status = filter.status;
+  return normalized;
+}
+
+export const liveKeys = {
+  all: ['live-sessions'] as const,
+  list: (filter: LiveSessionFilter) =>
+    ['live-sessions', 'list', normalizeLiveFilter(filter)] as const,
+  detail: (id: LiveSessionId) => ['live-sessions', 'detail', id] as const,
+  ingest: (id: LiveSessionId) => ['live-sessions', 'ingest', id] as const,
 };

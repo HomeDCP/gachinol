@@ -40,7 +40,8 @@ src/
 ├── analysis/     # ai-worker HTTP 소비 + ai_analyses 기록 (analyzing 홉)
 ├── distribution/ # 다채널 송출 코어 — 채널·Publication·큐·카카오 어댑터(목 기본) + 인프로세스 송출 워커
 ├── pipeline/     # QueueEvents 소비자(★ 유일 DB 기록자) — media·analysis·distribution 잡이벤트→상태전이
-└── feed/         # 구독자 공개 피드(@Public read 3종)
+├── feed/         # 구독자 공개 피드(@Public read 3종)
+└── live/         # 라이브+WebSocket — 게이트웨이·LiveSession REST·채팅(익명)·프롬프터·댓글수집(어댑터+목)
 ```
 
 ## 인증
@@ -104,6 +105,37 @@ src/
 - 전이 규칙 원천: content=shared `CONTENT_STATUS_TRANSITIONS`, Publication=shared `PUBLICATION_STATUS_TRANSITIONS`(api에 사본 금지).
 - 큐 wire는 api-내부 `distribution/distribution-job.ts`(워커 인프로세스라 shared 불요). shared 추가는 `DistributeContentRequest` DTO 1건뿐.
 
+## 라이브 + WebSocket (Live)
+
+**WS 게이트웨이** (`live.gateway.ts`, 단일 네임스페이스). 룸·이벤트는 shared `realtime/{rooms,events}.ts` 소비(재정의 금지). 각 핸들러는 try/catch→`ws-ack.ts`로 `WsAck` 직렬화(전역 `AllExceptionsFilter`는 HTTP 전용이라 우회).
+
+| 이벤트(C→S) | 게이트 | 동작 · ack |
+| --- | --- | --- |
+| `live.join {liveSessionId}` | 익명 | joinable({scheduled,preparing,live,interrupted}) 검증→룸 join→프레즌스++→`live.viewer_count` 브로드캐스트. ack `LiveJoinAck{session:LiveSessionPublic, recentChat}` |
+| `live.leave {liveSessionId}` | 익명 | 룸 leave→프레즌스--. ack `null` |
+| `chat.send {liveSessionId,message}` | 익명(닉네임=핸드셰이크) | 룸참가·`status==='live'`·trim 비어있지않음·≤`LIVE_CHAT_MESSAGE_MAX_LEN`·토큰버킷 통과 → `ChatMessage` 영속→`chat.new` 브로드캐스트. ack `ChatMessage` |
+| `prompter.join {liveSessionId}` | **JWT**: announcer·center_operator·admin | 프롬프터 룸 join. ack `PrompterJoinAck{recentComments}` |
+| `control.join {}` | **JWT**: center_operator·announcer·admin | 관제 룸 join. ack `null` |
+
+서버 emit: `live.status_changed`(전이 커밋 후 liveRoom+CONTROL_ROOM)·`live.viewer_count`·`chat.new`·`chat.moderated`·`prompter.comments`(수집 배치). 인증 핸드셰이크=`auth.token`(JwtAuthGuard 동일 검증→익명 강등), 닉네임=`auth.nickname`(재연결 시 클라 재전달).
+
+**센터 REST** (`@Controller('live-sessions')`, `@ApiBearerAuth`, `center_operator`·`admin`; 목록/상세는 announcer도):
+
+| 엔드포인트 | 동작 |
+| --- | --- |
+| `POST /v1/live-sessions` | 생성 — 불변식 `type='emergency' ⇔ scheduledAt=null`, 초기상태=`initialLiveStatus(type)`, hostStationId 생략 시 센터 |
+| `GET /v1/live-sessions` · `/:id` | 목록(status·type·hostStationId 필터·offset) · 상세 |
+| `GET /v1/live-sessions/:id/ingest` | `LiveIngestInfo` — **streamKey 실값이 실리는 유일 엔드포인트**(dev=`LIVE_DEV_STREAM_KEY ?? 'dev-'+id`) |
+| `POST /v1/live-sessions/:id/{prepare,start,interrupt,resume,end,cancel}` | 라이프사이클 CAS(shared `LIVE_SESSION_STATUS_TRANSITIONS`)+`status_transition_logs`(entityType='live_session')+커밋후 `live.status_changed`. start=댓글수집 arm·end/cancel=disarm |
+| `POST /v1/live-sessions/:id/chat/:messageId/hide` | 채팅 숨김 — `visibility=hidden`+`chat.moderated` 브로드캐스트 |
+
+**공개 REST** (`@Controller('live')`, 전부 `@Public`): `GET /v1/live/sessions`·`/sessions/:id` → 화이트리스트 `toLiveSessionPublic`(streamKeyRef·rtmpIngestUrl·createdByUserId 구조적 차단), status∈{scheduled,preparing,live,interrupted}만(ended/canceled 404).
+
+- **채팅=익명 공개** — 게스트 UUID v7을 `chat_messages.user_id`(FK 없음)로 저장, 닉네임=핸드셰이크. 서버 토큰버킷 레이트리밋(초과→`validation_failed`+`details.reason='rate_limited'`).
+- **댓글 수집** = `CommentSourceAdapter`+**목 기본**(youtube/meta/x/threads 결정적, `fail-` 접두 throw). 실 어댑터는 기존 `YOUTUBE_*`/`META_*`/`X_*`/`THREADS_*` 키 게이트(신규 시크릿 0). `CommentCollectorService`=인프로세스·**이벤트-암드**(활성0=타이머0), `collectOnce(id)`→`comment_read` 채널 poll→정규화→`createMany(skipDuplicates)` 멱등영속→`collected` 배치 프롬프터 푸시→`prompted` 마킹(재호출 dedup). **api=유일 DB 기록자**.
+- **다중 인스턴스 fan-out** = socket.io Redis 어댑터(`afterInit`에서 `REDIS_URL` 있을 때만 주입). 미설정=단일 인스턴스 프레즌스 정확·저하. 다중 인스턴스 중복 폴링 방지는 MVP 단일 인스턴스 전제.
+- 신규 shared **0** — `live`·`realtime` 계약 전량 소비. Prisma 3테이블(`live_sessions`·`live_comments`·`chat_messages`).
+
 ## Swagger
 
 비프로덕션에서만 `/docs` (JSON `/docs-json`). health 2종만 terminus 표준 응답(도메인 계약 밖 유일 예외).
@@ -133,5 +165,5 @@ pnpm --filter @gachinol/api test:e2e   # E2E — DB 프로브(2s) 후 migrate de
 
 ## 이번 단계 범위 밖 (다음 단계)
 
-댓글 수집 · SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) · 채널 계정 CRUD ·
-`reporter_only` 자동 송출 후킹 · 실 카카오 어댑터 구현 · WebSocket(라이브·프롬프터). 커머스·라이브 도메인은 스키마·코드에 선반영하지 않았다.
+채널 계정 CRUD · `reporter_only` 자동 송출 후킹 · 실 카카오/SNS 어댑터 구현 · 실 RTMP/HLS 스트리밍 인프라(현재 env 플레이스홀더) ·
+라이브 종료→VOD(`vodContentId`) · SNS 댓글 실 수집 어댑터 · 커머스(라이브커머스·B2B). 커머스 도메인은 스키마·코드에 선반영하지 않았다.

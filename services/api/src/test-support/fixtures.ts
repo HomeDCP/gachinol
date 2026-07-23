@@ -2,7 +2,10 @@
 import type { User } from '@gachinol/shared';
 import type {
   ChannelAccount as ChannelAccountRow,
+  ChatMessage as ChatMessageRow,
   Content as ContentRow,
+  LiveComment as LiveCommentRow,
+  LiveSession as LiveSessionRow,
   Publication as PublicationRow,
   Station as StationRow,
 } from '@prisma/client';
@@ -126,6 +129,60 @@ export const publicationRow = (over: Partial<PublicationRow> = {}): PublicationR
   ...over,
 });
 
+export const liveSessionRow = (over: Partial<LiveSessionRow> = {}): LiveSessionRow => ({
+  id: 'live-1',
+  type: 'news',
+  title: '주간뉴스 라이브',
+  description: null,
+  status: 'scheduled',
+  hostStationId: 's-center',
+  announcerUserId: null,
+  scheduledAt: NOW,
+  startedAt: null,
+  endedAt: null,
+  rtmpIngestUrl: null,
+  streamKeyRef: null,
+  hlsPlaybackUrl: null,
+  targetChannelAccountIds: [],
+  weeklyRecommendationId: null,
+  productIds: [],
+  vodContentId: null,
+  createdByUserId: 'u-center',
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...over,
+});
+
+export const liveCommentRow = (over: Partial<LiveCommentRow> = {}): LiveCommentRow => ({
+  id: 'lc-1',
+  liveSessionId: 'live-1',
+  channelAccountId: 'ch-youtube',
+  platform: 'youtube',
+  externalCommentId: 'youtube-ext-1',
+  authorName: 'youtube_user_1',
+  authorExternalId: null,
+  authorAvatarUrl: null,
+  message: '방송 잘 보고 있습니다',
+  isQuestion: false,
+  status: 'collected',
+  postedAt: NOW,
+  collectedAt: NOW,
+  promptedAt: null,
+  ...over,
+});
+
+export const chatMessageRow = (over: Partial<ChatMessageRow> = {}): ChatMessageRow => ({
+  id: 'chat-1',
+  liveSessionId: 'live-1',
+  userId: 'guest-1',
+  userName: '익명1234',
+  message: '안녕하세요',
+  visibility: 'visible',
+  moderatedByUserId: null,
+  sentAt: NOW,
+  ...over,
+});
+
 export const sceneJson = (order: number, id: string = uuidv7()) => ({
   id,
   order,
@@ -184,6 +241,24 @@ export const makePrismaMock = () => {
     publication: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    liveSession: {
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    liveComment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    chatMessage: {
+      findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),

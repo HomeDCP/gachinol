@@ -1,9 +1,10 @@
 // 규약: 테이블·컬럼 snake_case(@map/@@map), enum성 컬럼은 전부 String(text) —
 // 값은 @gachinol/shared의 snake_case 문자열 그대로 (Prisma enum·CHECK 제약 금지, 검증은 앱 경계).
 // ID는 앱이 UUID v7 발급 (시간순 정렬·커서 겸용). 타임스탬프는 timestamptz(3).
-// 이번 범위 밖 도메인(커머스·라이브) 테이블 선반영 금지.
+// live_sessions·live_comments·chat_messages는 라이브+WS 슬라이스에서 도입됨(아래 model). 커머스는 여전히 선반영 금지.
 // media_assets는 media-worker 연동 단계에서 도입됨(아래 model MediaAsset).
 // channel_accounts·publications는 다채널 송출 슬라이스에서 도입됨(아래 model ChannelAccount·Publication).
+// Publication.live_session_id는 FK 없는 예약 유지(라이브 소스 송출은 후속) → distribution 무변경.
 
 generator client {
   provider = "prisma-client-js"
@@ -32,6 +33,7 @@ model Station {
   users           User[]
   contents        Content[]
   channelAccounts ChannelAccount[]
+  liveSessions    LiveSession[]
 
   @@index([kind, status])
   @@map("stations")
@@ -205,6 +207,7 @@ model ChannelAccount {
 
   station      Station?      @relation(fields: [stationId], references: [id])
   publications Publication[]
+  liveComments LiveComment[]
 
   @@unique([platform, externalChannelId]) // shared: "(platform, externalChannelId) unique"
   @@index([stationId, platform, status]) // 기본 송출처 해석("지사 X의 connected kakao 채널") 핫패스
@@ -242,6 +245,84 @@ model Publication {
   @@index([contentId, createdAt(sort: Desc)]) // GET /contents/:id/publications + ContentDetail
   @@index([status]) // 관제/리컨사일 스캔
   @@map("publications")
+}
+
+// 라이브 세션 — 토·일 센터 라이브 + 긴급 현장 라이브. enum성=text(status·type는 shared 문자열).
+// stream_key_ref는 시크릿 참조 '이름만'(값 비저장 — LiveIngestInfo로만 실값 전달).
+// announcer_user_id·created_by_user_id는 users FK. target_channel_account_ids/product_ids/
+// weekly_recommendation_id/vod_content_id는 FK 없는 예약(fan-out 의도·커머스·추천·VOD는 후속).
+model LiveSession {
+  id                      String    @id
+  type                    String // ProgramCategory
+  title                   String
+  description             String?
+  status                  String    @default("scheduled") // LiveSessionStatus 6종
+  hostStationId           String    @map("host_station_id")
+  announcerUserId         String?   @map("announcer_user_id") // FK→users SetNull
+  scheduledAt             DateTime? @map("scheduled_at") @db.Timestamptz(3) // 불변식: type='emergency' ⇔ null
+  startedAt               DateTime? @map("started_at") @db.Timestamptz(3)
+  endedAt                 DateTime? @map("ended_at") @db.Timestamptz(3)
+  rtmpIngestUrl           String?   @map("rtmp_ingest_url") // env 플레이스홀더
+  streamKeyRef            String?   @map("stream_key_ref") // ★ 시크릿 참조 '이름만' — 값 저장 금지
+  hlsPlaybackUrl          String?   @map("hls_playback_url") // env 플레이스홀더
+  targetChannelAccountIds String[]  @default([]) @map("target_channel_account_ids") // FK 없음
+  weeklyRecommendationId  String?   @map("weekly_recommendation_id") // FK 없음(테이블 미도입)
+  productIds              String[]  @default([]) @map("product_ids") // FK 없음(커머스 미도입)
+  vodContentId            String?   @map("vod_content_id") // FK 없음(예약)
+  createdByUserId         String    @map("created_by_user_id") // FK→users Restrict
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  hostStation  Station       @relation(fields: [hostStationId], references: [id])
+  liveComments LiveComment[]
+  chatMessages ChatMessage[]
+
+  @@index([status, scheduledAt]) // 공개 "현재/예정 라이브" 조회
+  @@index([hostStationId, createdAt(sort: Desc)]) // 지사별 라이브 목록
+  @@map("live_sessions")
+}
+
+// 외부 SNS 채널 댓글 → 아나운서 프롬프터. (channel_account_id, external_comment_id) unique=수집 dedup 하드가드.
+model LiveComment {
+  id                String    @id
+  liveSessionId     String    @map("live_session_id") // FK→live_sessions Cascade
+  channelAccountId  String    @map("channel_account_id") // FK→channel_accounts Cascade
+  platform          String // Platform (SNS 5종 — 제약은 서버 검증)
+  externalCommentId String    @map("external_comment_id")
+  authorName        String    @map("author_name")
+  authorExternalId  String?   @map("author_external_id")
+  authorAvatarUrl   String?   @map("author_avatar_url")
+  message           String
+  isQuestion        Boolean   @default(false) @map("is_question")
+  status            String    @default("collected") // LiveCommentStatus
+  postedAt          DateTime  @map("posted_at") @db.Timestamptz(3)
+  collectedAt       DateTime  @default(now()) @map("collected_at") @db.Timestamptz(3)
+  promptedAt        DateTime? @map("prompted_at") @db.Timestamptz(3)
+
+  liveSession    LiveSession    @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([channelAccountId, externalCommentId]) // ★ 중복 수집 dedup 하드가드(shared 규약)
+  @@index([liveSessionId, postedAt]) // 프롬프터 postedAt 오름차순
+  @@map("live_comments")
+}
+
+// 구독자 앱 자체 라이브 채팅. user_id는 FK 없음(익명 게스트 UUID v7 — 감사 시 익명 구분).
+// hidden도 행 보존(soft) — 신고 감사 대응. moderated_by_user_id만 실 유저(FK 없음).
+model ChatMessage {
+  id                String   @id
+  liveSessionId     String   @map("live_session_id") // FK→live_sessions Cascade
+  userId            String   @map("user_id") // ★ FK 없음 — 익명 게스트 UUID v7
+  userName          String   @map("user_name") // 표시용 비정규화(닉네임)
+  message           String
+  visibility        String   @default("visible") // ChatVisibility
+  moderatedByUserId String?  @map("moderated_by_user_id") // FK 없음, null=미검열
+  sentAt            DateTime @default(now()) @map("sent_at") @db.Timestamptz(3)
+
+  liveSession LiveSession @relation(fields: [liveSessionId], references: [id], onDelete: Cascade)
+
+  @@index([liveSessionId, sentAt(sort: Desc)]) // shared: (liveSessionId, sentAt DESC) + UUID v7 커서
+  @@map("chat_messages")
 }
 
 model StatusTransitionLog {

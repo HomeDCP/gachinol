@@ -1,4 +1,4 @@
-import type { ContentId, ProgramCategory, StationId } from '@gachinol/shared';
+import type { ContentId, LiveSessionId, ProgramCategory, StationId } from '@gachinol/shared';
 
 /** 캐시 키는 팩토리로만 생성 — 리터럴 산개 금지 */
 
@@ -25,4 +25,11 @@ export const feedKeys = {
 
 export const stationKeys = {
   publicList: ['stations', 'public'] as const,
+};
+
+export const liveKeys = {
+  /** prefix 앵커 */
+  all: ['live'] as const,
+  sessions: ['live', 'sessions'] as const,
+  session: (id: LiveSessionId) => ['live', 'sessions', id] as const,
 };

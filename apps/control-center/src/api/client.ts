@@ -35,6 +35,11 @@ export interface ApiClient {
   ): Promise<TRes>;
   /** AuthProvider 부트스트랩도 사용 — true=유효한 access 확보 */
   ensureFreshTokens(): Promise<boolean>;
+  /**
+   * WS 핸드셰이크용 신선한 access 토큰 — 만료 임박(스큐 내)이면 선제 refresh 후 반환.
+   * REST attempt()의 인증 로직과 동일 규칙. 토큰 없으면 null(익명 강등은 서버 게이트가 거절).
+   */
+  getFreshAccessToken(): Promise<string | null>;
 }
 
 function buildQueryString(query?: Record<string, string | number | undefined>): string {
@@ -183,5 +188,17 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     return parseResponse<TRes>(res);
   }
 
-  return { request, ensureFreshTokens };
+  /** WS 핸드셰이크용 — attempt()의 선제 refresh 로직 재사용 */
+  async function getFreshAccessToken(): Promise<string | null> {
+    const access = tokenStore.getAccessToken();
+    const expiresAt = tokenStore.getAccessTokenExpiresAt();
+    const expiringSoon =
+      !access || expiresAt === null || expiresAt - Date.now() < ACCESS_EXPIRY_SKEW_MS;
+    if (expiringSoon && tokenStore.getRefreshToken()) {
+      await ensureFreshTokens();
+    }
+    return tokenStore.getAccessToken();
+  }
+
+  return { request, ensureFreshTokens, getFreshAccessToken };
 }

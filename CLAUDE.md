@@ -147,6 +147,9 @@ pnpm --filter @gachinol/media-worker test       # 프로파일 + 실 FFmpeg 프�
 
 # 미디어 파이프라인 E2E (업로드→트랜스코딩→프리뷰 완주). Postgres 필요, Redis/S3는 인프로세스 자동 조달
 pnpm --filter @gachinol/api test:e2e -- media-pipeline
+
+# 라이브+WS E2E (인프로세스 Nest app.listen(0) + 실 socket.io-client 왕복, 댓글 목). Postgres만 필요, Redis 불요
+pnpm --filter @gachinol/api test:e2e -- live-ws
 ```
 
 ## 10. 컨벤션
@@ -196,6 +199,36 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   shared 불요). shared 추가는 `DistributeContentRequest` DTO 1건뿐. `seed.ts`에 애월·제주시 kakao 채널 멱등 upsert.
   E2E(`test/distribution-pipeline.e2e-spec.ts` — embedded redis-memory-server·s3rver·docker PG, 카카오 목 → 외부 네트워크 0):
   distribute→published 정상 + fail- 채널→publish_failed→retry→published 실증. 회귀 0(api 유닛 217·e2e 34). shared·기존 전이 무변경.
+  → **라이브 + WebSocket(Live) 슬라이스 완료 (api)**: `@nestjs/websockets`+socket.io 게이트웨이(`services/api/src/live/`).
+  Prisma 신규 3테이블 `live_sessions`·`live_comments`·`chat_messages`(enum성=text·UUID v7·`(channel,external)` unique=댓글 dedup 하드가드·
+  `stream_key_ref`=참조 이름만). **채팅 룸=익명 공개**(닉네임=핸드셰이크 `auth.nickname`·서버 토큰버킷 레이트리밋), **프롬프터·관제 룸=JWT 게이트**
+  (announcer·center_operator·admin). WS 이벤트는 shared `realtime/events.ts` 소비(재정의 0): `live.join`(`LiveJoinAck`)·`live.leave`·
+  `chat.send`(`ChatMessage` ack+`chat.new` 브로드캐스트)·`prompter.join`(`PrompterJoinAck`)·`control.join`, 서버emit `live.status_changed`·
+  `live.viewer_count`·`chat.new`·`chat.moderated`·`prompter.comments`. 각 핸들러 try/catch→`ws-ack.ts`(전역 필터 우회, DomainException→WsAck).
+  센터 REST `@Controller('live-sessions')`(생성 불변식 emergency⇔scheduledAt=null·prepare/start/interrupt/resume/end/cancel CAS+shared
+  `LIVE_SESSION_STATUS_TRANSITIONS`+`status_transition_logs`(entityType='live_session')+커밋후 브로드캐스트·`GET /:id/ingest`=streamKey 유일 노출·
+  `POST /:id/chat/:messageId/hide`). 공개 `@Controller('live')` 전부 `@Public`: `GET /live/sessions`·`/sessions/:id`(화이트리스트 `toLiveSessionPublic`
+  —streamKeyRef/rtmpIngestUrl 구조적 차단, status∈{scheduled,preparing,live,interrupted}). 댓글 수집=어댑터+**목 기본**(youtube/meta/x/threads 결정적,
+  `fail-` 접두 throw)·실 어댑터는 기존 `YOUTUBE_*`/`META_*`/`X_*`/`THREADS_*` 키 게이트(신규 시크릿 0). `CommentCollectorService`=인프로세스·**이벤트-암드**
+  (start→arm·end→disarm, 활성0=타이머0), `collectOnce`→comment_read 채널 poll→정규화→`createMany(skipDuplicates)`→collected 배치 프롬프터 푸시→prompted
+  마킹(재호출 dedup). socket.io Redis 어댑터는 `afterInit`에서 `REDIS_URL` 있을 때만 주입(다중 인스턴스 fan-out·미설정=단일 인스턴스 저하). LiveModule은
+  DistributionCoreModule(ChannelAccountsService)만 import→아무도 LiveModule을 import 안 함(순환 구조적 불가). E2E(`test/live-ws.e2e-spec.ts` —
+  인프로세스 Nest `app.listen(0)`+실 socket.io-client 왕복, 댓글 목): 채팅 send→broadcast+DB영속·레이트리밋·프롬프터 collectOnce 푸시+dedup+익명 forbidden·
+  공개 GET streamKeyRef 미유출·hide→chat.moderated·end→status_changed 실증. 회귀 0(shared·기존 모듈·전이 무변경, app.module +1줄·resetDb +3테이블).
+  → **라이브 WS 앱 배선 완료 (subscriber·control-center)**: 두 앱에 `socket.io-client@^4` 추가(WS=REST와 동일 `EXPO_PUBLIC_API_URL` 오리진,
+  신규 EXPO_PUBLIC 키 0). **구독자(익명 채팅)**: `src/live/live-socket.ts`(`createLiveSocket({url,nickname,socketFactory?})` — 닉네임=핸드셰이크
+  `auth.nickname`, Authorization 미부착, `joinLive`/`sendChat`/`leaveLive`/`onChatNew`/`onChatModerated`/`onViewerCount`/`onLiveStatus`/`onConnect`,
+  ack `{ok:false}`→`ApiClientError` 재사용)·`chat-store.ts`(id dedupe+sentAt 오름차순+hidden 제거, 순수)·`use-live-chat.ts`(connect마다 `live.join`
+  재전송=재연결 룸 재구독, recentChat 시드·`chat.new` append·moderated 제거·viewer_count·status_changed, 낙관적 반영 0)·`nickname.ts`·`format.ts`.
+  화면: `app/(tabs)/live.tsx`(공개 세션 목록·방송중 강조)·`app/live/[id].tsx`(닉네임 게이트→채팅, `status==='live'`에서만 전송, hlsUrl 없으면 "준비중"
+  정직 표기). **관제(프롬프터·JWT)**: `src/api/client.ts`에 `getFreshAccessToken()` 추가(REST attempt의 선제 refresh 재사용)→소켓 **함수형 `auth`**로
+  매 (재)연결 시 최신 access 재-auth. `src/live/live-socket.ts`(`createControlSocket({url,getToken,socketFactory?})` — `prompterJoin`→`PrompterJoinAck`·
+  `controlJoin`·`onPrompterComments`/`onLiveStatus`)·`use-live-prompter.ts`(prompter.join 재전송·recentComments 시드·`prompter.comments` 배치 누적·
+  status_changed)·`features/live/{prompter-store,validation,labels}.ts`(prompter-store=postedAt dedupe+질문 선별, validation=emergency⇔scheduledAt 불변식
+  사전검증, labels=라이프사이클 액션을 shared `LIVE_SESSION_STATUS_TRANSITIONS`에서 파생·사본 0). 화면: `app/(app)/(tabs)/live.tsx`(세션 생성 폼+목록)·
+  `app/(app)/live/[id].tsx`(라이프사이클 제어 버튼+아나운서 프롬프터 패널·플랫폼 뱃지·질문 강조). 앱 단위 테스트=socketFactory DI 목(jest-expo transform 무변경):
+  구독자 20건(chat-store·nickname·format·live-socket)·관제 27건(labels·validation·prompter-store·live-socket). **shared·api 무변경**(client.ts는 앱 로컬).
+  검증: subscriber typecheck·test 48·control-center typecheck·test 95·양 앱 expo export(ios+android)·expo-doctor 18/18.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
   1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD·`reporter_only` 자동 송출 후킹
   2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
@@ -219,6 +252,8 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
     jest-expo 단위(client·captions·format·labels·pagination) 28건.~~ ✅ 완료
   - ~~**다채널 송출(Distribute) 슬라이스** — api 인프로세스 송출 워커 + 카카오 목 어댑터 + `channel_accounts`·`publications`
     2테이블 + 센터 엔드포인트 4종(distribute·publications·retry·retract). 카톡 채널 송출 한 바퀴 실증.~~ ✅ 완료
+  - ~~**라이브 + WebSocket 슬라이스** — api WS 게이트웨이(채팅·프롬프터·프레즌스) + `live_sessions`·`live_comments`·`chat_messages`
+    3테이블 + 센터/공개 REST + 이벤트-암드 댓글 수집기 + 구독자 익명 채팅 앱 + 관제 프롬프터 앱. 주말 라이브·실시간 채팅·아나운서 프롬프터 실증.~~ ✅ 완료
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
 ## 12. 미정 / 결정 대기 사항
