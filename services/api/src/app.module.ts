@@ -11,6 +11,7 @@ import { ContentsModule } from './contents/contents.module';
 import { DistributionCoreModule } from './distribution/distribution.module';
 import { FeedModule } from './feed/feed.module';
 import { HealthModule } from './health/health.module';
+import { LiveModule } from './live/live.module';
 import { MediaModule } from './media/media.module';
 import { PipelineModule } from './pipeline/pipeline.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -35,6 +36,7 @@ import { UsersModule } from './users/users.module';
     UploadModule,
     PipelineModule,
     FeedModule, // 구독자 공개 피드(@Public read 3종)
+    LiveModule, // 라이브 + WebSocket(게이트웨이·LiveSession·채팅·댓글수집)
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

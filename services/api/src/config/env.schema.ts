@@ -45,6 +45,22 @@ export const envSchema = z
     PUBLISH_JOB_ATTEMPTS: z.coerce.number().int().default(3),
     PUBLISH_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
     PUBLISH_CONCURRENCY: z.coerce.number().int().default(4),
+    // 라이브+WS — WS 게이트웨이는 상시 활성(코어). Redis는 다중 인스턴스 socket.io 어댑터만 게이트
+    // (미설정=단일 인스턴스 우아한 저하). RTMP/HLS는 실 인프라 미구축 — env 플레이스홀더.
+    LIVE_RTMP_INGEST_URL: z.string().optional(), // 이미 .env.example 존재 — 스키마 반영
+    LIVE_HLS_PLAYBACK_URL: z.string().optional(),
+    LIVE_DEV_STREAM_KEY: z.string().optional(), // dev 플레이스홀더(미설정 시 'dev-'+id 합성). 프로덕션 시크릿 아님
+    LIVE_COMMENT_POLL_INTERVAL_MS: z.coerce.number().int().default(3000),
+    LIVE_COMMENT_BATCH_MAX: z.coerce.number().int().default(50),
+    LIVE_CHAT_MESSAGE_MAX_LEN: z.coerce.number().int().default(500),
+    LIVE_CHAT_RECENT_LIMIT: z.coerce.number().int().default(50),
+    LIVE_CHAT_RATE_CAPACITY: z.coerce.number().int().default(5),
+    LIVE_CHAT_RATE_REFILL_MS: z.coerce.number().int().default(2000),
+    // SNS 댓글 수집 실 어댑터 게이트(신규 시크릿 0 — 기존 키 재사용). 미설정 시 목 어댑터(배포 기본).
+    YOUTUBE_API_KEY: z.string().optional(),
+    META_PAGE_ACCESS_TOKEN: z.string().optional(),
+    X_BEARER_TOKEN: z.string().optional(),
+    THREADS_ACCESS_TOKEN: z.string().optional(),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',

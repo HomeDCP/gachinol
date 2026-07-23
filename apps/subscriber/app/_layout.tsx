@@ -25,6 +25,7 @@ export default function RootLayout(): React.JSX.Element {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="watch/[id]" options={{ headerShown: true, title: '시청' }} />
+            <Stack.Screen name="live/[id]" options={{ headerShown: true, title: '라이브' }} />
           </Stack>
         </FeedFilterProvider>
       </ApiProvider>

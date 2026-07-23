@@ -1,40 +1,98 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useMemo } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
+import type { LiveSessionPublic } from '@gachinol/shared';
+import { userMessageForError } from '../../src/api/errors';
+import { CATEGORY_LABEL } from '../../src/features/feed/labels';
+import { formatViewerCount, isOnAir, LIVE_STATUS_LABEL } from '../../src/live/format';
+import { useLiveSessions } from '../../src/live/queries';
+import { EmptyState } from '../../src/ui/empty-state';
+import { ErrorView } from '../../src/ui/error-view';
 import { Screen } from '../../src/ui/screen';
 import { colors, radii, spacing, typo } from '../../src/ui/theme';
 
-/**
- * 유보 플레이스홀더 — 라이브·실시간 채팅은 다음 단계(RTMP/HLS 라이브 인프라 + WebSocket 미도입).
- * 목 스트림·가짜 댓글 금지, 네트워크 호출 0. 단일 안내 카드만.
- */
-export default function LiveScreen(): React.JSX.Element {
+/** 라이브 카드 — 방송중(live)은 빨강 뱃지 강조, 그 외는 회색 예정 뱃지 */
+function LiveCard({ item }: { item: LiveSessionPublic }): React.JSX.Element {
+  const onAir = isOnAir(item.status);
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.card}>
-          <Text style={styles.icon}>🔴</Text>
-          <Text style={styles.title}>주말 라이브 · 실시간 채팅</Text>
-          <Text style={styles.body}>
-            제주방송센터 주말 라이브와 실시간 채팅은 다음 단계입니다. 라이브 백엔드(RTMP/HLS)와 댓글
-            집계 WebSocket을 구축한 뒤 이 화면에서 제공됩니다.
+    <Pressable style={styles.card} onPress={() => router.push(`/live/${item.id}`)}>
+      <View style={styles.cardHeader}>
+        <View style={[styles.statusPill, onAir ? styles.statusLive : styles.statusIdle]}>
+          {onAir ? <View style={styles.liveDot} /> : null}
+          <Text style={[styles.statusText, onAir ? styles.statusTextLive : styles.statusTextIdle]}>
+            {LIVE_STATUS_LABEL[item.status]}
           </Text>
         </View>
-      </ScrollView>
+        {onAir ? <Text style={styles.viewers}>{formatViewerCount(item.viewerCount)}</Text> : null}
+      </View>
+      <Text style={styles.cardTitle} numberOfLines={2}>
+        {item.title}
+      </Text>
+      <Text style={styles.cardMeta}>{CATEGORY_LABEL[item.type]}</Text>
+    </Pressable>
+  );
+}
+
+/** 라이브 탭 — 공개 세션 목록(예정·준비·방송중·일시중단). 익명 진입 */
+export default function LiveScreen(): React.JSX.Element {
+  const live = useLiveSessions();
+  const items = useMemo(() => live.data ?? [], [live.data]);
+
+  if (live.isError) {
+    return (
+      <Screen>
+        <ErrorView message={userMessageForError(live.error)} onRetry={() => void live.refetch()} />
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen>
+      <FlatList
+        data={items}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <LiveCard item={item} />}
+        contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl refreshing={live.isRefetching} onRefresh={() => void live.refetch()} />
+        }
+        ListEmptyComponent={
+          live.isPending ? null : (
+            <EmptyState message="예정되었거나 진행 중인 라이브가 없습니다" />
+          )
+        }
+      />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl },
+  listContent: { padding: spacing.lg, paddingBottom: spacing.xl, flexGrow: 1 },
   card: {
     backgroundColor: colors.card,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.xl,
-    gap: spacing.md,
-    alignItems: 'center',
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
   },
-  icon: { fontSize: 40 },
-  title: { fontSize: typo.title, fontWeight: '700', color: colors.text, textAlign: 'center' },
-  body: { fontSize: typo.body, color: colors.textMuted, textAlign: 'center', lineHeight: 22 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderRadius: radii.lg,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  statusLive: { backgroundColor: '#FBE3E3' },
+  statusIdle: { backgroundColor: '#EFEFF1' },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger },
+  statusText: { fontSize: typo.caption, fontWeight: '700' },
+  statusTextLive: { color: colors.danger },
+  statusTextIdle: { color: colors.textMuted },
+  viewers: { fontSize: typo.caption, color: colors.textMuted },
+  cardTitle: { fontSize: typo.body, fontWeight: '700', color: colors.text },
+  cardMeta: { fontSize: typo.caption, color: colors.textMuted },
 });

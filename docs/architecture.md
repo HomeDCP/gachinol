@@ -37,11 +37,16 @@
 - **Redis**: 큐(BullMQ)·캐시·실시간 pub/sub(댓글 집계·프리즌스)
 - **오브젝트 스토리지(S3 호환)**: 영상 원본·트랜스코딩 산출물·썸네일 (로컬은 MinIO)
 
-## 5. 실시간(WebSocket) 채널
+## 5. 실시간(WebSocket) 채널 — **구현됨** (`services/api/src/live`, socket.io)
 
-- 라이브 시청자 채팅 (구독자 앱 ↔ api)
-- 채널별 외부 댓글 집계 → 아나운서 프롬프터
-- 관제 대시보드 상태 업데이트(업로드/처리/추천 진행률)
+단일 게이트웨이. 룸·이벤트는 shared `realtime/{rooms,events}.ts`가 유일 원천(재정의 금지). 각 핸들러는 `WsAck`로 응답(전역 HTTP 필터 우회, `ws-ack.ts`).
+
+- **라이브 시청자 채팅** (구독자 앱 ↔ api) — 룸 `live:{id}`, **익명 공개**(닉네임=핸드셰이크 `auth.nickname`, 서버 토큰버킷 레이트리밋). `live.join`/`live.leave`/`chat.send`, 서버 `chat.new`·`chat.moderated`·`live.viewer_count`. `ChatMessage` 영속(게스트 UUID v7=user_id, FK 없음).
+- **채널별 외부 댓글 집계 → 아나운서 프롬프터** — 룸 `prompter:{id}`, **JWT 게이트**(announcer·center_operator·admin). `CommentCollectorService`(인프로세스·이벤트-암드)가 `comment_read` 채널을 poll(어댑터+목 기본, SNS 키 게이트)→정규화 `LiveComment`(`(channel,external)` unique dedup)→`prompter.comments` 배치 푸시. api=유일 DB 기록자.
+- **관제 룸** `control` (center_operator·announcer·admin) — 라이브 상태 브로드캐스트 수신. 관제 대시보드 진행률(업로드/처리/추천)은 후속(같은 `LiveBroadcaster` export 지점 재사용).
+- **인증 경계**: 채팅 룸=익명(연결 거부 안 함, 권한은 룸 조인 시점 판정), 프롬프터·관제 룸=핸드셰이크 JWT(JwtAuthGuard 동일 검증). 연결 인증 성공 시 `user:{id}` 자동 join.
+- **룸 네이밍**: `live:{id}` · `prompter:{id}` · `control` · `user:{id}` (shared `rooms.ts`).
+- **다중 인스턴스**: socket.io Redis 어댑터(`REDIS_URL` 있을 때만) fan-out. 미설정=단일 인스턴스(프레즌스 정확). 라이브 스트리밍(RTMP/HLS)은 실 인프라 미구축 — LiveSession이 ingest/playback URL을 env 플레이스홀더로 보유.
 
 ## 6. 미정 결정 (진행하며 확정)
 
