@@ -1,5 +1,10 @@
 import { DomainException } from '../common/errors/domain.exception';
-import { contentRow, makePrismaMock, reporterUser } from '../test-support/fixtures';
+import {
+  centerOperatorUser,
+  contentRow,
+  makePrismaMock,
+  reporterUser,
+} from '../test-support/fixtures';
 import { ContentWorkflowService } from './content-workflow.service';
 
 /** system 액터 전이(applySystemTransition) + 업로드 user 전이(begin/complete/failUpload) */
@@ -123,6 +128,51 @@ describe('ContentWorkflowService — system·upload 전이 (media-worker 연동)
     it('맵 불법(uploaded에서 beginUpload)은 invalid_transition', async () => {
       const { service } = setup(contentRow({ status: 'uploaded' }));
       await expectDomainError(service.beginUpload('c-1', reporterUser()), 'invalid_transition');
+    });
+  });
+
+  describe('beginPublishing — 송출 트리거 CAS (센터 액터)', () => {
+    it('center_approved→publishing: user 로그 기록', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'center_approved' }));
+      await service.beginPublishing(prisma, contentRow({ status: 'center_approved' }), centerOperatorUser());
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'c-1', status: 'center_approved' } }),
+      );
+      const log = prisma.statusTransitionLog.create.mock.calls[0][0].data;
+      expect(log).toMatchObject({ actorType: 'user', toStatus: 'publishing' });
+    });
+
+    it('경합 count=0 → conflict throw (distribute 1승리)', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'center_approved' }));
+      prisma.content.updateMany.mockResolvedValue({ count: 0 });
+      await expectDomainError(
+        service.beginPublishing(prisma, contentRow({ status: 'center_approved' }), centerOperatorUser()),
+        'conflict',
+      );
+    });
+
+    it('기자 액터 → forbidden', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'center_approved' }));
+      await expectDomainError(
+        service.beginPublishing(prisma, contentRow({ status: 'center_approved' }), reporterUser()),
+        'forbidden',
+      );
+    });
+  });
+
+  describe('resumePublishing — 채널 재시도 시 content 복귀', () => {
+    it('publish_failed→publishing CAS(idempotent)', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'publish_failed' }));
+      await service.resumePublishing(prisma, contentRow({ status: 'publish_failed' }), centerOperatorUser());
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'c-1', status: 'publish_failed' } }),
+      );
+    });
+
+    it('이미 publishing이면 skip(무동작)', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'publishing' }));
+      await service.resumePublishing(prisma, contentRow({ status: 'publishing' }), centerOperatorUser());
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
     });
   });
 });

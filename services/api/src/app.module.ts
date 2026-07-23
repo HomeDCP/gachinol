@@ -8,6 +8,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AnalysisModule } from './analysis/analysis.module';
 import { AppConfigModule } from './config/config.module';
 import { ContentsModule } from './contents/contents.module';
+import { DistributionCoreModule } from './distribution/distribution.module';
 import { FeedModule } from './feed/feed.module';
 import { HealthModule } from './health/health.module';
 import { MediaModule } from './media/media.module';
@@ -29,6 +30,7 @@ import { UsersModule } from './users/users.module';
     MediaModule,
     QueueModule,
     AnalysisModule,
+    DistributionCoreModule,
     ContentsModule,
     UploadModule,
     PipelineModule,

@@ -34,8 +34,13 @@ src/
 ├── prisma/    # PrismaService (@Global)
 ├── auth/      # 로그인 · JWT 발급/회전 · 가드(JwtAuthGuard→RolesGuard) · argon2id
 ├── users/     # 계정 관리 (admin) · row→shared User 매퍼
-├── stations/  # 지사 CRUD + 상태 전이 (dormant→operating 부활)
-└── contents/  # 초안 CRUD + ContentWorkflowService(★ 전이 단일 관문)
+├── stations/     # 지사 CRUD + 상태 전이 (dormant→operating 부활)
+├── contents/     # 초안 CRUD + ContentWorkflowService(★ 전이 단일 관문) + DistributionOrchestrator·PublicationsController
+├── media/·queue/ # S3 presign·MediaAssets · BullMQ 미디어 큐 생산자
+├── analysis/     # ai-worker HTTP 소비 + ai_analyses 기록 (analyzing 홉)
+├── distribution/ # 다채널 송출 코어 — 채널·Publication·큐·카카오 어댑터(목 기본) + 인프로세스 송출 워커
+├── pipeline/     # QueueEvents 소비자(★ 유일 DB 기록자) — media·analysis·distribution 잡이벤트→상태전이
+└── feed/         # 구독자 공개 피드(@Public read 3종)
 ```
 
 ## 인증
@@ -79,6 +84,26 @@ src/
 지사도 동일 골격(`STATION_STATUS_TRANSITIONS`): `POST /v1/stations/:id/transitions` —
 `dormant→operating`이 MVP "애월·제주시 부활"의 실체.
 
+## 다채널 송출 (Distribute — 카카오 우선, 전부 `center_operator`·`admin`)
+
+| 엔드포인트 | 동작 |
+| --- | --- |
+| `POST /v1/contents/:id/distribute` | `center_approved`만 — `center_approved→publishing` CAS(트리거 멱등 1관문) + 대상 채널별 `queued` Publication 생성 → 커밋 후 `distribution` 큐 인큐. body `{channelAccountIds?}` override(생략 시 서버 해석). 응답 `Publication[]` |
+| `GET /v1/contents/:id/publications` | 채널별 송출 상태(최신순) |
+| `POST /v1/publications/:id/retry` | 채널 단위 재시도 — `failed→queued` 재큐(+content `publish_failed→publishing`) |
+| `POST /v1/publications/:id/retract` | 회수 — `published→retracted`(목 어댑터 성공). content 상태 무변 |
+
+- **송출 워커 = api 인프로세스**(analysis 홉 동형). `REDIS_URL` 설정 시 `DISTRIBUTION_WORKER`가 큐를 소비해
+  카카오 어댑터로 송출하고, `PipelineService`(유일 DB 기록자)가 `Publication`·content 전이를 기록한다.
+  Redis 미설정 시 우아한 저하 — `queued` Publication만 생성하고 인큐는 생략.
+- **어댑터 = 카카오 목이 배포 기본**(결정적 가짜 external ID/URL, 외부 네트워크 0). `KAKAO_REST_API_KEY && KAKAO_CHANNEL_ADMIN_KEY`
+  둘 다 설정 시에만 실 `KakaoRealAdapter` 주입(현재 스켈레톤). `externalChannelId` `fail-` 접두는 결정적 실패(테스트 제어).
+- **채널 부분실패 = `job.returnvalue` 데이터**(throw 아님) — 잡 throw면 성공 채널까지 재송출되므로. 채널 단위 복구는 retry 엔드포인트.
+- **대상 채널 해석**: body override > `content.targetChannelAccountIds` > 지사 `connected` kakao(`vod_publish`). 0건 → 409.
+- **멱등 3키**: ① content CAS(distribute 1승리) ② `(content,channel)` 활성 부분 유니크 ③ 잡 재수신 시 Publication 상태 CAS no-op.
+- 전이 규칙 원천: content=shared `CONTENT_STATUS_TRANSITIONS`, Publication=shared `PUBLICATION_STATUS_TRANSITIONS`(api에 사본 금지).
+- 큐 wire는 api-내부 `distribution/distribution-job.ts`(워커 인프로세스라 shared 불요). shared 추가는 `DistributeContentRequest` DTO 1건뿐.
+
 ## Swagger
 
 비프로덕션에서만 `/docs` (JSON `/docs-json`). health 2종만 terminus 표준 응답(도메인 계약 밖 유일 예외).
@@ -108,5 +133,5 @@ pnpm --filter @gachinol/api test:e2e   # E2E — DB 프로브(2s) 후 migrate de
 
 ## 이번 단계 범위 밖 (다음 단계)
 
-업로드 presigned URL · BullMQ · media/ai-worker 연동 · MediaAsset/AiAnalysis/Publication/ChannelAccount
-테이블 · 다채널 송출 · WebSocket. 커머스·라이브·송출 도메인은 스키마·코드에 선반영하지 않았다.
+댓글 수집 · SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) · 채널 계정 CRUD ·
+`reporter_only` 자동 송출 후킹 · 실 카카오 어댑터 구현 · WebSocket(라이브·프롬프터). 커머스·라이브 도메인은 스키마·코드에 선반영하지 않았다.

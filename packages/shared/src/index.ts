@@ -48,6 +48,7 @@ export * from './recommendation/weekly-recommendation';
 export * from './distribution/platform';
 export * from './distribution/channel-account';
 export * from './distribution/publication';
+export * from './distribution/dto';
 
 // live
 export * from './live/live-session';

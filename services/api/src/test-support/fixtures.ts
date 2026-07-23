@@ -1,6 +1,11 @@
 /** 단위 테스트 공용 픽스처·mock — DB 불요 (Prisma mock) */
 import type { User } from '@gachinol/shared';
-import type { Content as ContentRow, Station as StationRow } from '@prisma/client';
+import type {
+  ChannelAccount as ChannelAccountRow,
+  Content as ContentRow,
+  Publication as PublicationRow,
+  Station as StationRow,
+} from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 
 const NOW = new Date('2026-07-20T00:00:00.000Z');
@@ -84,6 +89,43 @@ export const stationRow = (over: Partial<StationRow> = {}): StationRow => ({
   ...over,
 });
 
+export const channelAccountRow = (over: Partial<ChannelAccountRow> = {}): ChannelAccountRow => ({
+  id: 'ch-aewol',
+  platform: 'kakao',
+  stationId: 's-aewol',
+  name: '애월 마을방송국 카카오톡 채널',
+  externalChannelId: 'kakao-aewol',
+  credentialRef: 'kakao:aewol',
+  capabilities: ['vod_publish'],
+  status: 'connected',
+  connectedAt: NOW,
+  expiresAt: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...over,
+});
+
+export const publicationRow = (over: Partial<PublicationRow> = {}): PublicationRow => ({
+  id: 'pub-1',
+  sourceKind: 'content',
+  contentId: 'c-1',
+  liveSessionId: null,
+  channelAccountId: 'ch-aewol',
+  platform: 'kakao',
+  status: 'queued',
+  externalPostId: null,
+  externalUrl: null,
+  attempts: 0,
+  errorMessage: null,
+  requestedByUserId: 'u-center',
+  queuedAt: NOW,
+  publishedAt: null,
+  retractedAt: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+  ...over,
+});
+
 export const sceneJson = (order: number, id: string = uuidv7()) => ({
   id,
   order,
@@ -133,6 +175,18 @@ export const makePrismaMock = () => {
       create: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+    },
+    channelAccount: {
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn(),
+    },
+    publication: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   };
   prisma.$transaction = jest.fn(async (arg: any) =>

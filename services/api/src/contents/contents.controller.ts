@@ -1,25 +1,29 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Logger, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type {
   Content,
   ContentDetail,
   ContentSummary,
   Paginated,
+  Publication,
   StatusTransitionLog,
   User,
 } from '@gachinol/shared';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { AnalysisProducerService } from '../analysis/analysis-producer.service';
+import { DistributionProducerService } from '../distribution/distribution-producer.service';
 import { QueueProducerService } from '../queue/queue-producer.service';
 import { toContent } from './content.mapper';
 import { ContentWorkflowService } from './content-workflow.service';
 import { ContentsService } from './contents.service';
+import { DistributionOrchestratorService } from './distribution-orchestrator.service';
 import {
   CancelContentDto,
   ContentListQueryDto,
   CreateContentDraftDto,
   CreateRevisionRequestDto,
+  DistributeContentDto,
   PageQueryDto,
   RejectContentDto,
   TransitionContentDto,
@@ -31,11 +35,15 @@ import {
 @ApiBearerAuth()
 @Controller('contents')
 export class ContentsController {
+  private readonly logger = new Logger(ContentsController.name);
+
   constructor(
     private readonly contents: ContentsService,
     private readonly workflow: ContentWorkflowService,
     private readonly producer: QueueProducerService,
     private readonly analysisProducer: AnalysisProducerService,
+    private readonly distributionProducer: DistributionProducerService,
+    private readonly distribution: DistributionOrchestratorService,
   ) {}
 
   @Post()
@@ -80,7 +88,21 @@ export class ContentsController {
     summary: '승인 — 기자: reporter_approved 후 reviewPolicy 자동 연쇄 / 센터: center_approved',
   })
   async approve(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
-    return toContent(await this.workflow.approve(id, user));
+    const updated = await this.workflow.approve(id, user);
+    // reporter_only(afterReporterApproval): reporter_approved→publishing 자동 연쇄 시 자동 송출 트리거.
+    // 센터 승인(awaiting_center_review→center_approved)은 status가 publishing이 아니라 미해당 → 이중 송출 없음.
+    // 에러 격리: 자동 송출 실패가 승인 200 응답을 깨지 않게 한다(Publication은 인큐-애프터-커밋으로 이미 커밋 →
+    // 채널 단위 retry로 복구 가능). 실 채널 송출은 orchestrator가 커밋 후 인큐.
+    if (updated.status === 'publishing') {
+      try {
+        await this.distribution.startAutoDistribution(updated, user);
+      } catch (e) {
+        this.logger.error(
+          `reporter_only 자동 송출 실패(승인은 유지) contentId=${id}: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
+    return toContent(updated);
   }
 
   @Post(':id/request-revision')
@@ -126,10 +148,36 @@ export class ContentsController {
   async retry(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
     const updated = await this.workflow.retry(id, user);
     // 인큐-애프터-커밋 — 해당 실패 복귀 상태의 잡 재큐(Redis 미설정 시 무동작).
-    // media(processing/preview_generating)·analysis(analyzing) 생산자는 자기 상태만 처리·그 외 no-op이라 안전 병존.
+    // media(processing/preview_generating)·analysis(analyzing)·distribution(publishing) 생산자는
+    // 자기 상태만 처리·그 외 no-op이라 안전 병존.
     await this.producer.requeueForStatus(updated);
     await this.analysisProducer.requeueForStatus(updated);
+    await this.distributionProducer.requeueForStatus(updated);
     return toContent(updated);
+  }
+
+  @Post(':id/distribute')
+  @HttpCode(200)
+  @Roles('center_operator', 'admin')
+  @ApiOperation({
+    summary: '다채널 송출 — center_approved만. 대상 채널 override 가능(생략 시 서버 해석)',
+  })
+  distribute(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() body: DistributeContentDto,
+  ): Promise<readonly Publication[]> {
+    return this.distribution.distribute(id, user, body);
+  }
+
+  @Get(':id/publications')
+  @Roles('center_operator', 'admin')
+  @ApiOperation({ summary: '채널별 송출 상태 (최신순)' })
+  listPublications(
+    @CurrentUser() _user: User,
+    @Param('id') id: string,
+  ): Promise<readonly Publication[]> {
+    return this.distribution.listForContent(id);
   }
 
   @Post(':id/transitions')

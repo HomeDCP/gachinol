@@ -184,8 +184,20 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   상세(저화질 프리뷰·AI분석 vision/text·장면·수정요청·전이 이력)·센터 결정(승인/수정요청/반려 + 실패 재시도)·지사 로스터(read-only 딥링크).
   reporter 인증/클라이언트 패턴(refresh single-flight·auth 게이트·TanStack Query·secure-store·metro) 동형 이식, **shared·api 무변경**.
   주간추천·라이브 관제는 백엔드 부재로 플레이스홀더. jest-expo 단위 테스트(client·token-store·role-gate·status·actions·analysis·validation).
+  → **다채널 송출(Distribute) 슬라이스 완료 (카카오 우선)**: 송출 워커를 api **인프로세스**로(analysis 홉 동형) 두고
+  카카오 **목 어댑터**를 배포 기본으로 격리(실 카카오는 `KAKAO_*` env 게이트 확장점). Prisma 신규 2테이블
+  `channel_accounts`·`publications`(enum성=text·UUID v7·부분 유니크 `(content,channel) WHERE status active`=멱등 하드가드).
+  센터 엔드포인트 4종(전부 `center_operator`·`admin`): `POST /v1/contents/:id/distribute`(center_approved→publishing CAS +
+  채널별 queued Publication + 인큐-애프터-커밋), `GET /v1/contents/:id/publications`, `POST /v1/publications/:id/{retry,retract}`.
+  대상 채널 해석 우선순위 body override>`content.targetChannelAccountIds`>지사 connected kakao(vod_publish). content 전이는
+  `ContentWorkflowService.beginPublishing`(CAS)·`applySystemTransition` 재사용(publishing→published/publish_failed), Publication
+  전이는 shared `PUBLICATION_STATUS_TRANSITIONS` 소비(규칙 사본 금지). 채널 부분실패=`job.returnvalue` 데이터(throw 아님 →
+  성공채널 재송출 방지), 채널 단위 복구는 retry 엔드포인트. 큐 wire는 api-내부 `distribution/distribution-job.ts`(워커 인프로세스라
+  shared 불요). shared 추가는 `DistributeContentRequest` DTO 1건뿐. `seed.ts`에 애월·제주시 kakao 채널 멱등 upsert.
+  E2E(`test/distribution-pipeline.e2e-spec.ts` — embedded redis-memory-server·s3rver·docker PG, 카카오 목 → 외부 네트워크 0):
+  distribute→published 정상 + fail- 채널→publish_failed→retry→published 실증. 회귀 0(api 유닛 217·e2e 34). shared·기존 전이 무변경.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
-  1. 다채널 송출·댓글 수집 연동 (카카오 → SNS 순)
+  1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD·`reporter_only` 자동 송출 후킹
   2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
   3. ai-worker 실 제공자(OpenAI Whisper/비전) 주입 + 주간 추천(recommendationScore→weekly_recommendation) 파이프라인
   4. `infra` 배포 스크립트/IaC (docker-compose는 완료)
@@ -205,6 +217,8 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
     라이브 정적 플레이스홀더. 공개 GET 전용 클라이언트(reporter/control-center에서 tokenStore·refresh·401 재시도 전면 제거,
     Authorization 미부착). reporter/control-center Expo 패턴(metro·jest·expo-router·TanStack Query) 동형 이식, **shared·api 무변경**.
     jest-expo 단위(client·captions·format·labels·pagination) 28건.~~ ✅ 완료
+  - ~~**다채널 송출(Distribute) 슬라이스** — api 인프로세스 송출 워커 + 카카오 목 어댑터 + `channel_accounts`·`publications`
+    2테이블 + 센터 엔드포인트 4종(distribute·publications·retry·retract). 카톡 채널 송출 한 바퀴 실증.~~ ✅ 완료
 - **MVP 우선 제안**: 휴무 중인 **애월·제주시 2개 지사 부활**을 최소 실행안으로. (기자 앱 업로드 → 카톡채널 송출 → 구독자 시청) 한 바퀴를 먼저 돌린다.
 
 ## 12. 미정 / 결정 대기 사항

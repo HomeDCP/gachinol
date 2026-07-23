@@ -3,6 +3,7 @@ import type {
   ChannelAccountId,
   CreateContentDraftRequest,
   CreateRevisionRequestBody,
+  DistributeContentRequest,
   RejectContentRequest,
   Scene,
   SceneId,
@@ -114,6 +115,11 @@ export const zCancelContent = z.object({
   note: z.string().max(2000).optional(),
 }) satisfies ZodSchemaOf<CancelContentRequest>;
 
+/** POST /v1/contents/:id/distribute — 대상 채널 override(생략 시 서버 해석). 빈 바디 허용 */
+export const zDistributeContent = z.object({
+  channelAccountIds: z.array(zId<ChannelAccountId>()).max(50).optional(),
+}) satisfies ZodSchemaOf<DistributeContentRequest>;
+
 export const zCreateRevisionRequestBody = z.object({
   note: z.string().min(1).max(2000),
   sceneNotes: z
@@ -122,6 +128,7 @@ export const zCreateRevisionRequestBody = z.object({
     .optional(),
 }) satisfies ZodSchemaOf<CreateRevisionRequestBody>;
 
+export class DistributeContentDto extends createZodDto(zDistributeContent) {}
 export class CreateContentDraftDto extends createZodDto(zCreateContentDraft) {}
 export class UpdateContentDraftDto extends createZodDto(zUpdateContentDraft) {}
 export class ContentListQueryDto extends createZodDto(zContentListQuery) {}
