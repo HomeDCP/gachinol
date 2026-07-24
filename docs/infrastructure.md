@@ -170,23 +170,23 @@
 
 ## 7. 구현 로드맵 (다음 작업)
 
-현재 `infra/`는 로컬 개발용 compose만 있고 **배포 산출물이 없다**(Dockerfile은 ai-worker만, CI/CD 없음). 배포 가능 상태로 만들 작업:
+**진행(2026-07-25)**: api·media-worker·ai-worker **Dockerfile(멀티스테이지)** + **프로덕션 compose**(`infra/docker/docker-compose.prod.yml`) + **GitHub Actions CI/CD**(`.github/workflows/ci.yml`·`build-images.yml`) 완료. 남은 작업:
 
-1. **컨테이너화** — api·media-worker Dockerfile(멀티스테이지, shared dist 빌드 포함), ai-worker Dockerfile 검토. `.dockerignore`.
-2. **프로덕션 오케스트레이션** — `infra/docker/`에 프로덕션 compose(또는 경량 K8s/Nomad). 시크릿은 env 주입, R2/RTZR/JWT 등. 헬스체크·재시작 정책·로그.
-3. **환경 설정** — S3 호환 클라이언트를 R2 엔드포인트로(현 코드가 `S3_ENDPOINT`·`S3_FORCE_PATH_STYLE` 지원 → env만으로 전환 가능). Cloudflare CDN 앞단.
-4. **CI/CD** — GitHub Actions: lint·typecheck·test(현재 전부 green) → 빌드 → 배포. 마이그레이션 자동화(`prisma migrate deploy`).
-5. **관측성** — 최소 로그 수집 + 헬스 엔드포인트(이미 `/health` 있음) + 업타임 모니터.
-6. **§5 대응 구현** — KakaoRealAdapter(알림톡+딥링크) 재설계, YouTube 라이브·댓글 실 어댑터, Meta App Review 병행.
+1. ~~**컨테이너화**~~ ✅ — api·media-worker Dockerfile(멀티스테이지·`pnpm deploy`·glibc bookworm), ai-worker Dockerfile 정비, 루트 `.dockerignore`. Prisma는 배포 트리에서 재생성, `prisma`를 api 런타임 의존으로 이동(엔트리포인트 `migrate deploy`).
+2. ~~**프로덕션 오케스트레이션**~~ ✅ — `infra/docker/docker-compose.prod.yml`(postgres·redis·api·media-worker·ai-worker). 시크릿 env 주입(`env.prod.example`), 헬스체크·`restart: unless-stopped`. 개발용 `infra/docker-compose.yml`과 분리.
+3. **환경 설정** — S3 호환 클라이언트를 R2 엔드포인트로(현 코드가 `S3_ENDPOINT`·`S3_FORCE_PATH_STYLE` 지원 → env만으로 전환 가능). Cloudflare CDN 앞단. (템플릿은 `env.prod.example`에 반영, 실 R2 계정 전환은 배포 시)
+4. **CI/CD** — GitHub Actions: ~~lint·typecheck·test~~ ✅ + ~~이미지 빌드→GHCR~~ ✅ (PR=빌드검증, main=푸시). **배포(CD)**는 서버 확정 후. 마이그레이션은 api 엔트리포인트가 `prisma migrate deploy`.
+5. **관측성** — 최소 로그 수집 + 헬스 엔드포인트(이미 `/health/liveness`·`/health/readiness` 있음) + 업타임 모니터.
+6. **§5 대응 구현 (착수점 B — 유예)** — `KakaoMockAdapter`→`KakaoManualPublishAdapter`(게시자산+통지), YouTube 라이브·댓글 실 어댑터, IG/X/Threads 스코프 정리, Meta App Review 병행.
 7. **`infra/scripts/`** — 배포·백업(R2)·마이그레이션·시드 스크립트.
 
-**제안 착수 순서**: 1(컨테이너화) → 4(CI/CD) → 2·3(프로덕션 배포) → 6(실 연동). 인프라 골격을 먼저 세우고 실 연동은 규제·심사 리드타임과 병행.
+**착수 순서**: ✅ 1·2·4(컨테이너화·compose·CI) 완료 → 다음: 3(R2 실전환)·배포(CD)·5(관측성) → 6(실 어댑터, 착수점 B). 인프라 골격을 먼저 세우고 실 연동은 규제·심사 리드타임과 병행.
 
 ---
 
 ## 8. 현재 상태 · 다음 결정 (세션 이어가기용)
 
-**진행 상태**: 앱 3종 + 백엔드 6도메인(Ingest·Process·Analyze·Distribute·Live·Monetize 일부) 구현·머지 완료(PR #1~#9). 이 문서는 실제 배포를 위한 인프라 조사·결정 단계의 산출물. **아직 배포 산출물(프로덕션 Dockerfile·IaC·CI/CD)은 없음.**
+**진행 상태**: 앱 3종 + 백엔드 6도메인(Ingest·Process·Analyze·Distribute·Live·Monetize 일부) 구현·머지 완료(PR #1~#10). **배포 산출물 착수(2026-07-25)**: 프로덕션 Dockerfile 3종·`infra/docker/` compose·GitHub Actions CI/CD 완료(§7). 남은 것: 배포(CD)·R2 실전환·실 어댑터(착수점 B).
 
 **확정된 것** (조사 근거, §1~§5):
 - 스토리지·CDN = Cloudflare R2 + Cloudflare CDN (egress $0 — 최대 레버리지)
@@ -195,10 +195,11 @@
 - 카카오 채널 = **반자동 게시 모델**(백엔드 게시자산 준비 + 담당자 관리자앱 게시). 직접 발행 API 없음 확정
 - 라이브 채널 = YouTube + Facebook 동시(나머지 링크 홍보), Threads 삭제
 
-**사용자 확인 대기 중인 결정** (2026-07-24 시점):
-1. 위 반자동 카카오 모델 + SNS 스코프 하향을 **CLAUDE.md·코드에 반영**할지 (사용자가 NAS 대안 제안 → 앱 내 다운로드 링크로 개선 권고, 재검증 완료)
-2. 구현 착수점: **컨테이너화+CI/CD 먼저**(권고) vs 카카오/YouTube 어댑터 재구현 먼저
+**결정 완료** (2026-07-25):
+1. 반자동 카카오 + SNS 스코프 하향 → **문서(CLAUDE.md·본 문서)에 반영 완료, 코드(어댑터)는 유예**. CLAUDE.md는 결정 문서라 확정을 먼저 반영하고, 코드 catch-up은 착수점 B로 분리.
+2. 착수점 = **컨테이너화+CI/CD 먼저**로 확정·완료. 어댑터 재구현(착수점 B)은 후속.
 
 **다음 세션 착수 후보** (§7 로드맵):
-- (권고 경로) 컨테이너화(api·media-worker Dockerfile) → GitHub Actions CI/CD → 프로덕션 compose + R2 전환 → 실 어댑터(KakaoManualPublish·YouTube)
-- 병행 준비(리드타임 김): Meta App Review 착수, YouTube 쿼터 증량 심사, 촬영 동의서·개인정보처리방침, 카카오 채널 영상 스펙 실측
+- 배포(CD): VM 프로비저닝 + SSH/compose 배포 워크플로 + R2 실전환(엔드포인트·버킷) + 관측성.
+- 착수점 B(실 어댑터): `KakaoManualPublishAdapter`·YouTube Data API 업로드·미디어워커 카카오 렌디션 프로파일.
+- 병행 준비(리드타임 김): Meta App Review 착수, YouTube 쿼터 증량 심사, 촬영 동의서·개인정보처리방침, 카카오 채널 영상 스펙 실측.

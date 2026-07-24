@@ -1,0 +1,100 @@
+# infra/docker/docker-compose.prod.yml — 프로덕션 오케스트레이션 (단일 VM 시작, docs/infrastructure.md §4-A).
+# 로컬 개발용 infra/docker-compose.yml 과 별개(그건 postgres/redis/minio 개발 스택).
+#
+# 실행(리포 루트에서):
+#   cp infra/docker/env.example infra/docker/.env   # 값 채우기(시크릿·R2·JWT)
+#   docker compose -f infra/docker/docker-compose.prod.yml up -d --build
+#
+# 주의: compose의 ${...} 보간은 프로젝트 디렉토리(infra/docker/)의 .env를 자동 로드한다.
+#       env_file:은 컨테이너 env만 채우고 보간에는 관여하지 않으므로, POSTGRES_* 등 보간에 쓰는 값은
+#       반드시 .env(기본 이름)에 있어야 한다.
+#
+# 스토리지·CDN·라이브는 매니지드 외부 서비스(R2/Cloudflare/Stream) — 여기 컨테이너로 두지 않는다.
+# 프로덕션 오브젝트 스토리지는 MinIO가 아니라 Cloudflare R2(S3 호환) — S3_ENDPOINT를 R2로 주입.
+name: gachinol-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER 필요(.env.prod)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 필요(.env.prod)}
+      POSTGRES_DB: ${POSTGRES_DB:-gachinol}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    # 외부 포트 미공개 — api만 내부 네트워크로 접근(공격면 최소화).
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-gachinol}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes'] # 큐 잡 내구성(AOF)
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  ai-worker:
+    build:
+      context: ../../services/ai-worker
+      dockerfile: Dockerfile
+    image: ${REGISTRY:-ghcr.io/homedcp}/gachinol-ai-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      AI_PROVIDER: ${AI_PROVIDER:-stub} # 기본 결정적 스텁. 실 제공자는 env로 확장.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    expose: ['8000'] # 내부 전용 — api가 http://ai-worker:8000 으로 소비.
+
+  api:
+    build:
+      context: ../..
+      dockerfile: services/api/Dockerfile
+    image: ${REGISTRY:-ghcr.io/homedcp}/gachinol-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    # 서비스 디스커버리·비시크릿 배선은 여기서(환경변수가 env_file보다 우선). 시크릿·R2·SNS 키는 .env.prod.
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gachinol}
+      REDIS_URL: redis://redis:6379
+      AI_WORKER_URL: http://ai-worker:8000
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true} # 엔트리포인트가 부팅 전 prisma migrate deploy
+    env_file: [.env]
+    ports: ['${API_PORT_PUBLISH:-4000}:4000'] # Cloudflare/역프록시 뒤에 둘 경우 127.0.0.1 바인딩 권장
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:4000/health/liveness').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+  media-worker:
+    build:
+      context: ../..
+      dockerfile: services/media-worker/Dockerfile
+    image: ${REGISTRY:-ghcr.io/homedcp}/gachinol-media-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+    environment:
+      REDIS_URL: redis://redis:6379
+    env_file: [.env] # S3(R2) 자격 + 트랜스코딩 프로파일(fail-fast: REDIS_URL·S3_* 필수)
+
+volumes:
+  pgdata: {}
+  redisdata: {}

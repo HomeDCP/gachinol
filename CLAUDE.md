@@ -14,6 +14,7 @@
   - **제주방송센터** = 중심국·컨트롤타워 (12개 지사 취합·라이브·관제)
   - **12개 지사(마을방송국)** = 현장 취재·촬영. 현재 애월·제주시 2곳 설립, 작년까지 운영 → **현재 휴무**
   - 각 지사는 **카카오톡 채널**을 배포 창구로 보유 (총 12개 개설됨). 업로드 → 친구 알림 → 모바일 카톡에서 즉시 시청
+    - ⚠️ 카카오는 **채널 직접 발행 API가 없음**(재검증 확정) → **반자동 게시 모델**: 백엔드가 게시자산(카카오최적 렌디션·캡션·썸네일·딥링크)을 준비 → 담당자가 채널 관리자 앱으로 게시. 실제 재생은 자체 앱/YouTube, 카카오는 "유입 채널". 상세 [docs/infrastructure.md](docs/infrastructure.md) §5-1
 - **편성 원칙**
   - **월~금**: 12개 지사가 현장 촬영·녹화 업로드
   - **토~일**: 제주방송센터 **라이브** + 녹화방송
@@ -22,7 +23,7 @@
 
 ## 3. 제주방송센터 콘텐츠 (6종)
 
-1. **주간뉴스 라이브** — 12개 지사 소식 취합. YouTube·Facebook·Instagram·X·Threads로 동시 라이브.
+1. **주간뉴스 라이브** — 12개 지사 소식 취합. **YouTube + Facebook 동시 라이브**(IG/X는 링크 홍보, **Threads 삭제** — 5채널 동시 라이브 실현 불가로 스코프 하향, [docs/infrastructure.md](docs/infrastructure.md) §5-2).
    채널별 실시간 댓글을 **아나운서에게 프롬프터로 통합 제공** → 아나운서가 보며 실시간 소통·진행.
 2. **정치인 게스트 대담**
 3. **교양 프로그램** — 독서·요리·여행지·관광·숙소·민박·지역축제·먹거리·농민·생산자 안내 등
@@ -36,7 +37,7 @@
 
 | 앱               | 위치                  | 사용자         | 핵심 기능                                                                                                                                                                             |
 | ---------------- | --------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **기자 앱**      | `apps/reporter`       | 12개 지사 기자 | 촬영 → 간단 편집 → 장면별 자막/내용 기입 → 분류 → 업로드. 메인서버가 최종편집해 반환 → 기자가 **저화질 미리보기** 확인 후 **승인** → 송출(현재 송출처: 기자 소속 카톡채널=지역방송국) |
+| **기자 앱**      | `apps/reporter`       | 12개 지사 기자 | 촬영 → 간단 편집 → 장면별 자막/내용 기입 → 분류 → 업로드. 메인서버가 최종편집해 반환 → 기자가 **저화질 미리보기** 확인 후 **승인** → 송출(카톡채널=지역방송국은 **반자동 게시**: 백엔드 게시자산 준비 → 담당자 관리자앱 게시. infra §5-1) |
 | **센터 관제 앱** | `apps/control-center` | 제주방송센터   | 지사 업로드물 **자동 분석·저장** → 화면+텍스트 분석 → **매주 콘텐츠 추천** → 승인 시 즉시 송출 / 수정사항 입력 시 반영해 재생성. 라이브 관제 + 채널별 댓글 프롬프터                   |
 | **구독자 앱**    | `apps/subscriber`     | 시청자         | 12개 지사 콘텐츠 시청 + 센터 라이브 **실시간 참여·채팅**                                                                                                                              |
 
@@ -48,14 +49,15 @@
 - **백엔드 메인 API**: **Node.js + TypeScript + NestJS**
 - **AI 분석 워커**: **Python + FastAPI** (비전/STT/요약·추천) — 무거운 ML은 여기로 분리
 - **미디어 워커**: Node + **FFmpeg** (트랜스코딩·자동편집 오케스트레이션·저화질 프리뷰)
-- **데이터**: PostgreSQL(관계형) · Redis(큐·캐시·실시간 pub/sub) · S3 호환 오브젝트 스토리지(영상, 로컬은 MinIO)
+- **데이터**: PostgreSQL(관계형) · Redis(큐·캐시·실시간 pub/sub) · S3 호환 오브젝트 스토리지(영상). **프로덕션 스토리지·CDN = Cloudflare R2 + Cloudflare**(egress $0 확정 — 최대 재무 레버리지), 로컬은 MinIO. 코드는 `S3_ENDPOINT`/`S3_FORCE_PATH_STYLE`로 R2 전환(env만). 상세 [docs/infrastructure.md](docs/infrastructure.md) §3·§4-C
 - **ORM**: Prisma 6 (PostgreSQL). enum은 DB에 shared snake_case 문자열(text) 저장 — Prisma enum 금지. ID는 앱 발급 UUID v7
 - **요청 검증**: zod + nestjs-zod — 스키마는 shared 계약에 satisfies로 정합 강제
 - **인증**: JWT(access 15m / refresh 14d 회전+재사용 탐지) + argon2id. passport 미도입
 - **큐**: BullMQ (Redis 기반). 트래픽 성장 시 Kafka 검토
-- **라이브**: RTMP ingest + HLS/LL-HLS 배포. 자체 구축 vs Mux/AWS IVS는 **미정(성장 시 결정)**
+- **라이브**: RTMP ingest + HLS 배포 = **Cloudflare Stream**(매니지드, 인코딩·다채널 simulcast 무료) 확정. 자체 RTMP/HLS 구축은 라이브 전송비 급증 시 재검토. [docs/infrastructure.md](docs/infrastructure.md) §4-B
 - **모노레포**: pnpm workspaces + Turborepo
 - **런타임**: Node 24 (`.nvmrc`), pnpm 8+
+- **배포/인프라**: 컨테이너(Docker 멀티스테이지, glibc) + GitHub Actions CI/CD. 프로덕션 오케스트레이션 `infra/docker/docker-compose.prod.yml`. AI STT = 리턴제로(RTZR) API(GPU 불요). 서버 = 4vCPU/8GB 단일 VM 시작 → 병목별 확장. 상세 [docs/infrastructure.md](docs/infrastructure.md)
 
 ## 6. 모노레포 구조
 
@@ -91,7 +93,7 @@ gachinol/
    │                    [센터 관제 앱] 주간 콘텐츠 추천·승인/수정
    │  기자 프리뷰 승인 ◄──────┘
    ▼
-[다채널 송출]  카카오톡 채널 12개 · YouTube · Facebook · Instagram · X · Threads
+[다채널 송출]  카카오톡 채널(반자동 게시) · YouTube · Facebook   [라이브 동시=YT+FB, IG/X는 링크 홍보, Threads 삭제]
    │
    ├─ 라이브: RTMP ingest → 다채널 fan-out → HLS 배포
    ├─ 댓글 수집: 채널별 실시간 댓글 → [api] 집계 → 아나운서 프롬프터
@@ -104,8 +106,8 @@ Live(라이브+댓글집계) · Monetize(라이브커머스·B2B 세일즈)**.
 
 ## 8. 외부 연동 (키는 `.env`, 목록은 `.env.example`)
 
-- **카카오톡 채널 API** (알림·업로드 창구)
-- **YouTube Live/Data API**, **Meta Graph API**(FB/IG), **X API**, **Threads API** — 라이브 송출 + 댓글 수집
+- **카카오톡 채널** (유입 창구) — **직접 발행 API 없음**(확정) → 반자동 게시(담당자 관리자앱). 친구톡은 대행사 계약 시 썸네일+링크 푸시만 가능. [docs/infrastructure.md](docs/infrastructure.md) §5-1
+- **YouTube Live/Data API**, **Meta Graph API**(FB) — 라이브 송출 + 댓글 수집. **IG/X는 유예·Threads 삭제**(코드 어댑터는 유지, 스코프 하향 §5-2)
 - **PG(결제)** — 라이브커머스
 - **비전/STT** — ai-worker
 
@@ -264,11 +266,12 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
   `needsCenterAction`은 정확히 `pending_review`·`generation_failed` 2종. `currentWeekOfKst`는 +09:00 오프셋 후 **UTC getter만**
   (기기 시간대 무관). 목 데이터 0. jest-expo 단위 +58(status·week·validation·selectors) → **control-center 95→153/15스위트**,
   subscriber 48·reporter 74·media-worker 13 불변, expo export(ios+android)·expo-doctor 18/18 통과.
+- **배포 인프라 (본 세션 — 착수점 A)**: api·media-worker·ai-worker **컨테이너화(Docker 멀티스테이지, glibc·pnpm deploy)** + **GitHub Actions CI/CD**(`ci.yml` lint·typecheck·test / `build-images.yml` 이미지 빌드→GHCR) + **프로덕션 compose**(`infra/docker/docker-compose.prod.yml` — R2/Cloudflare 전제, 개발용 `infra/docker-compose.yml`과 분리) 완료. 확정된 제품 모델(카카오 반자동·라이브 YT+FB 하향)은 **문서에만 반영**, **코드(어댑터 재구현)은 유예 — 착수점 B**: `KakaoMockAdapter`→`KakaoManualPublishAdapter`·YouTube 실 어댑터·IG/X/Threads 스코프 정리는 후속 슬라이스. 상세 [docs/infrastructure.md](docs/infrastructure.md) §5·§7.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
   1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD·`reporter_only` 자동 송출 후킹
   2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
   3. ai-worker 실 제공자(OpenAI Whisper/비전) 주입 + 추천 **승인→송출(publishing/published)** 배선 + 주간 자동 생성 스케줄(BullMQ repeatable)
-  4. `infra` 배포 스크립트/IaC (docker-compose는 완료)
+  4. ~~`infra` 배포 스크립트/IaC~~ → **컨테이너화·CI/CD·프로덕션 compose 완료**. 남은 것: VM 프로비저닝·배포(CD) 워크플로·백업(R2)/마이그레이션 스크립트
   - ~~`apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)~~ ✅ 완료
   - ~~업로드 presigned URL + BullMQ 생산자/QueueEvents (api 측)~~ ✅ 완료
   - ~~media-worker(순수 FFmpeg) + reporter 실업로드 교체 → 풀 루프 실증~~ ✅ 완료
@@ -298,8 +301,8 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
 
 ## 12. 미정 / 결정 대기 사항
 
-- 서버 사양 (프로젝트 진행하며 구체화)
-- 라이브 인프라: 자체 RTMP/HLS vs Mux/AWS IVS
+- ~~서버 사양~~ → **확정**: 4vCPU/8GB 단일 VM(Contabo 싱가포르/Lightsail 서울) 시작 → 병목별 수직·수평 확장. [docs/infrastructure.md](docs/infrastructure.md) §4-A
+- ~~라이브 인프라: 자체 RTMP/HLS vs Mux/AWS IVS~~ → **확정**: Cloudflare Stream(매니지드). 자체 구축은 라이브 전송비 급증 시 재검토. §4-B
 - 센터 관제 앱의 웹 콘솔 병행 여부
-- 카톡 채널을 계속 메인 배포 창구로 둘지 / 자체 앱으로 이전할지 / 병행할지 (병행이 유력)
+- ~~카톡 채널 배포 방식~~ → **반자동 게시로 확정**(직접 발행 API 없음). 자체 앱/YouTube가 실재생, 카카오는 유입 채널. 자체 앱 이전/병행은 계속 열려 있음. §5-1
 - 결제 PG 사, B2B 미디어 세일즈 유통 방식
