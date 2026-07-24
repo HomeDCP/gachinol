@@ -1,0 +1,31 @@
+# Docker 빌드 컨텍스트 제외 — 컨텍스트 = 리포 루트 (api·media-worker 이미지 공용).
+# 원칙: 호스트의 node_modules·빌드산출물은 반입 금지(플랫폼/ABI 불일치 방지) → 이미지 안에서 재생성.
+#       워크스페이스 매니페스트(package.json)·소스는 남긴다(pnpm 워크스페이스 정합에 필요).
+
+# 의존·산출물 (이미지 내 재생성)
+**/node_modules
+**/dist
+**/build
+**/.turbo
+**/.expo
+**/coverage
+**/*.tsbuildinfo
+
+# VCS·CI (이미지 불필요)
+.git
+.github
+.gitignore
+.gitattributes
+
+# 시크릿·로컬 env (이미지에 절대 반입 금지 — 시크릿은 런타임 주입)
+.env
+.env.*
+
+# 로컬 개발 전용 인프라·문서 (서버 이미지 불필요)
+infra/docker-compose.yml
+docs
+
+# 잡동사니
+**/*.log
+**/.DS_Store
+Thumbs.db

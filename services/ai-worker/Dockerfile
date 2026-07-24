@@ -1,16 +1,31 @@
+# ai-worker — Python/FastAPI 순수 컴퓨트(비전+STT). DB·큐·JWT·S3 자격 미접근.
+# 빌드 컨텍스트 = services/ai-worker (이 디렉토리):
+#   docker build -t gachinol-ai-worker services/ai-worker
 FROM python:3.12-slim
+
+# 컨테이너 로깅 정합(버퍼링 해제)·.pyc 미생성
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    AI_WORKER_PORT=8000
 
 WORKDIR /app
 
-# 의존만 먼저 설치(레이어 캐시) — 소스는 뒤에 COPY
+# 의존만 먼저 설치(레이어 캐시) — 목록은 pyproject.toml [project].dependencies와 동일하게 유지할 것.
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.32" \
+RUN pip install --upgrade pip \
+ && pip install "fastapi>=0.115" "uvicorn[standard]>=0.32" \
       "pydantic>=2.9" "pydantic-settings>=2.6"
 
 COPY app ./app
 
-EXPOSE 8000
-RUN useradd -m appuser && chown -R appuser /app
+RUN useradd -m -u 10001 appuser && chown -R appuser /app
 USER appuser
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8000
+# 헬스체크 = 표준 라이브러리 urllib(추가 의존 0). GET /health 는 app/main.py 제공.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python -c "import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/health' % os.environ.get('AI_WORKER_PORT','8000'), timeout=3).status==200 else 1)"
+
+# AI_WORKER_PORT로 바인딩 포트 재정의 가능(기본 8000).
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${AI_WORKER_PORT:-8000}"]

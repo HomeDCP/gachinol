@@ -5,7 +5,8 @@
 - `docker-compose.yml`: 로컬 원클릭 기동 — **PostgreSQL 16 · Redis 7 · MinIO** (+ `gachinol-media` 버킷 자동 생성)
   - redis·minio는 phase-1 api가 아직 쓰지 않는다 — BullMQ(로드맵 3~)·업로드 단계 대비 선행 기동.
   - 기본 자격증명(`gachinol`/`gachinol`, `minioadmin`)은 **로컬 전용**. 프로덕션 재사용 금지.
-- (예정) 배포 스크립트 / IaC · 라이브 인프라(RTMP/HLS — 자체 vs 매니지드 결정 후)
+- `docker/`: **프로덕션 배포** — `docker-compose.prod.yml`(api·media-worker·ai-worker·postgres·redis) + `env.prod.example`. 스토리지·CDN·라이브는 매니지드(R2/Cloudflare/Stream). → [infra/docker/README.md](docker/README.md)
+- (예정) VM 프로비저닝·배포(CD) 워크플로 · R2 백업 스크립트
 
 ## 사용법
 
@@ -30,4 +31,5 @@ pnpm infra:down
 
 ## 상태
 
-docker-compose 완료(로드맵 항목 4 선행 착수). 배포/IaC·라이브 인프라는 미착수.
+로컬 docker-compose + **프로덕션 컨테이너화(Dockerfile 3종)·compose·GitHub Actions CI/CD 완료**.
+남은 것: VM 프로비저닝·배포(CD) 자동화·백업. 라이브 인프라 = Cloudflare Stream(매니지드) 확정.
