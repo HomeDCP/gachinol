@@ -1,0 +1,102 @@
+# infra/docker/docker-compose.xeon.yml — 제온(192.168.0.101) 임시 백엔드 오버레이.
+#
+# 프로덕션 compose 위에 **덧씌워** 쓴다(단독 사용 금지):
+#   docker compose -f infra/docker/docker-compose.prod.yml \
+#                  -f infra/docker/docker-compose.xeon.yml up -d
+#
+# 제온은 **가동 중인 DCP 파이프라인**(dcpx-api/worker/redis/caddy)과 호스트를 공유한다.
+# 이 오버레이의 목적은 그 공존을 안전하게 만드는 것이다:
+#   ① 리소스 하드리밋 — DCP worker 상한 26GiB + 우리 몫 < 물리 32GB, 최소 6GB 여유 확보
+#   ② 포트 격리 — dcpx-caddy(:443)·dcpx-api(:8080)와 겹치지 않는 4000번대만 사용
+#   ③ host net 금지 — 전부 bridge. 호스트 도달은 extra_hosts로만
+#   ④ DCP 상호배제 — api의 DcpArbiterService가 DCP busy 동안 미디어 큐를 정지
+#   ⑤ MinIO — 제온엔 오브젝트 스토리지가 없다(프로덕션은 R2. 여기선 로컬 S3 등가물)
+#
+# 노출 범위는 LAN 한정이다(결정 사항). nftables가 input DROP이므로 아래 포트를
+# 192.168.0.0/24에 허용해야 앱에서 접근된다 — 그 방화벽 변경은 DCP 박스 설정이므로 별도 승인 후 수행.
+
+services:
+  # DCP api는 host net에서 127.0.0.1:8080에만 바인드한다 → bridge인 우리는 호스트 게이트웨이로 도달.
+  api:
+    environment:
+      DCP_ARBITER_URL: http://host.docker.internal:8080
+      S3_ENDPOINT: http://minio:9000
+      # 앱(실기기·시뮬)이 받는 서명 URL의 호스트 — 컨테이너 내부명이 아니라 LAN 주소여야 한다
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://192.168.0.101:9000}
+      S3_FORCE_PATH_STYLE: 'true'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      minio:
+        condition: service_healthy
+    ports:
+      - '${API_PORT_PUBLISH:-4000}:4000'
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  # 트랜스코딩 = CPU 경합의 주범. DCP encoding이 32코어를 전부 쓰므로(dcpomatic -t 32)
+  # 동시성 1 + CPU 상한으로 조이고, 그 위에 아비터가 큐 자체를 정지시킨다(이중 방어).
+  media-worker:
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: 'true'
+      MEDIA_WORKER_CONCURRENCY: '1'
+    depends_on:
+      minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { cpus: '8', memory: 2g }
+
+  ai-worker:
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  postgres:
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  redis:
+    deploy:
+      resources:
+        limits: { memory: 512m }
+
+  # 프로덕션은 Cloudflare R2지만 제온엔 오브젝트 스토리지가 없다 → S3 호환 로컬 대체.
+  # 코드는 S3_ENDPOINT만 보므로 R2 전환 시 이 서비스를 빼고 env만 바꾸면 된다.
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY 필요(.env)}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY 필요(.env)}
+    volumes: [miniodata:/data]
+    ports:
+      # 앱이 서명 URL로 직접 미디어를 주고받는다 → LAN 노출 필요(콘솔 9001은 선택)
+      - '${MINIO_PORT_PUBLISH:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT_PUBLISH:-9001}:9001'
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  # 버킷 1회 생성(로컬 개발 compose와 동일 패턴)
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "mc alias set local http://minio:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY}
+      && mc mb --ignore-existing local/${S3_BUCKET:-gachinol-media}"
+    restart: 'no'
+
+volumes:
+  miniodata: {}
