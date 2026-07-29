@@ -48,6 +48,38 @@ docker compose -f infra/docker/docker-compose.prod.yml pull
 docker compose -f infra/docker/docker-compose.prod.yml up -d
 ```
 
+## 제온(임시 백엔드) 배포 — DCP 파이프라인과 공존
+
+제온(192.168.0.101)에는 **가동 중인 DCP 파이프라인**이 있다. `docker-compose.xeon.yml` 오버레이를
+프로덕션 compose 위에 덧씌워 공존을 안전하게 만든다(단독 사용 금지).
+
+```bash
+docker compose -f infra/docker/docker-compose.prod.yml \
+               -f infra/docker/docker-compose.xeon.yml up -d
+```
+
+| 공존 장치 | 내용 |
+|---|---|
+| **DCP 상호배제** | api의 `DcpArbiterService`가 DCP의 `GET /api/arbiter/state`를 **읽기 전용** 조회 → `busy`면 **미디어 큐 전역 정지**(진행 중 1건만 마치고 대기, 선점 없음) |
+| **네트워크** | 전부 bridge. DCP api가 host net의 `127.0.0.1:8080`에만 바인드하므로 `extra_hosts: host.docker.internal:host-gateway`로 도달 |
+| **포트** | 4000(api)·9000/9001(MinIO)만 사용 — dcpx-caddy(:443)·dcpx-api(:8080)와 무충돌 |
+| **리소스** | 전 서비스 메모리 하드리밋, media-worker는 `cpus: 8` + **동시성 1** |
+| **스토리지** | 제온엔 오브젝트 스토리지가 없어 **MinIO** 추가(프로덕션 R2의 로컬 등가물 — R2 전환 시 이 서비스만 빼고 env 교체) |
+
+**메모리 산술**: 우리 리밋 합 ≈ 6.5GB이지만, 아비터가 **DCP 피크와 우리 피크의 중첩을 막는다** —
+DCP 인코딩 중(≈21.5GB) 우리는 정지 상태(≈1.5GB)라 실사용 ≈23GB / 32GB. DCP가 유휴일 때만 우리가
+피크(6.5GB)에 도달하며 그때 DCP는 ≈0.2GB다. DCP 측이 요청한 "최소 6GB 여유"가 양쪽 모두에서 유지된다.
+
+**아비터 관련 env**(전부 `.env`): `DCP_ARBITER_URL`(미설정=비활성)·`DCP_ARBITER_POLL_MS`·
+`DCP_ARBITER_HOLD_ON_IMMINENT`·`DCP_ARBITER_FAIL_MODE`. 상태 확인:
+
+```bash
+curl -s -H "Authorization: Bearer <token>" http://192.168.0.101:4000/v1/system/processing-state
+```
+
+> ⚠️ 제온은 nftables **input DROP**이다. LAN(192.168.0.0/24)에서 4000·9000 포트에 접근하려면
+> 방화벽 허용이 필요한데, 이는 **DCP 박스의 네트워크 설정 변경**이므로 별도 확인 후 수행한다.
+
 ## 아직 남은 것 (CD)
 
 VM 프로비저닝 + SSH 배포(CD) 워크플로 + R2 백업 스크립트는 서버 확정 후. [docs/infrastructure.md](../../docs/infrastructure.md) §7·§8.

@@ -66,6 +66,22 @@ export const envSchema = z
     LIVE_CHAT_RECENT_LIMIT: z.coerce.number().int().default(50),
     LIVE_CHAT_RATE_CAPACITY: z.coerce.number().int().default(5),
     LIVE_CHAT_RATE_REFILL_MS: z.coerce.number().int().default(2000),
+    // DCP 상호배제 아비터 — 제온 호스트를 DCP 파이프라인과 공유할 때만 설정한다.
+    // 미설정 시 완전 비활성(미디어 큐 상시 가동) → 로컬·클라우드 배포는 무영향.
+    // 값 예: http://host.docker.internal:8080 (bridge 컨테이너에서 호스트 루프백 도달용).
+    // DCP 측 계약은 GET {URL}/api/arbiter/state (그쪽 DSGN-API §2.1) — 우리는 GET만 한다.
+    DCP_ARBITER_URL: z.string().optional(),
+    DCP_ARBITER_POLL_MS: z.coerce.number().int().min(1000).default(30000), // SSE 순단 폴백
+    DCP_ARBITER_TIMEOUT_MS: z.coerce.number().int().min(500).default(5000),
+    // 활성 잡이 없는데 대기 잡이 있으면(디스패처가 곧 집어감) 미리 양보할지.
+    // false로 끄면 busy만 보고 판단한다(계약 변경 시 킬스위치).
+    // ⚠️ z.coerce.boolean()은 "false" 문자열도 true로 만들어 킬스위치를 무력화한다 → 명시적 파싱.
+    DCP_ARBITER_HOLD_ON_IMMINENT: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((v) => v === 'true'),
+    // DCP api 조회 실패 시 정책 — hold(보수적·DCP 우선) | run(가용성 우선)
+    DCP_ARBITER_FAIL_MODE: z.enum(['hold', 'run']).default('hold'),
     // SNS 댓글 수집 실 어댑터 게이트(신규 시크릿 0 — 기존 키 재사용). 미설정 시 목 어댑터(배포 기본).
     YOUTUBE_API_KEY: z.string().optional(),
     META_PAGE_ACCESS_TOKEN: z.string().optional(),

@@ -6,6 +6,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AnalysisModule } from './analysis/analysis.module';
+import { ArbiterModule } from './arbiter/arbiter.module';
 import { AppConfigModule } from './config/config.module';
 import { ContentsModule } from './contents/contents.module';
 import { DistributionCoreModule } from './distribution/distribution.module';
@@ -39,6 +40,7 @@ import { UsersModule } from './users/users.module';
     PipelineModule,
     FeedModule, // 구독자 공개 피드(@Public read 3종)
     LiveModule, // 라이브 + WebSocket(게이트웨이·LiveSession·채팅·댓글수집)
+    ArbiterModule, // DCP 파이프라인 상호배제(제온 공존 — DCP_ARBITER_URL 설정 시에만 활성)
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },
