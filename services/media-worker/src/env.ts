@@ -1,6 +1,22 @@
 import { z } from 'zod';
 
 /**
+ * 환경변수 불리언.
+ *
+ * ⚠️ **`z.coerce.boolean()`을 쓰면 안 된다.** 그것은 JS `Boolean(v)` 의미여서 비어있지 않은
+ * 모든 문자열을 true로 만든다. 환경변수는 항상 문자열이므로 `FLAG=false`조차 true가 되어
+ * **스위치를 끌 수 없고**, 그 사실이 런타임에 드러나지 않는다(조용한 오설정).
+ *
+ * (api의 `config/env.schema.ts`에 동일 헬퍼가 있다. 워커는 DB·api에 무접근인 독립 패키지이고
+ * shared는 런타임 의존성 0이라 zod를 두지 않으므로, 3줄 헬퍼는 각 패키지에 둔다.)
+ */
+const envBoolean = (defaultValue: boolean) =>
+  z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .default(defaultValue)
+    .transform((v) => v === true || v === 'true');
+
+/**
  * 워커 전용 env — S3 자격 + Redis만. **DATABASE_URL·JWT·API 토큰 참조 금지**
  * (worker는 순수 FFmpeg 컴퓨트, DB·api 무접근). 누락 시 부팅 즉사(fail-fast, 누락 키 나열).
  */
@@ -10,7 +26,8 @@ export const workerEnvSchema = z.object({
   S3_REGION: z.string().default('ap-northeast-2'),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
-  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+  // MinIO·R2(path-style)=true. R2를 virtual-host 스타일로 쓰려면 false — 이 스위치가 실제로 꺼져야 한다
+  S3_FORCE_PATH_STYLE: envBoolean(true),
   MEDIA_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
   // FFmpeg 워치독 — 진행(progress) 없이 이 시간(ms) 초과 시 프로세스 SIGKILL 후 실패로 전환.
   // 손상·병적 입력으로 ffmpeg가 error 없이 hang하면 잡이 완료·실패 어느 쪽도 못 되고
