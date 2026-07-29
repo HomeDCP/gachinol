@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+/**
+ * 환경변수 불리언.
+ *
+ * ⚠️ **`z.coerce.boolean()`을 쓰면 안 된다.** 그것은 JS `Boolean(v)` 의미여서 비어있지 않은
+ * 모든 문자열을 true로 만든다. 환경변수는 항상 문자열이므로 `FLAG=false`조차 true가 되어
+ * **스위치를 끌 수 없고**, 그 사실이 런타임에 드러나지 않는다(조용한 오설정).
+ *
+ * 'true'/'false' 문자열과 실제 boolean만 받고, 그 외 값('yes'·'0' 등)은 파싱 실패시켜
+ * 부팅 단계에서 잡는다(fail-fast).
+ */
+const envBoolean = (defaultValue: boolean) =>
+  z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .default(defaultValue)
+    .transform((v) => v === true || v === 'true');
+
 /** 환경변수 스키마 — 부팅 시 zod 파싱 실패 즉사(fail-fast, 누락 키 이름 나열). 시크릿 값 로그 노출 금지 */
 export const envSchema = z
   .object({
@@ -19,7 +35,8 @@ export const envSchema = z
     S3_BUCKET: z.string().default('gachinol-media'),
     S3_ACCESS_KEY: z.string().optional(), // 시크릿 — .env로만. 미설정 시 S3Service 첫 사용에 도메인 예외
     S3_SECRET_KEY: z.string().optional(),
-    S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true), // MinIO
+    // MinIO·R2(path-style)=true. R2를 virtual-host 스타일로 쓰려면 false — 이 스위치가 실제로 꺼져야 한다
+    S3_FORCE_PATH_STYLE: envBoolean(true),
     // 실기기 presign 호스트 분리 — 미설정 시 S3_ENDPOINT 사용
     S3_PUBLIC_ENDPOINT: z.string().optional(),
     S3_PRESIGN_EXPIRES_SEC: z.coerce.number().int().default(900), // = UPLOAD_URL_TTL_SEC
@@ -75,11 +92,7 @@ export const envSchema = z
     DCP_ARBITER_TIMEOUT_MS: z.coerce.number().int().min(500).default(5000),
     // 활성 잡이 없는데 대기 잡이 있으면(디스패처가 곧 집어감) 미리 양보할지.
     // false로 끄면 busy만 보고 판단한다(계약 변경 시 킬스위치).
-    // ⚠️ z.coerce.boolean()은 "false" 문자열도 true로 만들어 킬스위치를 무력화한다 → 명시적 파싱.
-    DCP_ARBITER_HOLD_ON_IMMINENT: z
-      .enum(['true', 'false'])
-      .default('true')
-      .transform((v) => v === 'true'),
+    DCP_ARBITER_HOLD_ON_IMMINENT: envBoolean(true),
     // DCP api 조회 실패 시 정책 — hold(보수적·DCP 우선) | run(가용성 우선)
     DCP_ARBITER_FAIL_MODE: z.enum(['hold', 'run']).default('hold'),
     // SNS 댓글 수집 실 어댑터 게이트(신규 시크릿 0 — 기존 키 재사용). 미설정 시 목 어댑터(배포 기본).
