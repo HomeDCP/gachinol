@@ -142,6 +142,31 @@ pnpm --filter @gachinol/subscriber test       # jest-expo 단위 테스트
 pnpm --filter @gachinol/subscriber typecheck  # shared dist 선행 빌드 필요
 ```
 
+### 모바일 실기 구동 (시뮬레이터·에뮬레이터·실기기)
+
+3앱 모두 **커스텀 네이티브 0**(순수 Expo SDK + JS 라이브러리) → **Expo Go로 충분**하다. EAS Build·Apple 계정 불요.
+
+- **`.env`의 `EXPO_PUBLIC_API_URL`은 LAN IP여야 한다.** `localhost`는 iOS 시뮬에서만 되고 **Android 에뮬에선 에뮬레이터 자신**을 가리켜 실패한다. LAN IP 하나면 시뮬·에뮬·실기기가 전부 동작한다.
+- **Android SDK**는 Android Studio 없이 command-line tools만 설치돼 있다(`~/.zshrc`에 `ANDROID_HOME`·`JAVA_HOME` 설정). AVD: `gachinol-pixel`(Android 15/arm64).
+- **Xcode는 외장 볼륨**(`/Volumes/DCPQC/Applications/Xcode.app`)에 있고 시스템 `xcode-select`는 CommandLineTools를 가리킨다 → `~/.zshrc`의 `DEVELOPER_DIR`로 우회(sudo 불요). **볼륨이 마운트돼 있어야 iOS가 동작한다.**
+
+```bash
+# 에뮬레이터 부팅 (Android)
+emulator -avd gachinol-pixel -no-snapshot-load &
+
+# 앱 dev 서버 (한 번에 하나 — Metro가 8081 단독 점유)
+pnpm --filter @gachinol/subscriber exec expo start
+```
+
+⚠️ **앱을 바꿀 때는 Expo Go를 강제 종료해야 한다** — 같은 `exp://` URL이면 Expo Go가 재로드를 건너뛰고 **이전 앱을 그대로 띄운다**(디버깅 시 크게 헷갈림).
+
+```bash
+adb -s emulator-5554 shell am force-stop host.exp.exponent
+adb -s emulator-5554 shell am start -a android.intent.action.VIEW -d "exp://<LAN-IP>:8081"
+```
+
+> 그 외 함정: ① 에뮬레이터가 둘 이상이면 adb가 "more than one device"로 실패 → `-s <id>` 명시(유령 offline 항목이 남기도 한다). ② `expo start --android`의 자동 실행은 `adb shell monkey`가 251로 죽어 실패할 수 있다 → 위 딥링크로 대체. ③ zsh는 따옴표 없는 변수를 단어 분리하지 않는다 → `ADB_ARGS="-s foo"` 같은 관용구가 안 먹는다.
+
 ```bash
 # 미디어 워커 (services/media-worker — BullMQ+FFmpeg). Redis+S3(MinIO) 선행: pnpm infra:up
 pnpm --filter @gachinol/media-worker dev        # tsx watch (인프로세스 부팅)
