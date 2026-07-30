@@ -12,5 +12,7 @@
     "noImplicitOverride": true,
     "types": ["jest"]
   },
-  "include": ["app", "src", "app.config.ts", "expo-env.d.ts"]
+  // expo-env.d.ts는 SDK 54에서 불요 — expo/tsconfig.base가 expo/types를 직접 참조한다.
+  // (expo start가 이 include를 자동 정리하며 주석까지 지우므로, 지워지면 여기서 되살릴 것)
+  "include": ["app", "src", "app.config.ts"]
 }
