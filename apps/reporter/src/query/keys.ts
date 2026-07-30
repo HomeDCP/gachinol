@@ -30,3 +30,8 @@ export const stationKeys = {
 export const authKeys = {
   me: ['auth', 'me'] as const,
 };
+
+export const systemKeys = {
+  /** 미디어 처리 게이트 상태 — DCP 공존 대기 안내 */
+  processingState: ['system', 'processing-state'] as const,
+};

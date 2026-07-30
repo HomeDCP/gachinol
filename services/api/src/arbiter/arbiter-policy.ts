@@ -1,3 +1,5 @@
+import type { ProcessingDcpState, ProcessingHoldReason } from '@gachinol/shared';
+
 /**
  * DCP 아비터 정책 — 순수 함수(부수효과·IO 없음).
  *
@@ -9,16 +11,14 @@
  * 우리는 재구현하지 않는다 — 그래야 그쪽이 처리 단계를 추가해도 우리가 조용히 깨지지 않는다.
  */
 
-/** DCP 측 계약 응답(우리가 소비하는 필드만). 모르는 필드는 무시한다(계약은 필드 추가만 보장). */
-export interface DcpArbiterState {
-  readonly busy: boolean;
-  readonly stage: string | null;
-  readonly queued: number;
-  readonly since: string | null;
-}
+/**
+ * DCP 측 계약 응답(우리가 소비하는 필드만). 모르는 필드는 무시한다(계약은 필드 추가만 보장).
+ * 앱에 노출하는 투영(shared `ProcessingDcpState`)과 같은 모양이어야 한다 — satisfies로 강제.
+ */
+export type DcpArbiterState = ProcessingDcpState;
 
-/** 큐를 멈추는 이유 — null이면 진행 가능 */
-export type HoldReason = 'dcp_busy' | 'dcp_imminent' | 'dcp_unreachable';
+/** 큐를 멈추는 이유 — null이면 진행 가능. 값은 shared 계약이 원천(사본 금지) */
+export type HoldReason = ProcessingHoldReason;
 
 export interface HoldDecision {
   readonly hold: boolean;
