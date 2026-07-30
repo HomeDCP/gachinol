@@ -6,6 +6,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { ProcessingState } from '@gachinol/shared';
 import type { Env } from '../config/env.schema';
 import { MEDIA_QUEUE, type MediaQueue } from '../queue/queue.constants';
 import {
@@ -17,19 +18,8 @@ import {
 } from './arbiter-policy';
 import { DcpArbiterClient } from './dcp-arbiter.client';
 
-/** 앱·운영자에게 노출하는 현재 처리 상태 */
-export interface ProcessingState {
-  /** 아비터 활성(DCP_ARBITER_URL 설정). false면 상시 처리 가능 */
-  readonly enabled: boolean;
-  /** 미디어 큐가 정지 상태인가 */
-  readonly holding: boolean;
-  readonly reason: HoldReason | null;
-  /** 사람이 읽을 안내 문구(한국어) */
-  readonly message: string;
-  /** DCP 측 원본 상태(조회 실패 시 null) */
-  readonly dcp: DcpArbiterState | null;
-  readonly lastCheckedAt: string | null;
-}
+// 앱에 노출하는 상태의 계약은 shared가 원천(`GET /v1/system/processing-state`).
+export type { ProcessingState };
 
 /**
  * DCP 상호배제 아비터 — 제온 호스트를 DCP 파이프라인과 공유하기 위한 게이트.

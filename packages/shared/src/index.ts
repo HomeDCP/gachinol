@@ -66,6 +66,9 @@ export * from './weather/local-weather-forecast';
 // audit
 export * from './audit/transition-log';
 
+// system (운영 상태 — 미디어 처리 게이트)
+export * from './system/processing-state';
+
 // 합성 DTO
 export * from './control/dto';
 export * from './subscriber/dto';

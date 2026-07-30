@@ -8,6 +8,9 @@ import { formatDuration, formatRelativeTime } from '../../src/features/contents/
 import { CATEGORY_LABEL } from '../../src/features/contents/labels';
 import { useContentList, useStation } from '../../src/features/contents/queries';
 import { statusBadge } from '../../src/features/contents/status';
+import { ProcessingHoldBanner } from '../../src/features/system/components/processing-hold-banner';
+import { shouldShowHoldBanner } from '../../src/features/system/processing-hold';
+import { useHoldReleaseToast, useProcessingState } from '../../src/features/system/queries';
 import { Badge } from '../../src/ui/badge';
 import { EmptyState } from '../../src/ui/empty-state';
 import { ErrorView } from '../../src/ui/error-view';
@@ -44,6 +47,10 @@ export default function ContentListScreen(): React.JSX.Element {
 
   const station = useStation(me.stationId);
   const list = useContentList(filter);
+
+  // 처리 게이트 — 정지 중이면 목록 상단에 안내, 해제되면 토스트 1회
+  const processing = useProcessingState();
+  useHoldReleaseToast(processing.data);
 
   // offset 페이지네이션이라 목록 변동 시 같은 항목이 페이지 경계에 중복 등장할 수 있다
   // → id 기준 dedupe (FlatList key 중복 방지 — 커서 페이지네이션 전환 전 임시)
@@ -102,6 +109,11 @@ export default function ContentListScreen(): React.JSX.Element {
           ),
         }}
       />
+      {shouldShowHoldBanner(processing.data) ? (
+        <View style={styles.bannerSlot}>
+          <ProcessingHoldBanner state={processing.data!} />
+        </View>
+      ) : null}
       <View style={styles.filterRow}>
         {FILTERS.map((f, index) => {
           const selected = index === filterIndex;
@@ -160,6 +172,7 @@ export default function ContentListScreen(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   signOut: { color: colors.primary, fontSize: typo.caption, padding: spacing.sm },
+  bannerSlot: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

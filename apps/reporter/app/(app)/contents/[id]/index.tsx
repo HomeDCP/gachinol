@@ -26,6 +26,9 @@ import {
   isTerminalStatus,
   statusBadge,
 } from '../../../../src/features/contents/status';
+import { ProcessingHoldBanner } from '../../../../src/features/system/components/processing-hold-banner';
+import { shouldShowHoldForContent } from '../../../../src/features/system/processing-hold';
+import { useProcessingState } from '../../../../src/features/system/queries';
 import { Badge } from '../../../../src/ui/badge';
 import { Button } from '../../../../src/ui/button';
 import { ErrorView } from '../../../../src/ui/error-view';
@@ -94,6 +97,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   );
 
   const detail = useContentDetail(contentId, { poll: focused });
+  const processing = useProcessingState();
   const logs = useTransitionLogs(contentId);
   const cancel = useCancel(contentId);
   const retry = useRetry(contentId);
@@ -171,6 +175,10 @@ export default function ContentDetailScreen(): React.JSX.Element {
             {content.priority === 'urgent' ? <Badge label="긴급" tone="danger" /> : null}
           </View>
           <Text style={styles.bodyText}>{STATUS_DESCRIPTION[content.status]}</Text>
+          {/* 큐 대기 상태인데 처리 게이트가 정지 중이면 — 실패가 아니라 대기임을 분명히 한다 */}
+          {shouldShowHoldForContent(processing.data, content.status) ? (
+            <ProcessingHoldBanner state={processing.data!} />
+          ) : null}
           {content.lastError ? (
             <Text style={styles.errorText}>
               {content.lastError.message} ({formatDateTime(content.lastError.at)})
