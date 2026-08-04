@@ -30,7 +30,7 @@
 | [E5-quality-gates.md](E5-quality-gates.md) | 태스크 완료 판정·qa-verifier·회귀·PR·대장 연장 운영 | 7·8 |
 | [reviews/](reviews/) | EXEC-RUBRIC + 라운드별 독립 평가 | (프로세스) |
 | [EXEC-DECISIONS.md](EXEC-DECISIONS.md) | 실행 중 횡단 결정 누적(발생 순번 #n — 코드가 계획과 달라지는 결정·게이트 위반 기록, E5 §D. **#1·#2 기록됨(2026-08-04)**) | (프로세스) |
-| reviews/dod-evidence/ | W단계 DoD 실측 증적 저장소(w0/·w1-poc/·w1-panel-r1/·w1-ttff/·w1-go-link/·w2/·w3/·w4/ + 상시 리뷰 `ops-review.md` — E5 §C 표의 저장 위치. **첫 실측 시 생성**) | (프로세스) |
+| reviews/dod-evidence/ | W단계 DoD 실측 증적 저장소(w0/·w1-poc/·w1-panel-r1/·w1-ttff/·w1-go-link/·w2/·w3/·w4/·`broadcast-url-procedure/`(T-NC-14, DDD2) + 상시 리뷰 `ops-review.md`(T-NC-11·12·15) — E5 §C 표의 저장 위치. **첫 실측 시 생성**) | (프로세스) |
 
 ## 3. 실행 개시 조건 (전 문서 공통)
 
