@@ -34,7 +34,9 @@
 
 ## D4. `app.module.ts` = 준-공용 자산 — X-14
 
-**확정.** `services/api/src/app.module.ts`(NestJS 단일 등록점, 리포 실측 18모듈)는 **준-공용 자산**이다:
+**확정.** `services/api/src/app.module.ts`(NestJS 단일 등록점, 리포 실측 **17모듈** — 라운드 2 정정:
+초판의 "18모듈"은 EXEC-EVAL-ROUND-2 Y-1이 재현 명령으로 반증, `awk '/imports: \[/{f=1;next} /^  \],/{f=0} f'
+services/api/src/app.module.ts | grep -cE "^\s+[A-Za-z]"` → `17`)는 **준-공용 자산**이다:
 동시성 1(같은 웨이브에 이 파일을 편집하는 태스크 2건 이상 배치 금지), 단 SOLO 승격은 불요.
 - E2: T-W1-05·T-W1-08·T-W2-08·T-W3-01의 파일 소유권 열에 `app.module.ts`(1줄 등록)를 추가하고, §G에
   "공유 진입점 동시 편집" 리스크 1행 신설(완화책: 신규 api 모듈 태스크는 웨이브당 1건 / 담당: 조율자 / 트리거:
