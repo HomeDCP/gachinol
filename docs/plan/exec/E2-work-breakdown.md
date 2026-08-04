@@ -6,6 +6,10 @@
 > 부분)·06 §F-6(문의하기 인용 부분). **범위**: 본 문서는 "무엇을·누가·어떤 산출물로"만 정의한다 — 순서·웨이브·병렬
 > 배치는 [E3](E3-parallel-schedule.md)가, 모델·토큰 배분은 [E4](E4-token-budget.md)가, 완료 판정 절차는
 > [E5](E5-quality-gates.md)가 소유한다(신규 범위 발명 금지, EXEC-PLAN 서두 원칙과 동일).
+>
+> **라운드 1 수정**: [reviews/EXEC-EVAL-ROUND-1.md](reviews/EXEC-EVAL-ROUND-1.md) 영역 1·3 감점 전건 +
+> [reviews/EXEC-ROUND-1-DECISIONS.md](reviews/EXEC-ROUND-1-DECISIONS.md) D2·D4·D6·D7·D10 반영. 변경 이력은 각 절에
+> "(EVAL-ROUND-1 ...)" 각주로 표기, 재해석 없이 DECISIONS 확정 문안을 인용만 한다.
 
 ## 0. 비범위 선언 (신규 범위 발명 금지 자체 검증)
 
@@ -65,45 +69,60 @@
 
 **공통 검증자 표기**: 별도 명시가 없는 한 모든 코드 태스크의 검증자는 **qa-verifier**(E5 §A 게이트②, 자가검증
 로그 재신뢰 금지·AC 1개 이상 독자 재현)이며, `packages/shared`·Prisma 스키마·CI 설정·`packages/ui` 변경 태스크는
-qa-verifier 통과 후 **조율자가 루트 전체 회귀**(`pnpm test`·`pnpm typecheck`, E5 §B)까지 추가로 확인한다. **[SOLO]**
-표기는 G3 단독 슬롯 대상(파일 소유권 열에 근거 명시) — 웨이브 배정은 E3가 정의한다.
+qa-verifier 통과 후 게이트③ **루트 전체 회귀**(`pnpm test`·`pnpm typecheck`, E5 §B)를 추가로 거친다 — 회귀 주체는
+**QA 리드가 실행하고 조율자가 결과만 수신**한다(E5 §A 게이트③ 확정 문구 인용, EXEC-EVAL-ROUND-1 영역7 감점2 수정
+반영 — E5 신규 위임 #6·대장 6-11 #12). **[SOLO]** 표기는 G3 단독 슬롯 대상(파일 소유권 열에 근거 명시) — 웨이브
+배정은 E3가 정의한다.
 
 ### W0. 기반
 
 | ID | 원천 | 담당 | 파일 소유권 | 산출물 | DoD(정본 인용) | 검증자 |
 |---|---|---|---|---|---|---|
 | T-W0-01 | 02§E-2 | BE 리드 | `services/api/src/auth/*`(`auth.controller.ts`·`auth.service.ts`·`auth.module.ts` 확장), `services/api/src/main.ts`(CORS 설정) | 쿠키 refresh 경로(바디 방식과 병행)·CSRF 가드·`WEB_ORIGINS` env 화이트리스트 | 02§E-2 "api: `WEB_ORIGINS` CORS + 쿠키 refresh 병행 경로 + CSRF 가드 (기존 테스트 무회귀)" | qa-verifier |
-| T-W0-02 | 02§E-3 | 인프라 담당 | `infra/docker-compose.yml`(MinIO CORS 블록), R2 CORS 설정 스크립트(신규) | R2·MinIO PUT/GET 오리진 화이트리스트 정책 | 02§E-3 "R2·MinIO 버킷 CORS 정책(PUT/GET 오리진 화이트리스트)" | qa-verifier |
+| T-W0-02 | 02§E-3 | 인프라 담당 | `infra/docker-compose.yml`(MinIO CORS 블록), `infra/scripts/r2-cors.ts`(신규, 경로 확정 — EVAL-ROUND-1 영역3 감점3) | R2·MinIO PUT/GET 오리진 화이트리스트 정책 | 02§E-3 "R2·MinIO 버킷 CORS 정책(PUT/GET 오리진 화이트리스트)" | qa-verifier |
 | T-W0-03 | 02§E-6(W0분)·02§D-T5, 08§E-2(rollup 인용) | 인프라 담당 | `infra/docker/docker-compose.xeon.yml`(수정, `web` 서비스 블록), `infra/docker/nginx.conf`(신규), `infra/docker/Dockerfile.web`(신규) | nginx `web` 정적 서빙 컨테이너 + Cloudflare 존·프록시·캐시 규칙 골격 + 서브도메인 5종(`watch.`·`go.`·`reporter.`·`center.`·`api.`) vhost 기본틀 (동적 라우트 rewrite는 T-W1-06으로 분리 — nginx 초기 골격에서는 정적 자산만) | 02§E-6 "제온 nginx `web` 서비스 + Cloudflare 존·프록시·캐시 규칙 + 서브도메인 5종 ... 기한: W0(기본 nginx/CF 골격)" | qa-verifier |
-| T-W0-04 | 08§E-3 | 인프라 담당 | 백업 스크립트(신규, `infra/docker/` 또는 별도 `infra/backup/`), cron/systemd timer 정의, Uptime Kuma 설정 | PG→R2 일일 덤프 파이프라인 + Uptime Kuma + 외부 업타임 체크 | 08§E-3 "백업 파이프라인(PG→R2 일일) + Uptime Kuma + 외부 업타임 체크" | qa-verifier(백업 산출물 실제 R2 도달 확인 1회 포함) |
-| T-W0-05 **[SOLO]** | 02§E-0 | FE 리드 | `apps/{reporter,control-center,subscriber}/package.json`(6파일: 3×`package.json`+3×`app.config.ts` 신규) | `react-dom`·`react-native-web`·`@expo/metro-runtime` 3앱 추가 + `app.config.ts`에 `web:{bundler:'metro',output:'static'}` + 기존 `metro.config.js`(3앱 확인됨, pnpm resolver 커스터마이즈·`disableHierarchicalLookup` 금지 주석) 보존 확인 | 02§E-0 "Expo Web 활성화 — ... `app.config.ts`에 `web: { bundler: 'metro', output: 'static' }` 설정 + 기존 `metro.config.js`의 pnpm resolver 커스터마이즈 ... 보존 확인" | qa-verifier + 조율자 루트 회귀(G3 대상: `app.config.ts` 공통 변경) |
-| T-W0-06 | 08§E-3-2, 08§B "보안사고 대응" | 인프라 담당 | 모니터링 설정(Uptime Kuma 알림 규칙 확장 또는 별도 로그 보존 정책 파일) | 비정상 접근·권한 변경 알림 + 사고 시 증거 보전(로그 삭제·덮어쓰기 금지) 2항목 | 08§E-3-2 "① 비정상 접근·권한 변경 알림 ② 사고 시 증거 보전(로그 삭제·덮어쓰기 금지) 2항목을 기존 Uptime Kuma·`/health/*` 모니터링에 추가 구축" | qa-verifier |
+| T-W0-04 | 08§E-3 | 인프라 담당 | `infra/backup/pg-dump-to-r2.sh`(신규)·`infra/backup/crontab`(신규)·`infra/monitoring/uptime-kuma-config.yml`(신규)(경로 확정 — EVAL-ROUND-1 영역3 감점3, "또는" 표기 제거) | PG→R2 일일 덤프 파이프라인 + Uptime Kuma + 외부 업타임 체크 | 08§E-3 "백업 파이프라인(PG→R2 일일) + Uptime Kuma + 외부 업타임 체크" | qa-verifier(백업 산출물 실제 R2 도달 확인 1회 포함) |
+| T-W0-05 **[SOLO]** | 02§E-0 | FE 리드 | `apps/{reporter,control-center,subscriber}/package.json`(수정 3) + `app.config.ts`(**기존 파일 수정** — 3앱 모두 이미 존재, `ls apps/*/app.config.ts` 실측 확인, `web` 블록만 추가, EVAL-ROUND-1 영역3 감점5 — 舊 "3파일 신규" 오기 정정) | `react-dom`·`react-native-web`·`@expo/metro-runtime` 3앱 추가 + `app.config.ts`에 `web:{bundler:'metro',output:'static'}` 블록 추가 + 기존 `metro.config.js`(3앱 확인됨, pnpm resolver 커스터마이즈·`disableHierarchicalLookup` 금지 주석) 보존 확인 | 02§E-0 "Expo Web 활성화 — ... `app.config.ts`에 `web: { bundler: 'metro', output: 'static' }` 설정 + 기존 `metro.config.js`의 pnpm resolver 커스터마이즈 ... 보존 확인" | qa-verifier + 루트 회귀(QA 리드 실행·조율자 결과 수신 — E5§A 게이트③ 인용, G3 대상: `app.config.ts` 공통 변경) |
+| T-W0-06 | 08§E-3-2, 08§B "보안사고 대응" | 인프라 담당 | `infra/monitoring/uptime-kuma-alerts.json`(신규)·`infra/monitoring/log-retention.md`(신규)(경로 확정 — EVAL-ROUND-1 영역3 감점3, "또는" 표기 제거) | 비정상 접근·권한 변경 알림 + 사고 시 증거 보전(로그 삭제·덮어쓰기 금지) 2항목 | 08§E-3-2 "① 비정상 접근·권한 변경 알림 ② 사고 시 증거 보전(로그 삭제·덮어쓰기 금지) 2항목을 기존 Uptime Kuma·`/health/*` 모니터링에 추가 구축" | qa-verifier |
 
 **W0 코드 태스크: 6건.** (비코드 W0 게이트는 §E T-NC-01·T-NC-02 참조)
 
 ### W1. 구독자 웹
 
 **선행**: W0 전건 + T-W0-05(Expo Web 활성화) 완료가 `expo export --platform web`을 요구하는 모든 W1 태스크의 전제(02§E-0).
+**PoC 게이트 범위(EXEC-DECISIONS #2 인용, EVAL-ROUND-1 X-6 정정)**: 08§A W1 선행조건의 "`<input capture>` 대용량
+업로드 실기기 PoC 완료"는 **W1 전체가 아니라 기자 촬영·업로드 트랙(02§E-7번 계열 = T-W2-02 이후) 착수 전 완료**로
+좁혀 해석한다 — 근거는 EXEC-DECISIONS #2. 따라서 T-NC-03(PoC)은 아래 W1 태스크 표의 착수 전제가 **아니며**, W2의
+T-W2-02 착수 전제다(§D 트리거 참조).
 
 | ID | 원천 | 담당 | 파일 소유권 | 산출물 | DoD(정본 인용) | 검증자 |
 |---|---|---|---|---|---|---|
-| T-W1-01 **[SOLO]** | 02§E-1(전반부) | FE 리드 | `packages/ui/*`(신규 스캐폴딩: `package.json`·토큰 스키마 파일·CSS 커스텀 프로퍼티 진입점, 3파일) | 03§A-1 확정 수치(본문 18px+/캡션 16px+/제목 22px+/터치 44×44pt+) 반영한 토큰 스키마 + 웹 빌드 한정 `--gachinol-font-*` CSS 커스텀 프로퍼티 + `rem` 스케일. 네이티브는 `Platform.select('web')` 분기로 무변경 | 02§E-1 "`packages/ui` 디자인 토큰 승격 1단계 — ... 토큰 스키마에 반영, 웹 빌드 한정 CSS 커스텀 프로퍼티 ... 노출" | qa-verifier + 조율자 루트 회귀(G3 대상: `packages/ui` 신설) |
+| T-W1-01 **[SOLO]** | 02§E-1(전반부) | FE 리드 | `packages/ui/`(현재 `README.md` 1개만 존재 — `find packages/ui -type f` 실측 확인, EVAL-ROUND-1 영역3 감점5) — `package.json`(신규, 워크스페이스 등록)·토큰 스키마 파일(신규)·CSS 커스텀 프로퍼티 진입점(신규), 3파일 | 03§A-1 확정 수치(본문 18px+/캡션 16px+/제목 22px+/터치 44×44pt+) 반영한 토큰 스키마 + 웹 빌드 한정 `--gachinol-font-*` CSS 커스텀 프로퍼티 + `rem` 스케일. 네이티브는 `Platform.select('web')` 분기로 무변경 | 02§E-1 "`packages/ui` 디자인 토큰 승격 1단계 — ... 토큰 스키마에 반영, 웹 빌드 한정 CSS 커스텀 프로퍼티 ... 노출" | qa-verifier + 루트 회귀(QA 리드 실행·조율자 결과 수신 — E5§A 게이트③ 인용, G3 대상: `packages/ui` 신설) |
 | T-W1-02 | 02§E-1(후반부, T-W1-01 의존) | FE 리드 | `apps/subscriber/src/ui/theme.ts`(삭제) + 소비 파일 11개(`app/` 6·`src/ui` 5, 실측 `grep -rlE "from .*theme" apps/subscriber` 재현) | 구독자 앱 전 화면이 신 토큰 값으로 렌더 — `theme.ts` import를 `packages/ui` 토큰 import로 교체(분할 예외②: 기계적 반복 패턴) | 02§E-1 "**+ 구독자 앱의 소비 전환 완료**(구독자 웹 화면이 신 토큰 값으로 렌더됨을 확인 — ... 미완료 시 W1 진행 차단)" | qa-verifier |
 | T-W1-03 | 02§E-4(3항목 결합: export 스모크·hls.js·고정 OG, 동일 앱·동일 담당이라 결합) | FE 리드 | `apps/subscriber/src/live/*`(hls.js 어댑터 신규 1~2), 라이브 재생 컴포넌트 수정 1, 홈·지사목록 라우트 OG 메타 2 | `expo export --platform web` 스모크 통과 + hls.js 어댑터(Chrome/Edge/삼성인터넷 MSE) + 고정 페이지 정적 OG 메타 | 02§E-4 "구독자 앱 `expo export --platform web` 스모크 → 전 화면 웹 렌더 확인 → hls.js 어댑터 → 고정 페이지(홈·지사 목록) 정적 OG 메타" | qa-verifier |
-| T-W1-04 | 02§E-4-1 | FE 리드 | 서비스워커 등록/Workbox 설정(신규 2), 빌드 해시 파일명 설정 확인(1) | 해시 캐시버스팅 + `skipWaiting`+`clients.claim`+새 버전 토스트(자동 강제새로고침 금지) + HTML 엔트리 `no-cache` | 02§E-4-1 "서비스워커 갱신·캐시 무효화 정책 구현(... 해시 캐시버스팅·`skipWaiting`+`clients.claim`+새 버전 토스트·HTML no-cache·배포 파이프라인 CF 캐시 퍼지 4요소)" | qa-verifier(CF 캐시 퍼지 파이프라인 배선은 T-W1-11에서 CI 워크플로로 완결 — 본 태스크는 클라이언트 3요소만) |
-| T-W1-05 | 02§E-5, 02§D-T6 | BE 리드 | `services/api/src/go-link/*`(신규 모듈, 컨트롤러+서비스 2) | `go.<도메인>` OG SSR 라우트 + go. 가용성 조치(CF Cache Everything+stale 서빙은 CF 설정으로 T-W1-06과 함께 문서화, `watch.` 직접 링크 병행 발급 정책 반영) | 02§E-5 "`go.<도메인>` OG SSR 라우트(api 경량, D-T6 기본안) ... + `go.` 라우트 가용성 조치(D-T6 신설 소절 — Cloudflare Cache Everything+stale 서빙 규칙 적용, ... `watch.` 직접 링크 병행 발급 정책 반영)" | qa-verifier |
+| T-W1-04 | 02§E-4-1 | FE 리드 | 서비스워커 등록/Workbox 설정(신규 2), 빌드 해시 파일명 설정 확인(1) | 해시 캐시버스팅 + `skipWaiting`+`clients.claim`+새 버전 토스트(자동 강제새로고침 금지) + HTML 엔트리 `no-cache` | 02§E-4-1 "서비스워커 갱신·캐시 무효화 정책 구현(... 해시 캐시버스팅·`skipWaiting`+`clients.claim`+새 버전 토스트·HTML no-cache·배포 파이프라인 CF 캐시 퍼지 4요소)" | qa-verifier(CF 캐시 퍼지 파이프라인 배선은 T-W1-11b에서 CI 워크플로로 완결 — 본 태스크는 클라이언트 3요소만) |
+| T-W1-05 | 02§E-5, 02§D-T6 | BE 리드 | `services/api/src/go-link/*`(신규 모듈, 컨트롤러+서비스 2) + `services/api/src/app.module.ts`(준-공용 자산, `imports` 배열 1줄 등록 — D4, 리포 실측 18모듈 등록 확인) | `go.<도메인>` OG SSR 라우트 + go. 가용성 조치(CF Cache Everything+stale 서빙은 CF 설정으로 T-W1-06과 함께 문서화, `watch.` 직접 링크 병행 발급 정책 반영) | 02§E-5 "`go.<도메인>` OG SSR 라우트(api 경량, D-T6 기본안) ... + `go.` 라우트 가용성 조치(D-T6 신설 소절 — Cloudflare Cache Everything+stale 서빙 규칙 적용, ... `watch.` 직접 링크 병행 발급 정책 반영)" | qa-verifier |
 | T-W1-06 | 02§E-6(W1분)·02§D-T5(동적 라우트 서빙), T-W0-03 의존 | 인프라 담당 | `infra/docker/nginx.conf`(수정, T-W0-03과 동일 파일 — 순서 의존) | `try_files $uri $uri.html /index.html;` 류 SPA 폴백 — `/watch/:id`·`/live/:id`·`/contents/:id`·`/recommendations/:id` 4패턴 + HTML no-cache 헤더 정합 | 02§D-T5 "rewrite/SPA 폴백: nginx `web` 서비스에 `try_files $uri $uri.html /index.html;` 류의 SPA 폴백 규칙을 적용 ... 4개 동적 라우트 패턴을 전부 포괄" | qa-verifier |
 | T-W1-07 | 02§E-16(클라이언트분) | FE 리드 | 3앱 이벤트 로깅 훅/유틸(신규, 앱당 1~2, ~4파일) | 소비(재생시작·진행률25/50/75/100%) + 업로드 퍼널(위저드 진입/이탈·시작/재개/완료·큰자막모드 토글) + 모드선택(간단/정밀) 3트랙 클라이언트 로깅 | 02§E-16 "범위 3트랙: ① 콘텐츠 소비 ... ② 업로드 퍼널 ... ③ 모드 선택 ... 클라이언트 로깅(§B 신규 파일 목록, 03 §B-2 재생 도달률 인프라 재사용)" | qa-verifier |
-| T-W1-08 | 02§E-16(서버분) | BE 리드 | `services/api/src/telemetry/*`(신규 모듈, 컨트롤러+서비스 2) | 계측 집계 엔드포인트(3트랙 이벤트 수신·집계) — 03 KPI "업로드 위저드 완주율"·"재개 성공률"·"큰 자막 모드 활성 비율" 3행의 유일한 측정 원천 | 02§E-16 "서버 집계 엔드포인트(§B `services/api` 행) 신설" | qa-verifier |
+| T-W1-08 | 02§E-16(서버분) | BE 리드 | `services/api/src/telemetry/*`(신규 모듈, 컨트롤러+서비스 2) + `services/api/src/app.module.ts`(준-공용 자산, 1줄 등록 — D4) | 계측 집계 엔드포인트(3트랙 이벤트 수신·집계) — 03 KPI "업로드 위저드 완주율"·"재개 성공률"·"큰 자막 모드 활성 비율" 3행의 유일한 측정 원천 | 02§E-16 "서버 집계 엔드포인트(§B `services/api` 행) 신설" | qa-verifier |
 | T-W1-09 | 02§E-17, 06§F-6 | FE 리드 | 구독자 앱 신규 라우트(1~2, `tel:` 링크·카톡 채널 링크·FAQ 정적) | 웹앱 "문의하기" 라우트 | 02§E-17 "웹앱 '문의하기' 라우트(`tel:` 링크·카톡 채널 링크·FAQ, 정적) — 06 §F-6 수신" | qa-verifier |
 | T-W1-10 | 02§E-21, 04§B④ 전제 | FE 리드 | 구독자 앱 신규 정적 페이지(1) | 정적 방송 편성표 페이지 — 방송 시작 시 CF Stream HLS URL 직접 게시 가능한 구조 | 02§E-21 "웹앱 정적 방송 편성표 페이지 신설 — 04 §B④ '라이브 신규 진입 완화책'의 기술 전제" | qa-verifier |
-| T-W1-11 **[SOLO]** | 02§E-9(착수분)·02§E-18 | FE 리드 | `.github/workflows/ci.yml`(수정), `playwright.config.ts`(신규), 구독자 Playwright 시나리오(신규) | CI installability 구조 검사(매니페스트 필수필드·SW 등록·HTTPS) + Playwright 셋업 + 구독자 4단계 시나리오(카톡 `go.` 진입→상세→재생→자막토글) × 브라우저 프로필 3종(Chromium+카카오 UA·WebKit·데스크톱 Chrome) + CI 번들 예산 게이트 + CF 캐시 퍼지 CI 스텝(T-W1-04 배포측 완결) | 02§E-9 "핵심 E2E 시나리오 3종 ... ② 브라우저 프로필 3종 ... 전건 실행"(구독자분), 02§E-18 "CI installability 구조 검사(매니페스트 필수 필드·서비스워커 등록·HTTPS)" | qa-verifier + 조율자 루트 회귀(G3 대상: CI 설정) |
+| T-W1-11a | 02§E-9(착수분, 구독자 시나리오 부분) | FE 리드 | `playwright.config.ts`(신규), 구독자 Playwright 4단계 시나리오(신규, 앱 워크스페이스) | 구독자 4단계 시나리오(카톡 `go.` 진입→상세→재생→자막토글) × 브라우저 프로필 3종(Chromium+카카오 UA·WebKit·데스크톱 Chrome) | 02§E-9 "핵심 E2E 시나리오 3종 ... ② 브라우저 프로필 3종 ... 전건 실행"(구독자분) | qa-verifier |
+| T-W1-11b **[SOLO]** | 02§E-18·02§E-9(CI 게이트 부분)·02§E-4-1(CF 퍼지 CI 스텝) | FE 리드 | `.github/workflows/ci.yml`(수정, 루트 CI — 워크스페이스 경계 밖 단독 취급) | CI installability 구조 검사(매니페스트 필수필드·SW 등록·HTTPS) + CI 번들 예산 게이트 + CF 캐시 퍼지 CI 스텝(T-W1-04 배포측 완결) | 02§E-18 "CI installability 구조 검사(매니페스트 필수 필드·서비스워커 등록·HTTPS)" | qa-verifier + 루트 회귀(QA 리드 실행·조율자 결과 수신 — E5§A 게이트③ 인용, G3 대상: CI 설정) |
 
-**W1 코드 태스크: 11건.** (W1 DoD 실측·PoC·패널은 §E T-NC-03~06 참조)
+**분할 근거(D6, EVAL-ROUND-1 영역3 감점1·X-9)**: 舊 T-W1-11(단일 태스크)은 `.github/workflows/ci.yml`(루트)과
+`playwright.config.ts`+시나리오(앱 워크스페이스)에 동시에 걸쳐 §A 분할 기본값("워크스페이스 경계에서 분할")을
+위반했고, 3예외 중 어느 것도 원용하지 않았다. **"SOLO 웨이브 수 축소"라는 스케줄 편의가 크기 기준을 앞선 사례**로
+적발돼 분할한다 — 크기 기준이 스케줄 편의에 우선한다.
+
+**W1 코드 태스크: 12건.** (W1 DoD 실측·PoC·패널은 §E T-NC-03~06 참조)
 
 ### W2. 기자·관제 웹
 
-**선행**: W0 + T-W1-01/02(토큰 게이트) + T-W0-05(Expo Web) 완료.
+**선행**: W0 + T-W0-05(Expo Web) + T-W1-01(`packages/ui` 토큰 스키마) 완료(EVAL-ROUND-1 영역4 감점5·X-7 정정 —
+02§E-1번은 "미완료 시 **W1** 진행 차단"만 규정하므로 T-W1-02(구독자 앱 소비 전환)는 W2의 선행이 **아니다**;
+舊 "T-W1-01/02"는 근거 없는 과잉 선행이었다). **T-W2-02(웹 업로더 어댑터) 착수 전에는 T-NC-03(PoC) 완료가
+별도 필수**(EXEC-DECISIONS #2, §D 참조 — W1 선행과 무관한 별도 게이트).
 
 | ID | 원천 | 담당 | 파일 소유권 | 산출물 | DoD(정본 인용) | 검증자 |
 |---|---|---|---|---|---|---|
@@ -114,17 +133,24 @@ qa-verifier 통과 후 **조율자가 루트 전체 회귀**(`pnpm test`·`pnpm 
 | T-W2-05 | 02§E-1-1(기자분), T-W1-01 의존 | FE 리드 | `apps/reporter/src/ui/theme.ts`(삭제) + 소비 파일 20개(`app/` 9·`src/features` 2·`src/ui` 8, 실측 `grep -rlE "from .*theme" apps/reporter` 재현) | 기자 앱 토큰 전면 전환 + `theme.ts` 제거(분할 예외②) | 02§E-1-1 "3앱 전면 전환 ... + 앱 로컬 `theme.ts` 3개 ... 제거" | qa-verifier |
 | T-W2-06 | 02§E-1-1(관제분), T-W1-01 의존 | FE 리드 | `apps/control-center/src/ui/theme.ts`(삭제) + 소비 파일 16개(`app/` 9·`src/ui` 7, 실측 재현) | 관제 앱 토큰 전면 전환 + `theme.ts` 제거(분할 예외②) | 02§E-1-1 (기자와 동일 인용) | qa-verifier |
 | T-W2-07 | 02§E-9(완료분) | FE 리드 | 관제·기자 Playwright 시나리오(신규), 라우트 스모크 스펙(신규) | 관제 3단계(검토보드→상세→승인/반려)·기자 4단계(로그인→위저드4단계→프리뷰승인) 시나리오 × 브라우저 3종 + 라우트 22개(32개 중 `_layout.tsx`류 10개 제외) 전건 스모크 | 02§E-9 "② 위 3종을 브라우저 프로필 3종에서 전건 실행 ③ 화면 라우트 스모크: ... 화면 라우트 22개 전건(100%)이 렌더 크래시 없이 스모크 통과" | qa-verifier |
-| T-W2-08 **[SOLO]** | 02§E-13(백엔드분)·02§D-T9 | BE 리드 | `services/api/prisma/schema.prisma`(마이그레이션: `ContentOrigin` 확장), `services/api/src/resident-links/*`(신규 모듈, 4엔드포인트) | `POST /v1/resident-links`·`GET /v1/resident-links/:token`·`POST /v1/resident-links/:token/uploads`·`POST /v1/resident-links/:token/uploads/:uploadId/complete` — 72시간 만료·링크당 5건·건당 500MB·IP시간당10회 제한 | 02§D-T9 "72시간 만료·링크당 5건·건당 500MB·동일 IP 시간당 업로드 시도 10회 초과 시 차단 ... `ContentOrigin` 확장 마이그레이션" | qa-verifier + 조율자 루트 회귀(G3 대상: Prisma 스키마) |
+| T-W2-08 **[SOLO]** | 02§E-13(백엔드분)·02§D-T9 | BE 리드 | `services/api/prisma/schema.prisma`(마이그레이션: `ContentOrigin` 확장), `services/api/src/resident-links/*`(신규 모듈, 4엔드포인트) + `services/api/src/app.module.ts`(준-공용 자산, 1줄 등록 — D4) | `POST /v1/resident-links`·`GET /v1/resident-links/:token`·`POST /v1/resident-links/:token/uploads`·`POST /v1/resident-links/:token/uploads/:uploadId/complete` — 72시간 만료·링크당 5건·건당 500MB·IP시간당10회 제한 | 02§D-T9 "72시간 만료·링크당 5건·건당 500MB·동일 IP 시간당 업로드 시도 10회 초과 시 차단 ... `ContentOrigin` 확장 마이그레이션" | qa-verifier + 루트 회귀(QA 리드 실행·조율자 결과 수신 — E5§A 게이트③ 인용, G3 대상: Prisma 스키마) |
 | T-W2-09 | 02§E-13(프론트분)·03§C-5, T-W2-08 의존 | FE 리드 | 주민 임시 업로드 링크 축소 UI 화면(신규 1~2) | 무인증·간단 모드 강제 노출·지사 담당자 검수 게이트 UI | 02§E-13 "간단 모드 강제 노출, 지사 담당자 검수 게이트 구현(설계 원천: 03 §C-5)" | qa-verifier |
 | T-W2-10 | 02§E-14·02§D-T8 | BE 리드 | `services/api/src/media/*`(공개 렌디션 복사 로직 신규 1~2), 콘텐츠 삭제/비공개 전이 훅 수정(1) | 공개 렌디션 버킷/프리픽스 분리 + CF 캐시 서빙 전환 **+ 삭제·비공개 전환 시 공개 객체 제거 + CF 캐시 퍼지 호출(필수 대칭, 동시 구현)** | 02§E-14 "공개 렌디션 버킷/프리픽스 분리 + Cloudflare 캐시 서빙 전환(D-T8) + 삭제·비공개 전환 시 공개 객체 제거 + CF 캐시 퍼지 API 호출 경로 구현(D-T8 필수 대칭 설계) ... 순서 분리 금지" | qa-verifier |
 | T-W2-11 | 02§E-19(프론트분) | FE 리드 | 라이브 화면 상품 카드 컴포넌트(신규 1~2) | 상품 카드 UI + 외부 판매 채널(네이버 스마트스토어 등) 링크아웃 — 판매·결제·환불·재고 구현 범위 아님 | 02§E-19 "판매자(이장·어촌계장)의 기존 외부 판매 채널 ... 연결하는 상품 카드 UI + 외부 링크 클릭 계측 ... 판매·결제·환불·재고는 구현 범위 아님" | qa-verifier |
 | T-W2-12 | 02§E-19(서버분) | BE 리드 | `services/api/src/telemetry/*`(T-W1-08 모듈 확장, 링크 클릭 이벤트 엔드포인트 1) | 링크아웃 클릭 계측 집계 엔드포인트 | 02§E-19 (동일 인용, 서버측) | qa-verifier |
-| T-W2-13 **[SOLO]** | 02§E-20(백엔드분) | BE 리드 | `services/api/prisma/schema.prisma`(마이그레이션: 미성년자 플래그+동의서 확인 필드), 콘텐츠 워크플로 전이 가드 수정(1) | 피촬영자 만 14세 미만 플래그 + 법정대리인 동의서 첨부 확인 전 승인 차단 전이 가드 | 02§E-20 "체크 시 승인 단계(센터 검토)에서 법정대리인 동의서 첨부 여부를 확인하기 전에는 승인을 차단하는 워크플로우 전이 가드 신설" | qa-verifier + 조율자 루트 회귀(G3 대상: Prisma 스키마) |
+| T-W2-13 **[SOLO]** | 02§E-20(백엔드분) | BE 리드 | `services/api/prisma/schema.prisma`(마이그레이션: 미성년자 플래그+동의서 확인 필드), 콘텐츠 워크플로 전이 가드 수정(1) | 피촬영자 만 14세 미만 플래그 + 법정대리인 동의서 첨부 확인 전 승인 차단 전이 가드 | 02§E-20 "체크 시 승인 단계(센터 검토)에서 법정대리인 동의서 첨부 여부를 확인하기 전에는 승인을 차단하는 워크플로우 전이 가드 신설" | qa-verifier + 루트 회귀(QA 리드 실행·조율자 결과 수신 — E5§A 게이트③ 인용, G3 대상: Prisma 스키마) |
 | T-W2-14 | 02§E-20(프론트분), T-W2-13 의존 | FE 리드 | 기자 앱 콘텐츠 등록 폼(수정 1) | "피촬영자 만 14세 미만 여부" 체크박스 입력 필드 | 02§E-20 "기자 앱 콘텐츠 등록 폼에 '피촬영자 만 14세 미만 여부' 체크박스 입력 필드 추가" | qa-verifier |
 | T-W2-15 | 04 R10(08§A W2 DoD 인용) | BE 리드 | `services/api/src/live/*`(CF Stream 실계정 연동 확장, env 플레이스홀더 → 실 연동 2) | CF Stream 실계정 개설 + Live Input 발급 흐름 | 04 실행체크리스트-1 "Cloudflare Stream 실계정 개설 + Live Input 발급 흐름 구현(현재 env 플레이스홀더, R10)" | qa-verifier |
-| T-W2-16 | 04 R10(08§A W2 DoD 인용), T-W2-15 의존 | 인프라 담당 | `apps/control-center/src/live/*`(상태 조회 훅/UI 신규 1~2), `services/api/src/live/*`(webhook 수신 1) | CF Stream Output/Live Input 상태 조회 연동(webhook 또는 polling) | 04 실행체크리스트-2 "관제 웹앱에 CF Stream Output/Live Input 상태 조회 연동(webhook 또는 polling)" | qa-verifier |
+| T-W2-16a | 04 R10(08§A W2 DoD 인용), T-W2-15 의존 | BE 리드 | `services/api/src/live/*`(webhook 수신 1) | CF Stream webhook 수신(BE) | 04 실행체크리스트-2 "관제 웹앱에 CF Stream Output/Live Input 상태 조회 연동(webhook 또는 polling)"(BE분) | qa-verifier |
+| T-W2-16b | 04 R10(08§A W2 DoD 인용), T-W2-16a 의존 | FE 리드 | `apps/control-center/src/live/*`(상태 조회 훅/UI 신규 1~2) | 관제 웹앱 상태 조회 UI(FE) | 04 실행체크리스트-2 (동일 인용, FE분) | qa-verifier |
 
-**W2 코드 태스크: 16건.** (W2 실기기 완주 DoD는 §E T-NC-07 참조)
+**분할 근거(D4·D6, EVAL-ROUND-1 영역2 감점2·영역3 감점2·X-9)**: 舊 T-W2-16(담당: 인프라 담당 단일)은
+`apps/control-center`(FE 소유 영역) + `services/api`(BE 소유 영역)를 동시 소유해 §A 분할 기본값(워크스페이스
+경계 분할)과 E1 §A "인프라 담당 금지 칸(앱/서비스 비즈니스 로직 코드)"·"경계 판정 원칙(걸치면 파일 소유권이
+명확한 쪽으로 분할)"에 정면으로 어긋났다. BE(webhook 수신)/FE(상태 조회 UI)로 분할해 각 워크스페이스를 해당
+역할군이 소유하도록 정정한다.
+
+**W2 코드 태스크: 17건.** (W2 실기기 완주 DoD는 §E T-NC-07 참조)
 
 ### W3. 쉘·PWA
 
@@ -132,7 +158,7 @@ qa-verifier 통과 후 **조율자가 루트 전체 회귀**(`pnpm test`·`pnpm 
 
 | ID | 원천 | 담당 | 파일 소유권 | 산출물 | DoD(정본 인용) | 검증자 |
 |---|---|---|---|---|---|---|
-| T-W3-01 **[SOLO]** | 02§E-23 | BE 리드 | `services/api/prisma/schema.prisma`(마이그레이션: `PushSubscription`), `services/api/src/push/*`(신규 모듈: 구독/해지·발송트리거+워커·쉘 토큰수신 API, 4파일) | 웹푸시(VAPID) 구독/해지 API + 발송 트리거 엔드포인트(발송 워커 포함) + 쉘(TWA/iOS) FCM·APNs 토큰 수신 API + `PushSubscription` 모델 | 02§E-23 "웹푸시(VAPID) 구독 등록/해지 API + 발송 트리거 엔드포인트(발송 워커 포함) + 쉘(TWA/iOS) FCM·APNs 토큰 수신 API + `PushSubscription` 데이터 모델" | qa-verifier + 조율자 루트 회귀(G3 대상: Prisma 스키마) |
+| T-W3-01 **[SOLO]** | 02§E-23 | BE 리드 | `services/api/prisma/schema.prisma`(마이그레이션: `PushSubscription`), `services/api/src/push/*`(신규 모듈: 구독/해지·발송트리거+워커·쉘 토큰수신 API, 4파일) + `services/api/src/app.module.ts`(준-공용 자산, 1줄 등록 — D4) | 웹푸시(VAPID) 구독/해지 API + 발송 트리거 엔드포인트(발송 워커 포함) + 쉘(TWA/iOS) FCM·APNs 토큰 수신 API + `PushSubscription` 모델 | 02§E-23 "웹푸시(VAPID) 구독 등록/해지 API + 발송 트리거 엔드포인트(발송 워커 포함) + 쉘(TWA/iOS) FCM·APNs 토큰 수신 API + `PushSubscription` 데이터 모델" | qa-verifier + 루트 회귀(QA 리드 실행·조율자 결과 수신 — E5§A 게이트③ 인용, G3 대상: Prisma 스키마) |
 | T-W3-02 | 02§E-10(부분)·02§D-T2 | FE 리드 | 3앱 PWA manifest(신규 3), 서비스워커 등록 확장(T-W1-04 기반 3앱 확장) | PWA manifest/SW 3종 | 02§E-10 "PWA manifest/SW 3종 → TWA(Android) → iOS 쉘(푸시+딥링크) 심사 제출"(manifest/SW 부분) | qa-verifier |
 | T-W3-03 | 02§E-10(부분)·02§D-T2, T-W3-01 의존(FCM 토큰수신 API 선행) | FE 리드 | TWA 패키징 설정(신규, Bubblewrap `twa-manifest.json`+`assetlinks.json`) | Android TWA 패키징 | 02§D-T2 "**Android 쉘**: TWA(Trusted Web Activity, Bubblewrap) ... `assetlinks.json` 검증" | qa-verifier |
 | T-W3-04 | 02§E-10(부분)·02§D-T2, T-W3-01 의존(APNs 토큰수신 API 선행) | FE 리드 | iOS WKWebView 래퍼 프로젝트 골격(신규 3, 가정치 — 02§B 쉘·PWA 산출물 행 인용) | iOS 쉘(WKWebView 래퍼) + APNs 푸시 + 공유시트/딥링크(네이티브 부가가치 2종) | 02§D-T2 "**iOS 쉘**: WKWebView 래퍼 + 네이티브 부가가치 최소 2종(APNs 푸시 알림 + 공유 시트/딥링크)" | qa-verifier |
@@ -144,7 +170,7 @@ qa-verifier 통과 후 **조율자가 루트 전체 회귀**(`pnpm test`·`pnpm 
 | ID | 원천 | 담당 | 파일 소유권 | 산출물 | DoD(정본 인용) | 검증자 |
 |---|---|---|---|---|---|---|
 | T-W4-01 | 08§A W4·02§E-24 | 조율자(테크리드 사상) | `CLAUDE.md`(§11 수정 1) | Expo Go 운용 절차를 개발 편의로 격하(배포 경로 제외) 반영 문서화 + jest-expo 건수 정정(reporter 74→102, media-worker 13→24) | 02§E-24 "CLAUDE.md §11 갱신 — ... reporter 74 → 102 ... media-worker 13 → 24 ... 담당: 테크리드, 기한: 계획 승인 시점 +1주 이내" | qa-verifier(grep 재현) |
-| T-W4-02 **[SOLO]** | 08§A W4 | 조율자(테크리드 사상) | `.github/workflows/ci.yml`(수정) | 웹 E2E(Playwright)를 CI 필수 게이트로 승격 | 08§A W4 "웹 E2E를 CI 필수 게이트로" | qa-verifier + 조율자 루트 회귀(G3 대상: CI 설정) |
+| T-W4-02 **[SOLO]** | 08§A W4 | 조율자(테크리드 사상) | `.github/workflows/ci.yml`(수정) | 웹 E2E(Playwright)를 CI 필수 게이트로 승격 | 08§A W4 "웹 E2E를 CI 필수 게이트로" | qa-verifier + 루트 회귀(QA 리드 실행·조율자 결과 수신 — E5§A 게이트③ 인용, G3 대상: CI 설정) |
 | T-W4-03 | 02§E-22 | 조율자(테크리드 사상) | 실측 리포트 문서(신규 1, T-W1-07/08 계측 인프라 데이터 소비) | 웹 배포 소요시간·스토어 심사 회피 횟수·이중 트랙 잔존 공수 실측 → 01§A-2 "월 20~30시간" 상계 가정 확정·갱신 | 02§E-22 "웹 배포 소요 시간·스토어 심사 회피 횟수·이중 트랙(웹+네이티브 병행 잔존 시) 잔존 공수를 계측해 ... 상계 가정을 확정·갱신" | qa-verifier |
 
 **W4 코드 태스크: 3건.**
@@ -171,8 +197,8 @@ qa-verifier 통과 후 **조율자가 루트 전체 회귀**(`pnpm test`·`pnpm 
 |---|---|---|---|---|
 | T-NC-01 | 08§A W0 DoD | QA 리드 | W0 코드 태스크(T-W0-01~06) 완료 후 | `https://api.<도메인>/health` 외부 도달 + 웹 오리진 로그인 왕복 실측 — 증적: `curl -i` 응답 전문 + 로그인 왕복 스크린캡처, 경로 `reviews/dod-evidence/w0/`(E5§C 인용) |
 | T-NC-02 | 08§E-1, 08§A W0 선행조건, EXEC-PLAN G9 | 법무/운영 지원(접수)→조율자(에스컬레이션) | W0 착수 전 | 사용자 결정 3건: ① 도메인 ② 제온 노출 방식(Tunnel 권장) ③ 05§G MVP 착수 게이트(운전자금) 확인. **미확인 시 해당 게이트에 걸리는 태스크만 보류**(G9, EXEC-PLAN §3) |
-| T-NC-03 | 02§E-0-1·08§E-3-1(동일 태스크, 양쪽 인용) | QA 리드 | W1 착수 전(W0~W1 병행) | `<input capture>` 대용량 업로드 PoC — 3환경(iOS Safari·Android Chrome·카카오 인앱 웹뷰)×2용량(500MB·1GB)×3회=18시행, 성공 16회 이상(≥89%)+iOS Safari discard 재개 3회 전건 성공. 증적: 시행별 로그, 경로 `reviews/dod-evidence/w1-poc/`(E5§C 경로 관행 준용, 표 미등재분 — §F 신규 위임 참조) |
-| T-NC-04 | 08§A W1(어르신 패널 1차) | QA 리드/PMO | 03§A-1 토큰 게이트(T-W1-01) 완료 ~ T-W1-03 웹 export 스모크 사이 | 애월·제주시 어르신 패널 1차(R1 저해상도 프로토타입) 테스트. 증적: 패널 기록, 경로 `reviews/dod-evidence/w1-panel-r1/`(E5§C 경로 관행 준용, §F 신규 위임 참조) |
+| T-NC-03 | 02§E-0-1·08§E-3-1(동일 태스크, 양쪽 인용) | **QA 리드(FE 리드 실행 지원)**, 판정 승인 = 조율자(D10 확정 문안) | **Wave 5(T-W2-02) 착수 전 필수 완료**(EXEC-DECISIONS #2 — 舊 "W1 착수 전"은 08§A 원 문언 오독, 실질 하류는 02§E-0-1 "§E 7번의 착수 여부를 좌우") | `<input capture>` 대용량 업로드 PoC — 3환경(iOS Safari·Android Chrome·카카오 인앱 웹뷰)×2용량(500MB·1GB)×3회=18시행, 성공 16회 이상(≥89%)+iOS Safari discard 재개 3회 전건 성공. **"합격 임계값 89%(18시행 중 16회)는 가정치이며 실측 착수 전 조율자가 최종 확정한다"**(D10 확정 문안, 02§E-0-1 단서 승계 — 원 정본의 확정 주체 "테크리드"는 E1 §A-1 매핑에 따라 조율자). 증적: 시행별 로그, 경로 `reviews/dod-evidence/w1-poc/`(E5§C 표 인용 — 6-11 #8로 편입 완료) |
+| T-NC-04 | 08§A W1(어르신 패널 1차) | QA 리드 | 03§A-1 토큰 게이트(T-W1-01) 완료 ~ T-W1-03 웹 export 스모크 사이 | 애월·제주시 어르신 패널 1차(R1 저해상도 프로토타입) 테스트. 증적: 패널 기록, 경로 `reviews/dod-evidence/w1-panel-r1/`(E5§C 표 인용 — 6-11 #8로 편입 완료) |
 | T-NC-05 | 08§A W1 DoD① | QA 리드 | T-W1-03(구독자 웹 export) 완료 후 | TTFF 실기기 3종×카카오 인앱×LTE, 각 20회(합산 60회+), p75≤4초. 증적: 60행+ 원자료 CSV + p75 계산, 경로 `reviews/dod-evidence/w1-ttff/`(E5§C 표 인용) |
 | T-NC-06 | 08§A W1 DoD② | QA 리드 | T-W1-05(go. 라우트)+T-W1-06(nginx 동적라우트 폴백) 완료 후 | 카톡 `go.` 링크 미리보기(썸네일+제목)+탭 후 리다이렉트→상세 렌더 확인. 증적: 캡처 2장 세트, 경로 `reviews/dod-evidence/w1-go-link/`(E5§C 표 인용) |
 | T-NC-07 | 08§A W2 DoD 전체 | QA 리드 | W2 코드 태스크(T-W2-01~16) 전건 완료 후 | 실기기 모바일 웹 촬영→업로드→승인→송출 한 바퀴 + 관제 데스크톱1440px/태블릿1024px + Playwright 3종×3프로필 전건(자동, T-W2-07 산출물 실행 확인) + 22라우트 스모크 + 주민 링크 업로드 1건 + CF Stream 상태조회 + 링크아웃 클릭 계측 1건. 증적: Playwright HTML 리포트+실기기 캡처 시퀀스+CF Stream API 응답, 경로 `reviews/dod-evidence/w2/`(E5§C 표 인용) |
@@ -181,26 +207,93 @@ qa-verifier 통과 후 **조율자가 루트 전체 회귀**(`pnpm test`·`pnpm 
 | T-NC-10 | 08§A W3 DoD | 조율자(사용자 승인 동반) | T-W3-01~04 완료 + T-NC-08 완료 | Play 스토어 게시 + App Store 심사 통과(리젝 시 02§D 플랜B). 증적 경로 `reviews/dod-evidence/w3/`(E5§C 표 인용) |
 | T-NC-11 | 08§E-8 | 인프라 담당 | W2 DoD 충족 후 상시(월 1회) | 클라우드 전환 트리거 대시보드(다운타임·p95) 월 1회 리뷰 캘린더 등록 — 수치 자체는 08§C·05§C 인용(재정의 아님) |
 | T-NC-12 | 08§E-9 | PMO | W2 DoD 충족 이후 상시(월 1회) | 커머스 2단계(자체 결제) 착수 트리거 월 1회 리뷰 — 수치 자체는 05 소유(08§A "커머스 2단계 트랙과의 관계" 인용) |
+| T-NC-13 | 08§A W4 DoD(EVAL-ROUND-1 영역1 감점3·X-10 신설 — E5§C가 이미 정의한 절차의 태스크 편입) | QA 리드 | T-W4-01·T-W4-02 완료 후 | "문서·CI 반영 완료 + 네이티브 트랙 잔재 0" 실측 — `grep -rn "expo-env.d.ts\|EAS Build" CLAUDE.md docs/` 잔재 grep 결과 0건 로그 + CI yaml(`ci.yml`의 웹 E2E 필수 게이트 존재) 인용. 증적 경로 `reviews/dod-evidence/w4/`(E5§C 표 기존 행 인용 — 신규 경로 아님) |
 
-**코드 외 태스크: 12건.**
+**코드 외 태스크: 13건.**
 
-## F. 커버리지 선언
+## F. 커버리지 선언 (EVAL-ROUND-1 영역1 감점1·영역8 감점5·X-11 전면 재작성 — 라벨→태스크 전건 대사표 + 실행 grep)
 
-**대사 방법**: 02§E 체크리스트 0~24번(하위 0-1·1-1·4-1 포함, 총 28라벨) + 08§E 1~10번(하위 1-1·3-1·3-2 포함,
-총 13라벨) + 08§A W0~W4 DoD 서술의 04 R10 인용 1건을, 위 §C·§D·§E 전 태스크 표의 "원천" 열과 1:1 이상 대조했다.
-`grep -n "^[0-9]" 02-web-architecture.md`(§E 구간)·`grep -n "^[0-9]" 08-rollout-transition.md`(§E 구간) 재현
-결과와 본 문서 태스크 ID 개수를 아래에 요약한다.
+**Q1 원칙 준수**: 아래는 실제 실행한 명령과 그 출력을 그대로 인용한다(허위 확인 금지).
 
-| 정본 항목군 | 라벨 수 | 매핑 방식 | 결과 |
+```
+$ grep -nE "^[0-9]+(-[0-9]+)?\. \[ \]" docs/plan/02-web-architecture.md | wc -l
+28
+$ grep -nE "^[0-9]+(-[0-9]+)?\. \[ \]" docs/plan/08-rollout-transition.md | wc -l
+13
+```
+
+(전문은 조율자 재현 시 `grep -nE "^[0-9]+(-[0-9]+)?\. \[ \]" 02-web-architecture.md`·`08-rollout-transition.md`로
+재생성 가능 — 02는 395~422행, 08은 163~175행.)
+
+### F-1. 02§E 28라벨 → 태스크 ID 전건 대사표
+
+| 라벨 | 태스크 ID | 분류 |
+|---|---|---|
+| 0 | T-W0-05 | 1:1 |
+| 0-1 | T-NC-03 | 1:1 |
+| 1 | T-W1-01 + T-W1-02 | 분할 |
+| 1-1 | T-W2-05 + T-W2-06 | 분할 |
+| 2 | T-W0-01 | 1:1 |
+| 3 | T-W0-02 | 1:1 |
+| 4 | T-W1-03 | 1:1 |
+| 4-1 | T-W1-04 | 1:1 |
+| 5 | T-W1-05 | 1:1 |
+| 6 | T-W0-03 + T-W1-06 | 분할 |
+| 7 | T-W2-01 + T-W2-02 + T-W2-03 | 분할 |
+| 8 | T-W2-04 | 1:1 |
+| 9 | T-W1-11a + T-W1-11b + T-W2-07 | 분할 |
+| 10 | T-W3-02 + T-W3-03 + T-W3-04 | 분할 |
+| 11 | T-TRIG-03 | 트리거 |
+| 12 | T-TRIG-01 | 트리거 |
+| 13 | T-W2-08 + T-W2-09 | 분할 |
+| 14 | T-W2-10 | 1:1 |
+| 15 | T-TRIG-02 | 트리거 |
+| 16 | T-W1-07 + T-W1-08 | 분할 |
+| 17 | T-W1-09 | 1:1 |
+| 18 | T-W1-11b | 1:1(T-W1-11b는 9·4-1번의 CI 하위 조각도 함께 구현 — 그 태스크가 "여러 라벨을 서비스"하는 것과 "18번 자신이 1개 태스크에 매핑"되는 것은 별개 판정이다) |
+| 19 | T-W2-11 + T-W2-12 | 분할 |
+| 20 | T-W2-13 + T-W2-14 | 분할 |
+| 21 | T-W1-10 | 1:1 |
+| 22 | T-W4-03 | 1:1 |
+| 23 | T-W3-01 | 1:1 |
+| 24 | T-W4-01 | 1:1 |
+
+**요약 산식(재현)**: 1:1 = {0,0-1,2,3,4,4-1,5,8,14,17,18,21,22,23,24} = **15건**. 분할 = {1,1-1,6,7,9,10,13,16,19,20}
+= **10건**. 트리거 = {11,12,15} = **3건**. 합계 15+10+3 = **28 = 라벨 총수와 일치**(舊 산식 "20+8+3=31"은 1·6·10번
+누락 원인이던 오산이었다 — 정정 완료).
+
+### F-2. 08§E 13라벨 → 태스크 ID 전건 대사표
+
+| 라벨 | 태스크 ID/처리 | 분류 |
+|---|---|---|
+| 1 | T-NC-02 | 비코드 |
+| 1-1 | T-NC-08 | 비코드 |
+| 2 | T-W0-01 + T-W0-02 + T-W0-03(코드) — "W0: CF 존·CORS·쿠키인증·R2 CORS·nginx web" 롤업 | 코드+롤업 겸용(1회만 계상) |
+| 3 | T-W0-04 | 코드 |
+| **3-1** | **T-NC-03**(舊 라운드 §F가 원천 열에는 인용해 두고도 F표 자체에 행을 누락 — EVAL-ROUND-1 영역1 감점1·X-11로 적발돼 이번에 명시 계상) | 비코드(PoC) |
+| 3-2 | T-W0-06 | 코드 |
+| 4 | W1 롤업 — T-W1-01·02·03·04·05·06·07·08·09·10·11a·11b + T-NC-03·04(개별 태스크 인용, 중복 계상 아님) | 롤업 |
+| 5 | W2 롤업 — T-W2-01~16b + T-NC-07(개별 태스크 인용) | 롤업 |
+| 6 | T-W1-11b(installability) + T-W3-02·03·04(PWA/TWA/iOS) + T-NC-10(심사) | 롤업 |
+| 7 | T-W4-01 + T-W4-02 + T-W4-03 | 롤업 |
+| 8 | T-NC-11 | 비코드 |
+| 9 | T-NC-12 | 비코드 |
+| 10 | T-NC-09 | 비코드 |
+
+**계상 확인**: 코드 3건(2·3·3-2) + 비코드 5건(1·1-1·8·9·10) + PoC 1건(3-1, 신규 계상) + 롤업 4건(4·5·6·7, 2번은
+코드와 겸용이라 별도 카운트 아님) = **13 = 라벨 총수와 일치**(舊 산식은 3-1이 어느 군에도 명시 행이 없어 12건
+행으로만 서술됐다 — 정정 완료).
+
+### F-3. 그 외 매핑
+
+| 정본 항목군 | 라벨 수 | 매핑 | 결과 |
 |---|---|---|---|
-| 02§E 0~24(하위 포함) | 28 | 1항목=1태스크(20건) 또는 워크스페이스 경계 분할(FE/BE 2태스크, 8건: 7·9·13·16·19·20번 + 1-1 앱별 2분할) 또는 트리거 이관(3건: 11·12·15번) | 전건 매핑 — 누락 0건 |
-| 08§E 1~10(하위 포함) | 13 | 코드 항목(2·3·3-2번 3건)은 §C 태스크로, 롤업 항목(2·4·5·6·7번 5건, 2번과 중복 표기 없음 — 2번은 코드+롤업 겸용이라 1회만 계상)은 §C 개별 태스크 인용으로 중복 없이 대사, 순수 비코드(1·1-1·8·9·10번 5건)는 §E(T-NC)로 | 전건 매핑 — 누락 0건 |
-| 08§A W2 DoD 중 04 R10 인용 | 1 | T-W2-15·16(코드) + T-NC-07(실측 통합) | 매핑 완료 |
-| 08§A 시간축 매핑표 | — | 태스크 목록이 아니라 [E3](E3-parallel-schedule.md) 의존 그래프의 입력값 — 본 문서에서 태스크화하지 않음(§0 비범위 선언과 별개로, "누락"이 아니라 "E3 소유" 경계 확인) | 해당 없음(E3로 이관) |
+| 08§A W2 DoD 중 04 R10 인용 | 1 | T-W2-15 + T-W2-16a + T-W2-16b(코드) + T-NC-07(실측 통합) | 매핑 완료 |
+| 08§A 시간축 매핑표 | — | 태스크 목록이 아니라 [E3](E3-parallel-schedule.md) 의존 그래프의 입력값 — 본 문서에서 태스크화하지 않음("누락"이 아니라 "E3 소유" 경계) | 해당 없음(E3로 이관) |
 
-**전건 매핑 — 누락 0건**(신규 범위 발명 0건, §0 비범위 선언 3항목 제외 확인). 총 태스크 수: **코드 55건**(W0 6·W1
-11·W2 16·W3 4·W4 3·트리거대기 3·코드외 12) — 재계산: 6+11+16+4+3=40(정상 웨이브 코드) + 3(트리거대기) + 12(코드외)
-= **55건**.
+**전건 매핑 — 누락 0건**(신규 범위 발명 0건, §0 비범위 선언 3항목 제외 확인, 실행한 grep 재현 결과와 라벨 수
+일치). **총 태스크 수 재계산(D6 분할 반영, 40→42)**: 코드 42건(W0 6·W1 12·W2 17·W3 4·W4 3) + 트리거대기 3건
++ 코드외 13건(T-NC-13 신설 반영) = **58건**.
 
 ## G. 리스크 테이블
 
@@ -211,22 +304,35 @@ qa-verifier 통과 후 **조율자가 루트 전체 회귀**(`pnpm test`·`pnpm 
 | `테크리드`·`PO`·`사업총괄` 등 원문 역할이 E1 6개 역할군에 정식 편입되지 않은 채 실행 진행 | §B 사상표를 잠정 적용하되, E1 확정본 발표 시 사상표를 즉시 재검증(아래 신규 위임 목록 참조) | 조율자 | E1 문서 최초 작성 완료 시 |
 | Prisma 스키마 변경 태스크(T-W2-08·T-W2-13·T-W3-01) 3건이 서로 다른 시점에 스키마를 건드려 마이그레이션 순서 꼬임 | 3건 모두 [SOLO] 지정 + E3가 순차 웨이브로만 배정(동시 진행 금지) — 순서: T-W2-08 → T-W2-13 → T-W3-01(W축 순서와 일치, 별도 조정 불요) | BE 리드+조율자 | E3 웨이브 편성 시 상시 확인 |
 | 코드 외 태스크(T-NC 계열)가 물리 기기·외부 심사 의존이라 "완료" 판정 기준이 코드 태스크(qa-verifier)와 다름 | §E 표에 QA 리드 담당·증적 경로를 명시하고, 판정 승인은 E5§C 원칙대로 조율자가 최종 확인(실측 실행↔승인 역할 분리) | QA 리드→조율자 | 상시 |
+| **공유 진입점 파일(`services/api/src/app.module.ts`) 동시 편집**(D4, EVAL-ROUND-1 영역3 감점4·영역4 감점1·X-14 — 리포 실측 18모듈 전부 이 파일에 등록, 신규 api 모듈 태스크 T-W1-05·T-W1-08·T-W2-08·T-W3-01이 전부 이 파일을 편집) | `app.module.ts`를 **준-공용 자산**(동시성 1, SOLO 승격은 불요)으로 지정 — 같은 웨이브에 신규 api 모듈 태스크 2건 이상 배치 금지(E3 §B·§C가 소비) | 조율자 | 웨이브 편성 시 상시 |
 
 ## H. 실행 체크리스트
 
 - [ ] 각 태스크 착수 전 파일 소유권 실측 재확인(G3, 위 리스크 표 2행)
-- [ ] [SOLO] 태스크 7건(T-W0-05·T-W1-01·T-W1-11·T-W2-08·T-W2-13·T-W3-01·T-W4-02)이 E3에서 전부 단독 웨이브로 배정됐는지 확인
+- [ ] [SOLO] 태스크 **8건**(T-W0-05·T-W1-01·T-W1-11b·T-W2-08·T-W2-13·T-W3-01·T-W4-02, **7건**) — D6 분할로
+      T-W1-11이 11a(비SOLO)+11b(SOLO)로 나뉘어 SOLO 수는 그대로 7건 유지(舊 "8→7 축소" 서술은 스케줄 편의가
+      크기 기준을 앞선 정황이었다는 지적(X-9)을 받아, 분할 후에도 SOLO 건수 자체는 불변임을 재확인)가 E3에서
+      전부 단독 웨이브로 배정됐는지 확인
 - [ ] 트리거 대기 코드 태스크 3건(§D)이 정상 웨이브에 잘못 편입되지 않았는지 확인
-- [ ] 코드 외 태스크 12건(§E)이 E3에서 "게이트 대기 트랙"으로 별도 표기됐는지 확인
-- [ ] 커버리지 선언(§F) 갱신 시 02§E·08§E 항목 수 grep 재실행(라벨 수 변동 여부 확인)
+- [ ] 코드 외 태스크 13건(§E, T-NC-13 포함)이 E3에서 "게이트 대기 트랙"으로 별도 표기됐는지 확인
+- [ ] 커버리지 선언(§F) 갱신 시 02§E·08§E 항목 수 grep 재실행(라벨 수 변동 여부 확인) — 실행 명령·출력 동봉 의무
+- [ ] `app.module.ts` 준-공용 자산 규칙(D4) 준수 — 신규 api 모듈 태스크(T-W1-05·08·T-W2-08·T-W3-01) 동일 웨이브 배치 금지
 - [ ] 신규 위임 발생 시 완료 보고에 즉시 등재(§신규 위임 목록 갱신)
 
 ## 신규 위임 목록 (등재 책임 규칙에 따라 제출)
 
-| # | 발주처 | 수신처 | 요청 내용 | 처리 상태 |
+**상태 SSOT(D7, EVAL-ROUND-1 영역8 감점3·X-3)**: 아래 표는 **발주 시점 스냅샷**이며, 처리 상태의 정본은
+[PIVOT-PLAN §6-11](../PIVOT-PLAN.md)이다. 상태 열은 `→ 6-11 #n 참조`로만 표기하고 개별 갱신하지 않는다.
+
+| # | 발주처 | 수신처 | 요청 내용 | 상태 |
 |---|---|---|---|---|
-| 1 | E5 §D(등재 책임 규칙)·조율자 추가지시 | **E2**(본 문서) | W1·W2 DoD 실측 태스크의 실측 담당(QA 리드)·증적 경로(`reviews/dod-evidence/`)를 산출물란에 명시 | **수신 완료** — §E T-NC-01·05·06·07에 반영 |
-| 2 | E2 §B | **E1**(역할군 정의) | "테크리드"·"PO"·"사업총괄"·"센터 운영" 등 마스터플랜 시대 담당 표기를 E1의 6개 상근 역할군 체계에 공식 편입(현재는 E2가 잠정 사상표로 처리) 요청 | 대장 등재 필요 |
-| 3 | E2 §E(T-NC-03·04) | **E5**(§C DoD 판정 절차 표) | PoC(`w1-poc/`)·어르신 패널 1차(`w1-panel-r1/`) 2건의 증적 경로를 E5§C 표에 정식 행으로 추가(현재 E5§C 표는 W0/W1①②③/W2/W3/W4만 정의 — 08§A가 W1 내용으로 명시한 PoC·패널이 표 밖에 있었음) | 대장 등재 필요 |
-| 4 | E2 §C(W3) | **E4**(토큰·모델 배분) | T-W3-04(iOS 쉘 WKWebView 래퍼) 파일 수를 "가정치 3(2~3 폭 중 상단값)"으로 인용했다(02§B 산출물 표 동일 가정) — 실제 착수 시 파일 분해가 늘 가능성을 토큰 예산 산정에 반영 요청 | 대장 등재 필요 |
-| 5 | E2 §0 비범위 선언 | **PIVOT-PLAN §6**(대장 소유자) | 위 4건을 "6-11. EXEC 웨이브 신규 위임"(E5§D가 이미 제안한 신설 소절)에 편입 | 대장 등재 필요(E5§D 제안과 동일 소절로 통합) |
+| 1 | E5 §D(등재 책임 규칙)·조율자 추가지시 | **E2**(본 문서) | W1·W2 DoD 실측 태스크의 실측 담당(QA 리드)·증적 경로(`reviews/dod-evidence/`)를 산출물란에 명시 | → 6-11 #3 참조 |
+| 2 | E2 §B | **E1**(역할군 정의) | "테크리드"·"PO"·"사업총괄"·"센터 운영" 등 마스터플랜 시대 담당 표기를 E1의 6개 상근 역할군 체계에 공식 편입 요청 | → 6-11 #7 참조 |
+| 3 | E2 §E(T-NC-03·04) | **E5**(§C DoD 판정 절차 표) | PoC(`w1-poc/`)·어르신 패널 1차(`w1-panel-r1/`) 2건의 증적 경로를 E5§C 표에 정식 행으로 추가 | → 6-11 #8 참조 |
+| 4 | E2 §C(W3) | **E4**(토큰·모델 배분) | T-W3-04(iOS 쉘 WKWebView 래퍼) 파일 수 가정치의 확장 가능성을 토큰 예산 산정에 반영 요청 | → 6-11 #11 참조 |
+| 5 | E2 §0 비범위 선언 | **PIVOT-PLAN §6**(대장 소유자) | 위 4건을 "6-11. EXEC 웨이브 신규 위임" 소절에 편입 | → 6-11 #4 참조(소절 신설 자체로 종결) |
+| 6 | E5 §A 게이트③(주체 확정 — E5 라운드1 수정 완료 보고 제출분) | **E2**(본 문서 검증자 열) | "개별 워크스페이스 회귀 = QA 리드 / 공용 자산 루트 전체 회귀 = QA 리드가 실행하고 조율자가 결과 수신" 문구로 검증자 열 통일 | → 6-11 #12 참조(등재 예정) — **수신 완료, 본 라운드에 즉시 반영**(§C 공통 검증자 표기 문단 + T-W0-05·T-W1-01·T-W1-11b·T-W2-08·T-W2-13·T-W3-01·T-W4-02 검증자 열 7건 전건 치환) |
+
+**라운드 1 수정에서 발생한 신규 위임**: 없음 — 본 라운드는 EXEC-EVAL-ROUND-1·EXEC-ROUND-1-DECISIONS·조율자 추가
+지시(E5 게이트③ 확정)가 이미 확정한 문안(D1·D2·D4·D6·D7·D10 + E5 신규 위임 #6)을 그대로 인용·적용했을 뿐,
+E2가 자체적으로 새 문서 간 위임을 만들지 않았다.
