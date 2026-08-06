@@ -68,6 +68,15 @@
 > 편집, 웨이브 전부 달라 동시 편집 없음) 반영. **웨이브 재편·신규 태스크 0**(태스크 배정 45건·웨이브 라벨
 > 22 불변 — 이번 라운드는 순수 표기·인용 정합 정정). H-8 전수 대사 중 eval 인용 2건(T-W1-04·T-W2-07) 외
 > 3번째 축약(T-W1-11a)을 추가 발견해 동형 정정.
+>
+> **라운드 16 수정**: [reviews/EXEC-EVAL-ROUND-16.md](reviews/EXEC-EVAL-ROUND-16.md) 이슈 G-1·G-7·G-9 +
+> E3 §E 6조(G-3/D16-1 연동부) + [reviews/EXEC-ROUND-16-DECISIONS.md](reviews/EXEC-ROUND-16-DECISIONS.md)
+> D16-3(02§B 신규 파일 25건 전건 대사로 D14-1 판정 범위 확장 — 나머지 16건 전건 ①기존귀속, 신규 태스크·
+> 명시제외 0건. 즉시 확정 1건: 링크아웃 클릭 계측 클라이언트 이벤트를 T-W2-11 편입, 2→3파일 버킷 S 불변)·
+> D15-2 인용 확장(E3 §I는 5종 전건 기보유, 이번 라운드는 E2 §G·§H 쪽의 4/5·2/5 배치 비대칭만 정정) 반영.
+> E3 §E에 6조 신설(머지 완료 후 회귀 발견 시 같은 워크스페이스 태스크의 게이트③ 보류 + 이월 카운트 산입).
+> **웨이브 재편·신규 태스크 0**(태스크 배정 45건·웨이브 라벨 22 불변 — Wave 10 T-W2-11 파일 수만 2→3, 버킷
+> 불변이라 E4 재계산 불요).
 
 ## A. 의존 그래프 — 08§A 선행조건·시간축 매핑 소비
 
@@ -259,7 +268,7 @@ Wave 2에서 이미 완료되지만, 나머지 2건(T-W0-04 백업·T-W0-06 보�
 | **8a** | T-W1-07b, T-W1-03, T-W2-10 | **구독자 재생 컴포넌트는 T-W1-03 단독 소유 — 계측 배선은 T-W1-07a로 분리해 Wave 12로 이동(DD1, EVAL-ROUND-2 영역4 감점1·Y-13 정정)**. **舊 Wave 8은 T-W1-04를 포함한 4건이었으나 EVAL-ROUND-6 D6-1(`pnpm-lock.yaml` 준-공용 자산, 신규 의존성 추가 태스크 웨이브당 1건)이 T-W1-03+T-W1-04 동시 배치를 위반으로 적발 — T-W1-04를 Wave 8b로 재배치했다(웨이브 구성 변경, E4 재계산 후행)**: `apps/reporter` 이벤트훅+업로드위저드/모드선택 호출배선+단위테스트(T-W1-07b, D6-5 보정으로 4파일) vs `apps/subscriber/app/live/[id].tsx`(T-W1-03, 재생 컴포넌트 수정 + **재생 실패 폴백 UI**, EVAL-ROUND-14 D14-1/J-6)+`apps/subscriber/app/(tabs)/index.tsx`(OG메타 + **홈화면 추가 배너·카톡 웹뷰 감지**, D14-1)+`apps/subscriber/app/(tabs)/stations.tsx`(OG메타)+`apps/subscriber/app/watch/[id].tsx`(**VOD 재생 실패 폴백 UI 골격**, D14-1 — T-W1-07a(Wave 12)가 이후 계측 배선 추가)+`apps/subscriber/package.json`(신규 의존성 hls.js — D6-1) vs `services/api/src/media/*`(공개렌디션, api 모듈 신설 아님 — 기존 media 모듈 확장이라 `app.module.ts` 무편집) — 3개 상호 배타, **신규 의존성 추가 태스크는 T-W1-03 1건뿐**(D6-1 준수), qa-verifier 여유 슬롯 2개 | **M+L+S**(T-W1-07b=4파일 M·T-W1-03=7파일 **L**(舊 6파일에서 `watch/[id].tsx` 추가로 상향, EVAL-ROUND-14 D14-1, **M→L**)·T-W2-10=3파일 S) | Wave 5(T-W1-03은 T-W1-02 후) |
 | **8b** | T-W1-04 | **D6-1 재배치 대상**: `apps/subscriber/src/pwa/register-service-worker.ts`+`apps/subscriber/public/sw.js`(신규)+`apps/subscriber/app/_layout.tsx`(SW 등록 호출 — 수정)+`apps/subscriber/package.json`(신규 의존성 Workbox — D6-1) — 단독. 파일 집합은 8a의 어느 태스크와도 겹치지 않아(동일 앱이나 배타, EVAL-ROUND-5 U-11 확인) 순수 파일소유권 기준으로는 8a와 병렬 가능했으나, **`pnpm-lock.yaml` 동시성 1 규칙(D6-1)이 T-W1-03(8a)과의 동시 배치를 금지**해 별도 웨이브로 분리했다(SOLO 아님 — G3 사유가 아니라 준-공용 자산 동시성 1 사유, "SOLO 승격 불요" D6-1 문구 그대로) | **M(4파일**: register-service-worker.ts+sw.js+_layout.tsx+package.json — 舊 3파일 S에서 D6-1 반영 상향) | Wave 8a(파일 집합 자체는 배타, lockfile 동시성 1로 순차 배치만 필요) |
 | **9** | T-W1-09, T-W1-10, T-W2-09, T-W2-03 | **`apps/subscriber/app/support.tsx`(문의하기, 신규) vs `apps/subscriber/app/schedule.tsx`(편성표, 신규) vs `apps/subscriber/app/upload/[token].tsx`(주민링크 프론트, 신규, T-W2-08 소비)+`infra/docker/nginx.conf`(수정, `/upload/:token` SPA 폴백 1줄 — 준-공용 주의, EXEC-DECISIONS #6/D6-2. T-W0-03(Wave 2)·T-W1-06(Wave 4)과는 웨이브가 달라 동시 편집 충돌 없음)+**`apps/subscriber/app/_layout.tsx`(수정 1, 준-공용 자산 4 — D12-1)** vs `apps/reporter/`(촬영/업로드 화면, T-W2-02 후속)** — T-W2-09의 소속 앱이 `apps/subscriber`로 확정됨에 따라(EVAL-ROUND-3 영역3·4 Z-8 정정, E2 §C 참조) 이 웨이브의 배타는 **subscriber 3건(경로 상호 배타) + reporter 1건(다른 워크스페이스)** 구조다 — subscriber 3건은 전부 신규 라우트 파일이라 상호 배타, reporter 1건은 워크스페이스 자체가 달라 자동 배타. **준-공용 자산 4(`app/_layout.tsx`) 판정(EVAL-ROUND-12 D12-1/M-7)**: E2 리포 실측 결과 T-W1-09·T-W1-10은 옵션 불요(소유권 불포함), T-W2-09만 옵션 필요(1건) — "1건이면 재배치 불요"(D12-1) 조건 충족, Wave 9는 이 파일을 만지는 태스크가 T-W2-09 1건뿐이라 동시성 1 규칙 자동 충족(**웨이브 재편 불요**). 4개 상호 배타, qa-verifier 1슬롯 확보 | **S+S+M+S**(T-W1-09=2파일·T-W1-10=1파일·**T-W2-09=4파일(舊 3파일에서 `_layout.tsx` 1줄 추가로 상향, D12-1 — S→M 버킷 변경)**·**T-W2-03=3파일(舊 2파일에서 IndexedDB 초안 보존 유틸 추가로 상향, EVAL-ROUND-14 D14-1/J-6 — 버킷 불변 S)**) | Wave 6(T-W2-09는 T-W2-08 후), Wave 5(T-W2-03은 T-W2-02 후), **T-NC-03 PoC 합격 필수**(아래 §D, EXEC-DECISIONS #2) |
-| **10** | T-W1-11a, T-W2-11, T-W2-12, T-W2-15 | `playwright.config.ts`+구독자 시나리오+`apps/subscriber/package.json`(신규 의존성 Playwright — D6-1)(신규, T-W1-03·04 필요) vs 라이브 상품카드(신규) vs `services/api/src/telemetry/*`(T-W1-08 모듈 확장, 클릭 엔드포인트만 추가) vs `services/api/src/live/*`(CF Stream 신규 연동) — 4개 상호 배타, **신규 의존성 추가 태스크는 T-W1-11a 1건뿐**(D6-1 준수, 8a·8b와도 다른 웨이브라 위반 없음), qa-verifier 1슬롯 확보 | **S×4**(T-W1-11a=3파일(舊 2파일에서 package.json 추가로 상향, D6-1 — 버킷 불변)·T-W2-11=2파일·T-W2-12=1파일·T-W2-15=2파일) | Wave 8a·8b(T-W1-11a는 T-W1-03·04 완료 필요 — 8a·8b 모두 종료해야 착수) |
+| **10** | T-W1-11a, T-W2-11, T-W2-12, T-W2-15 | `playwright.config.ts`+구독자 시나리오+`apps/subscriber/package.json`(신규 의존성 Playwright — D6-1)(신규, T-W1-03·04 필요) vs 라이브 상품카드+**링크아웃 클릭 계측 발신 훅**(신규, EVAL-ROUND-16 G-1/D16-3) vs `services/api/src/telemetry/*`(T-W1-08 모듈 확장, 클릭 엔드포인트만 추가) vs `services/api/src/live/*`(CF Stream 신규 연동) — 4개 상호 배타, **신규 의존성 추가 태스크는 T-W1-11a 1건뿐**(D6-1 준수, 8a·8b와도 다른 웨이브라 위반 없음), qa-verifier 1슬롯 확보 | **S×4**(T-W1-11a=3파일(舊 2파일에서 package.json 추가로 상향, D6-1 — 버킷 불변)·**T-W2-11=3파일**(舊 2파일에서 `use-linkout-click.ts` 추가로 상향, EVAL-ROUND-16 G-1/D16-3 — 버킷 불변 S)·T-W2-12=1파일·T-W2-15=2파일) | Wave 8a·8b(T-W1-11a는 T-W1-03·04 완료 필요 — 8a·8b 모두 종료해야 착수) |
 | **11** | T-W1-11b **[SOLO]** | 단독 — `ci.yml`(CI 설정, D6 분할 — installability·번들예산게이트·CF퍼지 CI 스텝) | **S**(1파일 — EVAL-ROUND-3 영역4 감점2·Z-10 전건 재판정. 舊 L은 2버킷 이탈로 적발된 가장 무거운 사례였다: 정당화 없이 유지하지 않고 파일 수 기준으로 하향 — DDD1 "정당화가 없으면 파일 수 기준으로 하향". CI 게이트 3종(installability·번들예산게이트·CF퍼지)이 **동일 파일**(`ci.yml`) 안에서 이뤄지는 편집이라 파일 수는 여전히 1이며, "기능 3종"이 "파일 수"를 늘리지 않는다) | Wave 10(T-W1-11a 완료 필요) |
 | **12** | T-W1-07a, T-W2-14, T-W2-16a, **T-W2-18**(EVAL-ROUND-14 D14-1/J-6 신설 편입) | **T-W1-07a 삽입(DD1, Y-13 — Wave 8(현 8a)에서 이동)**: `apps/subscriber` **`watch/[id].tsx`**(정정 소유 — EVAL-ROUND-14 D14-4/J-2, 02§E-16① 계측 실 발생 지점. 舊 `live/[id].tsx` 단독 소유는 잘못된 파일이었다)+`live/[id].tsx`(라이브 재생시작·조회집계만) 호출 지점 배선+단위테스트(D6-5 보정, T-W1-03 산출물인 폴백 UI 골격 소비, Wave 8a 완료 후) vs `apps/reporter` 콘텐츠 등록 폼(`classify.tsx`, T-W2-13 소비, T-W2-03과 분리) vs `services/api/src/live/*`(CF Stream webhook, D6 분할 BE분) vs **`apps/reporter/app/(app)/contents/new/scenes.tsx`+`src/features/SceneOrderChecklist.tsx`(T-W2-18, D14-1 신설 — `classify.tsx`(T-W2-14)와 다른 파일이라 reporter 내에서도 배타)** — 4개 상호 배타, qa-verifier 1슬롯 확보(舊 3건 미만 여유는 T-W2-18 편입으로 소진) | **M+S+S+S**(T-W1-07a=4파일 M(舊 3파일 S에서 상향, EVAL-ROUND-14 D14-4/J-2 — `watch/[id].tsx` 추가)·T-W2-14=1파일·T-W2-16a=1파일·**T-W2-18=2파일**(D14-1 신설)) | Wave 8a(T-W1-07a는 T-W1-03 후), Wave 7(T-W2-14), Wave 10(T-W2-16a는 T-W2-15 후) — **W1 종료 웨이브**(T-W1-07a가 W1의 마지막 미배정 태스크였다) |
 | **13** | T-W2-05, T-W2-16b | `apps/reporter` 테마소비(20파일, T-W2-03·14 정착 후) vs `apps/control-center/src/live/*`(상태 조회 UI, D6 분할 FE분, T-W2-16a 후) — 2개 앱 상호 배타 | **XL(T-W2-05, 21파일 — `theme.ts` 삭제 1+소비파일 20)**+**S**(T-W2-16b=2파일 — Z-10 전건 재판정, 舊 M은 버킷 정의 미적용) | Wave 12(T-W2-14 정착, T-W2-16a 완료) |
@@ -379,6 +388,17 @@ E2 §D(트리거 대기 코드 3건)·§E(코드 외 **19건**, T-NC-13·14·15�
    반영**하고 이월분은 다음 웨이브 번호에 재편입한다(웨이브 번호 자체를 재부여하지 않음 — 예: Wave 8a에서 1개
    이월되면 Wave 9는 원래 계획대로 진행하고 이월분은 Wave 9 이후 여유 슬롯에 삽입 — EVAL-ROUND-9 S-3 정정,
    舊 예시 "Wave 8"은 8a/8b 분리 후 존재하지 않는 폐지 라벨이었다).
+6. **머지 완료 후 회귀 발견 시(EVAL-ROUND-16 G-3/D16-1 연동)**: 위 1~5항은 전부 **pre-merge**(게이트④ 통과 전)
+   국면만 다룬다 — G8 자기머지(로컬 `--no-ff`+`git push origin main`)로 게이트④ 통과 즉시 main에 반영되므로,
+   그 이후 결함이 드러나는 국면은 별도 규정이 필요하다. E5§A "위반 시 조치" 5항(① D10-4 델타로 결함 기인
+   태스크 특정 ② 경미 결함=`hotfix/<태스크ID>-슬러그`, 구조 결함=`git revert`+원 태스크 미완료 원복 ③ 핫픽스도
+   4단 게이트 전 구간 통과 ④ EXEC-DECISIONS 기록)를 그대로 적용한다. **이 복구가 진행 중 웨이브에 미치는
+   영향**: 복구 대상과 **같은 워크스페이스**(`apps/*`/`services/*`/`packages/*` 단위)를 편집하는 진행 중
+   태스크는 게이트③(회귀 검증)을 그 복구가 게이트④까지 재통과할 때까지 **보류**한다(D10-4 순차 머지 규칙상
+   뒤 태스크의 before 스냅숏이 아직 안정되지 않아 회귀 판정 자체가 무의미해지기 때문 — 1항의 "파일 소유권
+   배타 원칙"과 동형으로 다른 워크스페이스 태스크는 영향받지 않고 계속 진행). 복구 대상 원 태스크는 미완료로
+   원복되며 **이월 카운트에 산입**한다(4항의 "2웨이브 연속 이월 시 재설계" 상한과 연결 — 이 복구 사이클이
+   해당 태스크의 이월 횟수를 1회 더한다).
 
 ## F. G9 게이트 보류 태스크 우회 경로
 
