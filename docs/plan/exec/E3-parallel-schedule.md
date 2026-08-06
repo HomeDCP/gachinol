@@ -52,6 +52,14 @@
 > D8-1의 T-W2-17 신설·15a/15b 분리가 미반영돼 있었다). §H 리스크1 열거에 Wave 2 편입(구현 4건 웨이브 5개로
 > 정정) + 폐지 라벨 "Wave 8" 현재형 잔존 2곳(§H 리스크3·§E 5조 예시)을 현행 라벨로 치환. **웨이브 구조 변경
 > 없음**(라벨·태스크 배정 수 불변, 표기 정정만).
+>
+> **라운드 14 수정**: [reviews/EXEC-EVAL-ROUND-14.md](reviews/EXEC-EVAL-ROUND-14.md) 이슈 J-2·J-6·J-7·J-11·
+> J-13·J-14 + [reviews/EXEC-ROUND-14-DECISIONS.md](reviews/EXEC-ROUND-14-DECISIONS.md) D14-1(02§B 9파일
+> 커버리지 판정 — 6건 기존 태스크 귀속·1건 신규 태스크 T-W2-18 신설)·D14-4(J-2 T-W1-07a 소유 `watch/[id].tsx`
+> 정정·J-13 T-W2-08에 shared `ContentOrigin` 편입·J-14 Wave 18 배타 근거를 `--exclude-dir=exec`로 교체) 반영.
+> **Wave 12에 T-W2-18 삽입(기존 여유 슬롯 편입 — 신규 웨이브 라벨 불요, 웨이브 라벨 22 불변), 태스크 배정
+> 44→45건**(T-W2-18 신설). Wave 1(T-W0-05)·8a(T-W1-03)·9(T-W2-03)·6(T-W2-08) 사이징 동반 상향(T-W0-05
+> M→L, T-W1-03 M→L, T-W2-03·T-W2-08은 버킷 불변).
 
 ## A. 의존 그래프 — 08§A 선행조건·시간축 매핑 소비
 
@@ -83,7 +91,7 @@ T-W0-04 ─ T-W0-06(같은 Uptime Kuma 설정, app.module.ts와 무관한 별도
 T-W1-01[SOLO] ─┬─ T-W1-02 ─ T-W1-03 ─ T-W1-11a ─ T-W1-11b[SOLO]
                └─ T-W2-05, T-W2-06(토큰 2단계 소비, W2 완료 시점까지)
 T-W1-05 ─ T-W1-08(**D4: `app.module.ts` 준-공용 자산 — 동시 편집 금지, 같은 웨이브 배치 불가·순차만 허용**)
-T-W1-03 ─ T-W1-07a(**DD1 — 재생 컴포넌트 호출 지점 배선은 T-W1-03 완료 후에만 안전, Wave 8(현 8a)에서 제거해 Wave 12로 이동**)
+T-W1-03 ─ T-W1-07a(**DD1 — `watch/[id].tsx`(EVAL-ROUND-14 D14-4/J-2 정정 소유) 계측 배선은 T-W1-03이 놓는 폴백 UI 골격 완료 후에만 안전, Wave 8(현 8a)에서 제거해 Wave 12로 이동**)
 T-W1-03 ─ T-NC-06(**EVAL-ROUND-5 영역4 감점1·U-10 — 08§A W1 DoD② "상세 화면이 실제로 렌더됨을 확인"은 웹 빌드
 산출물(`expo export --platform web` 스모크·전 화면 웹 렌더)이 있어야 판정 가능하며 그 산출물은 T-W1-03(Wave 8a)뿐이다.
 舊 그래프에는 이 엣지가 없어 T-NC-06이 완료 불가능한 시점(Wave 4 종료 직후)에 열리는 것으로 서술돼 있었다**)
@@ -217,19 +225,19 @@ Wave 2에서 이미 완료되지만, 나머지 2건(T-W0-04 백업·T-W0-06 보�
 
 | 웨이브 | 태스크(≤4 구현 + qa-verifier 1슬롯) | 병렬 근거(파일 집합) | 예상 소요 | 선행 웨이브 |
 |---|---|---|---|---|
-| **1** | T-W0-05 **[SOLO]** | 단독 — `app.config.ts`×3(수정)+`package.json`×3(수정) | M | — |
+| **1** | T-W0-05 **[SOLO]** | 단독 — `app.config.ts`×3(수정)+`package.json`×3(수정)+**`src/global.css`×3(신규, 3앱 웹 엔트리 글로벌 CSS 진입점 — EVAL-ROUND-14 D14-1/J-6)** | **L(9파일** — 舊 M(6파일)에서 상향, EVAL-ROUND-14 D14-1) | — |
 | **2** | T-W0-01, T-W0-02, T-W0-03, T-W0-04 | `services/api/src/auth/*` vs `infra/docker-compose.yml`+`infra/scripts/r2-cors.ts` vs `infra/docker/docker-compose.xeon.yml`+`nginx.conf`(신규)+`Dockerfile.web`(신규) vs `infra/backup/*`(신규) — 4개 워크스페이스/디렉터리 상호 배타(정확히 4건, qa-verifier 1슬롯 자동 확보) | **M+S×3**(T-W0-01=4파일 M · T-W0-02=2파일 S · T-W0-03=3파일 S · T-W0-04=3파일 S — EVAL-ROUND-2 영역4 감점4·Y-20 정정, 舊 "M×4"는 E3 자신의 S/M/L 정의(S=1~3)로 재판정하면 성립하지 않았다. 보수 방향 오기라 예산 리스크는 없었음) | Wave 1 |
 | **3** | T-W1-01 **[SOLO]** | 단독 — `packages/ui/` 신설 | **S**(3파일: `package.json`+토큰스키마+CSS진입점 — EVAL-ROUND-3 영역4 감점2·Z-10 전건 재판정, 舊 M은 버킷 정의 미적용) | Wave 2 |
 | **4** | T-W1-05, T-W1-06, T-W2-01, T-W0-06 | `services/api/src/go-link/*`+`app.module.ts`(**D4 — 이 웨이브의 유일한 api 모듈 신설 태스크**) vs `infra/docker/nginx.conf`(T-W0-03 후속) vs `apps/reporter/src/auth/token-store.ts` vs `infra/monitoring/*`(신규) — 4개 상호 배타, qa-verifier 1슬롯 확보. **정본 시점 차이 대사(EVAL-ROUND-5 영역1 감점2·U-15 신설)**: 02§E-6 정본은 동적 라우트 규칙(T-W1-06)을 "§E 4번(T-W1-03)과 동일 시점, §E 5번보다 선행 또는 동시"라 규정하나 본 계획은 T-W1-06=Wave 4, T-W1-03=Wave 8a로 **선행 배치**한다 — 안전 방향(nginx 폴백이 웹 빌드보다 먼저 서 있어도 무해, 반대로 웹 빌드가 폴백 없이 먼저 서면 신규 라우트 404 노출 위험)이므로 유지하되 정본 문언과의 차이를 여기 명시 대사한다 | **S×4**(T-W1-05=3파일·T-W1-06=1파일·T-W2-01=2파일·T-W0-06=2파일 — Z-10 전건 재판정, 舊 M×4는 버킷 정의 미적용) | Wave 3(T-W1-06은 T-W0-03 완료 필요), Wave 2(T-W0-06은 T-W0-04 완료 필요) |
 | **5** | T-W1-08, T-W1-02, T-W2-04, T-W2-02 | `services/api/src/telemetry/*`+`app.module.ts`(**D4 — 이 웨이브의 유일한 api 모듈 신설 태스크, Wave 4의 T-W1-05와 겹치지 않도록 분리 배치**) vs `apps/subscriber` 테마소비(11파일) vs `apps/control-center/src/auth/*` vs `apps/reporter/src/upload/*`(신규) — 4개 상호 배타, qa-verifier 1슬롯 확보 | **XL(T-W1-02, 12파일 — `theme.ts` 삭제 1+소비파일 11)**+**S×3**(T-W1-08=3파일·T-W2-04=3파일·T-W2-02=3파일 — Z-10 전건 재판정, 舊 M×3은 버킷 정의 미적용) | Wave 3(T-W1-02는 T-W1-01 필요), **T-NC-03 PoC 합격 필수**(아래 §D, EXEC-DECISIONS #2 — T-W2-02가 §E 7번 계열의 착수 지점, EVAL-ROUND-10 P-1 정정: Wave 9·16·18과 동형으로 T-NC 게이트를 선행 열에 명시 — 舊 이 열은 T-NC-03 게이트 없이 Wave 3만 적어 §C 표만 보고 편성 시 PoC 미완료 상태로 착수될 위험이 있었다) |
-| **6** | T-W2-08 **[SOLO]** | 단독 — Prisma 마이그레이션(`ContentOrigin`) + `app.module.ts` 등록 + **검수 게이트 서버측 강제**(D13-2, EVAL-ROUND-13 K-8) | **M(5파일**: schema.prisma 1 + resident-links 컨트롤러·서비스 2(검수 게이트 전이 가드 포함) + 단위 테스트 1(D13-2) + app.module.ts 1 — EVAL-ROUND-13 D13-2 반영, 舊 4파일에서 상향, **버킷 불변(M)**이라 웨이브·E4 재계산 불요) | Wave 5 |
+| **6** | T-W2-08 **[SOLO]** | 단독 — Prisma 마이그레이션(`ContentOrigin`) + `app.module.ts` 등록 + **검수 게이트 서버측 강제**(D13-2, EVAL-ROUND-13 K-8) + **shared `ContentOrigin` 확장**(`packages/shared/src/content/content.ts`, EVAL-ROUND-14 J-13/D14-4) | **M(6파일**: schema.prisma 1 + resident-links 컨트롤러·서비스 2(검수 게이트 전이 가드 포함) + 단위 테스트 1(D13-2) + app.module.ts 1 + `packages/shared/src/content/content.ts` 1(`ContentOrigin` 확장 — **공용 자산 G3 SOLO 대상**, 게이트③ 루트 회귀 5종 규칙 적용 대상, EVAL-ROUND-14 D14-4) — 舊 5파일에서 상향, **버킷 불변(M)**이라 웨이브·E4 재계산 불요) | Wave 5 |
 | **7** | T-W2-13 **[SOLO]** | 단독 — Prisma 마이그레이션(미성년자 필드) | **S(2파일**: schema.prisma 1 + 전이 가드 1 — EVAL-ROUND-10 P-11 확정, E2 §C 총계와 등식 성립) | Wave 6(동일 스키마 파일, 순차 필수) |
-| **8a** | T-W1-07b, T-W1-03, T-W2-10 | **구독자 재생 컴포넌트는 T-W1-03 단독 소유 — 계측 배선은 T-W1-07a로 분리해 Wave 12로 이동(DD1, EVAL-ROUND-2 영역4 감점1·Y-13 정정)**. **舊 Wave 8은 T-W1-04를 포함한 4건이었으나 EVAL-ROUND-6 D6-1(`pnpm-lock.yaml` 준-공용 자산, 신규 의존성 추가 태스크 웨이브당 1건)이 T-W1-03+T-W1-04 동시 배치를 위반으로 적발 — T-W1-04를 Wave 8b로 재배치했다(웨이브 구성 변경, E4 재계산 후행)**: `apps/reporter` 이벤트훅+업로드위저드/모드선택 호출배선+단위테스트(T-W1-07b, D6-5 보정으로 4파일) vs `apps/subscriber/app/live/[id].tsx`(T-W1-03, 재생 컴포넌트 수정)+`apps/subscriber/app/(tabs)/{index,stations}.tsx`(OG메타)+`apps/subscriber/package.json`(신규 의존성 hls.js — D6-1) vs `services/api/src/media/*`(공개렌디션, api 모듈 신설 아님 — 기존 media 모듈 확장이라 `app.module.ts` 무편집) — 3개 상호 배타, **신규 의존성 추가 태스크는 T-W1-03 1건뿐**(D6-1 준수), qa-verifier 여유 슬롯 2개 | **M+M+S**(T-W1-07b=4파일 M·T-W1-03=6파일 M(舊 5파일에서 package.json 추가로 상향, 버킷 불변)·T-W2-10=3파일 S) | Wave 5(T-W1-03은 T-W1-02 후) |
+| **8a** | T-W1-07b, T-W1-03, T-W2-10 | **구독자 재생 컴포넌트는 T-W1-03 단독 소유 — 계측 배선은 T-W1-07a로 분리해 Wave 12로 이동(DD1, EVAL-ROUND-2 영역4 감점1·Y-13 정정)**. **舊 Wave 8은 T-W1-04를 포함한 4건이었으나 EVAL-ROUND-6 D6-1(`pnpm-lock.yaml` 준-공용 자산, 신규 의존성 추가 태스크 웨이브당 1건)이 T-W1-03+T-W1-04 동시 배치를 위반으로 적발 — T-W1-04를 Wave 8b로 재배치했다(웨이브 구성 변경, E4 재계산 후행)**: `apps/reporter` 이벤트훅+업로드위저드/모드선택 호출배선+단위테스트(T-W1-07b, D6-5 보정으로 4파일) vs `apps/subscriber/app/live/[id].tsx`(T-W1-03, 재생 컴포넌트 수정 + **재생 실패 폴백 UI**, EVAL-ROUND-14 D14-1/J-6)+`apps/subscriber/app/(tabs)/index.tsx`(OG메타 + **홈화면 추가 배너·카톡 웹뷰 감지**, D14-1)+`apps/subscriber/app/(tabs)/stations.tsx`(OG메타)+`apps/subscriber/app/watch/[id].tsx`(**VOD 재생 실패 폴백 UI 골격**, D14-1 — T-W1-07a(Wave 12)가 이후 계측 배선 추가)+`apps/subscriber/package.json`(신규 의존성 hls.js — D6-1) vs `services/api/src/media/*`(공개렌디션, api 모듈 신설 아님 — 기존 media 모듈 확장이라 `app.module.ts` 무편집) — 3개 상호 배타, **신규 의존성 추가 태스크는 T-W1-03 1건뿐**(D6-1 준수), qa-verifier 여유 슬롯 2개 | **M+L+S**(T-W1-07b=4파일 M·T-W1-03=7파일 **L**(舊 6파일에서 `watch/[id].tsx` 추가로 상향, EVAL-ROUND-14 D14-1, **M→L**)·T-W2-10=3파일 S) | Wave 5(T-W1-03은 T-W1-02 후) |
 | **8b** | T-W1-04 | **D6-1 재배치 대상**: `apps/subscriber/src/pwa/register-service-worker.ts`+`apps/subscriber/public/sw.js`(신규)+`apps/subscriber/app/_layout.tsx`(SW 등록 호출 — 수정)+`apps/subscriber/package.json`(신규 의존성 Workbox — D6-1) — 단독. 파일 집합은 8a의 어느 태스크와도 겹치지 않아(동일 앱이나 배타, EVAL-ROUND-5 U-11 확인) 순수 파일소유권 기준으로는 8a와 병렬 가능했으나, **`pnpm-lock.yaml` 동시성 1 규칙(D6-1)이 T-W1-03(8a)과의 동시 배치를 금지**해 별도 웨이브로 분리했다(SOLO 아님 — G3 사유가 아니라 준-공용 자산 동시성 1 사유, "SOLO 승격 불요" D6-1 문구 그대로) | **M(4파일**: register-service-worker.ts+sw.js+_layout.tsx+package.json — 舊 3파일 S에서 D6-1 반영 상향) | Wave 8a(파일 집합 자체는 배타, lockfile 동시성 1로 순차 배치만 필요) |
-| **9** | T-W1-09, T-W1-10, T-W2-09, T-W2-03 | **`apps/subscriber/app/support.tsx`(문의하기, 신규) vs `apps/subscriber/app/schedule.tsx`(편성표, 신규) vs `apps/subscriber/app/upload/[token].tsx`(주민링크 프론트, 신규, T-W2-08 소비)+`infra/docker/nginx.conf`(수정, `/upload/:token` SPA 폴백 1줄 — 준-공용 주의, EXEC-DECISIONS #6/D6-2. T-W0-03(Wave 2)·T-W1-06(Wave 4)과는 웨이브가 달라 동시 편집 충돌 없음)+**`apps/subscriber/app/_layout.tsx`(수정 1, 준-공용 자산 4 — D12-1)** vs `apps/reporter/`(촬영/업로드 화면, T-W2-02 후속)** — T-W2-09의 소속 앱이 `apps/subscriber`로 확정됨에 따라(EVAL-ROUND-3 영역3·4 Z-8 정정, E2 §C 참조) 이 웨이브의 배타는 **subscriber 3건(경로 상호 배타) + reporter 1건(다른 워크스페이스)** 구조다 — subscriber 3건은 전부 신규 라우트 파일이라 상호 배타, reporter 1건은 워크스페이스 자체가 달라 자동 배타. **준-공용 자산 4(`app/_layout.tsx`) 판정(EVAL-ROUND-12 D12-1/M-7)**: E2 리포 실측 결과 T-W1-09·T-W1-10은 옵션 불요(소유권 불포함), T-W2-09만 옵션 필요(1건) — "1건이면 재배치 불요"(D12-1) 조건 충족, Wave 9는 이 파일을 만지는 태스크가 T-W2-09 1건뿐이라 동시성 1 규칙 자동 충족(**웨이브 재편 불요**). 4개 상호 배타, qa-verifier 1슬롯 확보 | **S+S+M+S**(T-W1-09=2파일·T-W1-10=1파일·**T-W2-09=4파일(舊 3파일에서 `_layout.tsx` 1줄 추가로 상향, D12-1 — S→M 버킷 변경)**·T-W2-03=2파일) | Wave 6(T-W2-09는 T-W2-08 후), Wave 5(T-W2-03은 T-W2-02 후), **T-NC-03 PoC 합격 필수**(아래 §D, EXEC-DECISIONS #2) |
+| **9** | T-W1-09, T-W1-10, T-W2-09, T-W2-03 | **`apps/subscriber/app/support.tsx`(문의하기, 신규) vs `apps/subscriber/app/schedule.tsx`(편성표, 신규) vs `apps/subscriber/app/upload/[token].tsx`(주민링크 프론트, 신규, T-W2-08 소비)+`infra/docker/nginx.conf`(수정, `/upload/:token` SPA 폴백 1줄 — 준-공용 주의, EXEC-DECISIONS #6/D6-2. T-W0-03(Wave 2)·T-W1-06(Wave 4)과는 웨이브가 달라 동시 편집 충돌 없음)+**`apps/subscriber/app/_layout.tsx`(수정 1, 준-공용 자산 4 — D12-1)** vs `apps/reporter/`(촬영/업로드 화면, T-W2-02 후속)** — T-W2-09의 소속 앱이 `apps/subscriber`로 확정됨에 따라(EVAL-ROUND-3 영역3·4 Z-8 정정, E2 §C 참조) 이 웨이브의 배타는 **subscriber 3건(경로 상호 배타) + reporter 1건(다른 워크스페이스)** 구조다 — subscriber 3건은 전부 신규 라우트 파일이라 상호 배타, reporter 1건은 워크스페이스 자체가 달라 자동 배타. **준-공용 자산 4(`app/_layout.tsx`) 판정(EVAL-ROUND-12 D12-1/M-7)**: E2 리포 실측 결과 T-W1-09·T-W1-10은 옵션 불요(소유권 불포함), T-W2-09만 옵션 필요(1건) — "1건이면 재배치 불요"(D12-1) 조건 충족, Wave 9는 이 파일을 만지는 태스크가 T-W2-09 1건뿐이라 동시성 1 규칙 자동 충족(**웨이브 재편 불요**). 4개 상호 배타, qa-verifier 1슬롯 확보 | **S+S+M+S**(T-W1-09=2파일·T-W1-10=1파일·**T-W2-09=4파일(舊 3파일에서 `_layout.tsx` 1줄 추가로 상향, D12-1 — S→M 버킷 변경)**·**T-W2-03=3파일(舊 2파일에서 IndexedDB 초안 보존 유틸 추가로 상향, EVAL-ROUND-14 D14-1/J-6 — 버킷 불변 S)**) | Wave 6(T-W2-09는 T-W2-08 후), Wave 5(T-W2-03은 T-W2-02 후), **T-NC-03 PoC 합격 필수**(아래 §D, EXEC-DECISIONS #2) |
 | **10** | T-W1-11a, T-W2-11, T-W2-12, T-W2-15 | `playwright.config.ts`+구독자 시나리오+`apps/subscriber/package.json`(신규 의존성 Playwright — D6-1)(신규, T-W1-03·04 필요) vs 라이브 상품카드(신규) vs `services/api/src/telemetry/*`(T-W1-08 모듈 확장, 클릭 엔드포인트만 추가) vs `services/api/src/live/*`(CF Stream 신규 연동) — 4개 상호 배타, **신규 의존성 추가 태스크는 T-W1-11a 1건뿐**(D6-1 준수, 8a·8b와도 다른 웨이브라 위반 없음), qa-verifier 1슬롯 확보 | **S×4**(T-W1-11a=3파일(舊 2파일에서 package.json 추가로 상향, D6-1 — 버킷 불변)·T-W2-11=2파일·T-W2-12=1파일·T-W2-15=2파일) | Wave 8a·8b(T-W1-11a는 T-W1-03·04 완료 필요 — 8a·8b 모두 종료해야 착수) |
 | **11** | T-W1-11b **[SOLO]** | 단독 — `ci.yml`(CI 설정, D6 분할 — installability·번들예산게이트·CF퍼지 CI 스텝) | **S**(1파일 — EVAL-ROUND-3 영역4 감점2·Z-10 전건 재판정. 舊 L은 2버킷 이탈로 적발된 가장 무거운 사례였다: 정당화 없이 유지하지 않고 파일 수 기준으로 하향 — DDD1 "정당화가 없으면 파일 수 기준으로 하향". CI 게이트 3종(installability·번들예산게이트·CF퍼지)이 **동일 파일**(`ci.yml`) 안에서 이뤄지는 편집이라 파일 수는 여전히 1이며, "기능 3종"이 "파일 수"를 늘리지 않는다) | Wave 10(T-W1-11a 완료 필요) |
-| **12** | T-W1-07a, T-W2-14, T-W2-16a | **T-W1-07a 삽입(DD1, Y-13 — Wave 8(현 8a)에서 이동)**: `apps/subscriber` 재생 컴포넌트(T-W1-03 산출물, Wave 8a 완료) 호출 지점 배선+단위테스트(D6-5 보정) vs `apps/reporter` 콘텐츠 등록 폼(T-W2-13 소비, T-W2-03과 분리) vs `services/api/src/live/*`(CF Stream webhook, D6 분할 BE분) — 3개 상호 배타(4건 미만이라 qa-verifier 여유 슬롯 2개) | **S+S+S**(T-W1-07a=3파일·T-W2-14=1파일·T-W2-16a=1파일 — D6-5 보정 후에도 3파일로 불변, E2와 이미 일치) | Wave 8a(T-W1-07a는 T-W1-03 후), Wave 7(T-W2-14), Wave 10(T-W2-16a는 T-W2-15 후) — **W1 종료 웨이브**(T-W1-07a가 W1의 마지막 미배정 태스크였다) |
+| **12** | T-W1-07a, T-W2-14, T-W2-16a, **T-W2-18**(EVAL-ROUND-14 D14-1/J-6 신설 편입) | **T-W1-07a 삽입(DD1, Y-13 — Wave 8(현 8a)에서 이동)**: `apps/subscriber` **`watch/[id].tsx`**(정정 소유 — EVAL-ROUND-14 D14-4/J-2, 02§E-16① 계측 실 발생 지점. 舊 `live/[id].tsx` 단독 소유는 잘못된 파일이었다)+`live/[id].tsx`(라이브 재생시작·조회집계만) 호출 지점 배선+단위테스트(D6-5 보정, T-W1-03 산출물인 폴백 UI 골격 소비, Wave 8a 완료 후) vs `apps/reporter` 콘텐츠 등록 폼(`classify.tsx`, T-W2-13 소비, T-W2-03과 분리) vs `services/api/src/live/*`(CF Stream webhook, D6 분할 BE분) vs **`apps/reporter/app/(app)/contents/new/scenes.tsx`+`src/features/SceneOrderChecklist.tsx`(T-W2-18, D14-1 신설 — `classify.tsx`(T-W2-14)와 다른 파일이라 reporter 내에서도 배타)** — 4개 상호 배타, qa-verifier 1슬롯 확보(舊 3건 미만 여유는 T-W2-18 편입으로 소진) | **M+S+S+S**(T-W1-07a=4파일 M(舊 3파일 S에서 상향, EVAL-ROUND-14 D14-4/J-2 — `watch/[id].tsx` 추가)·T-W2-14=1파일·T-W2-16a=1파일·**T-W2-18=2파일**(D14-1 신설)) | Wave 8a(T-W1-07a는 T-W1-03 후), Wave 7(T-W2-14), Wave 10(T-W2-16a는 T-W2-15 후) — **W1 종료 웨이브**(T-W1-07a가 W1의 마지막 미배정 태스크였다) |
 | **13** | T-W2-05, T-W2-16b | `apps/reporter` 테마소비(20파일, T-W2-03·14 정착 후) vs `apps/control-center/src/live/*`(상태 조회 UI, D6 분할 FE분, T-W2-16a 후) — 2개 앱 상호 배타 | **XL(T-W2-05, 21파일 — `theme.ts` 삭제 1+소비파일 20)**+**S**(T-W2-16b=2파일 — Z-10 전건 재판정, 舊 M은 버킷 정의 미적용) | Wave 12(T-W2-14 정착, T-W2-16a 완료) |
 | **14** | T-W2-06 | `apps/control-center` 테마소비(16파일, T-W2-04·16b 정착 후) — 단독(병렬 대상 없음) | **XL(T-W2-06, 17파일 — `theme.ts` 삭제 1+소비파일 16)**(E4 §A-5 XL 버킷 인용, Y-7 정정) | Wave 13(T-W2-16b), Wave 5(T-W2-04) |
 | **15a** | T-W2-07 | 단독(다른 W2 태스크 전건 완료가 전제라 병렬 대상 없음, **舊 "Wave 15" — EVAL-ROUND-8 D8-1로 15a·15b 분리**). **D7-2 판정(EVAL-ROUND-7 Q-9)**: T-W2-07이 `apps/{reporter,control-center}/package.json`(`@playwright/test`) 소유로 확정되며 신규 의존성 추가 태스크가 됐다 — `pnpm-lock.yaml` 준-공용 자산 동시성 1 규칙(D6-1) 위반 여부 판정 결과 **위반 없음**(Wave 15a는 T-W2-07 1건뿐이라 "웨이브당 1건" 규칙이 자동 충족, 재배치 불요) | **L(7파일**: `playwright.config.ts` 2 + 시나리오 스펙 2(관제·기자 각 1) + 스모크 스펙 1 + `package.json` 2(관제·기자, D7-2 신규 의존성) — EVAL-ROUND-7 Q-7·Q-9 반영, 舊 M(5파일)에서 상향, E4 §A-6 Wave 15a 재계산 후행) | Wave 4~14 전건(관제·기자 기능 완결 필요) |
@@ -237,7 +245,7 @@ Wave 2에서 이미 완료되지만, 나머지 2건(T-W0-04 백업·T-W0-06 보�
 | **16** | T-W3-01 **[SOLO]** | 단독 — Prisma 마이그레이션(`PushSubscription`) + `app.module.ts` 등록 + `services/api/package.json`(신규 의존성 web-push — D6-1) | **L(7파일**: schema.prisma 1 + push 모듈 4 + app.module.ts 1 + package.json 1 — EVAL-ROUND-6 D6-1 반영, 舊 M(6파일)에서 상향, E4 재계산 후행) | **Wave 12(W1 종료) + T-NC-08(스토어 계정 개설) 완료**(08§A W3 선행조건 원문 그대로 — EVAL-ROUND-4 영역1 감점4·V-4 정정, D4-3 확정. 舊 "08§A W3 선행조건은 W1만 요구"는 정본이 명시한 "W1 + 스토어 계정 개설 완료" 결합 조건을 W1 단독으로 오인용한 것이었다. 단 T-NC-08은 사용자 의존 외부 리드타임이라 **코드 선행 준비(Wave 16·17a·17b)는 §F G9 우회 경로와 동형으로 로컬 검증 범위 내 가능하며, 실제 하드 차단은 T-NC-10(스토어 제출 행위)뿐**이다 — 08§D 승인 지연 완화책 준용) |
 | **17a** | T-W3-02 | `apps/{reporter,control-center,subscriber}/web/manifest.json`(신규 3) + `apps/{reporter,control-center}/src/pwa/register-service-worker.ts`(신규 2) + **`apps/{reporter,control-center}/public/sw.js`(신규 2, Workbox — T-W1-04 산출물과 동형)** + **`apps/{reporter,control-center}/app/_layout.tsx`(수정 2, SW 등록 호출 지점 — 준-공용 자산 4, T-W1-04와는 Wave 8b vs 17a로 시점 분리돼 안전)**(EVAL-ROUND-12 D12-2/M-6, E2 §C 예상 경로 참조) — 단독(**D4-5, V-7 — 02§E-10 순서 선언에 따라 T-W3-03의 선행으로 분리**, EVAL-ROUND-4 영역4 감점1 정정. 舊 Wave 17은 3건 병렬로 이 순서를 근거 기록 없이 평탄화했었다) | **L(9파일**: manifest 3 + `register-service-worker.ts` 2(reporter·control-center) + `public/sw.js` 2(reporter·control-center) + `app/_layout.tsx`(SW 등록 호출 지점) 2(reporter·control-center) — EVAL-ROUND-12 D12-2/M-6 확정. 舊 "M(5파일)"은 기자·관제의 서비스워커 본체(`sw.js`)·호출 지점(`_layout.tsx`) 4파일을 누락해 "SW 3종" DoD가 닫히지 않는 상태였다(subscriber는 T-W1-04가 이미 4파일로 완결 소유 — 동형 완결)) | Wave 16 |
 | **17b** | T-W3-03, T-W3-04 | `infra/shell/twa/*`(Bubblewrap, 별도 프로젝트, T-W3-02 산출물(manifest) 소비) vs `infra/shell/ios/*`(별도 프로젝트, T-W3-02와 무관하나 같은 웨이브로 재편) — 2개 상호 배타 | **S+L**(T-W3-03=2파일 S / T-W3-04=3파일이나 L 유지, 정당화: E4 §A-5가 "가정치 3파일 → 실제 Xcode 프로젝트 골격은 보일러플레이트 동반으로 확장 가능성" 근거로 이미 명시 정당화해 둔 예외 — DDD1이 지목한 유일한 정당 예외) | Wave 17a(T-W3-02 완료 — manifest 소비), Wave 16(웹푸시 토큰수신 API 필요) |
-| **18** | T-W4-01, T-W4-03 | `CLAUDE.md` + `docs/ROADMAP.md` + `docs/` 하위 네이티브 잔재 서술(T-W4-01, **D10-3 편입** — 대상은 착수 시점 재실측) vs **`docs/` 밖** `reviews/dod-evidence/w4/maintenance-savings-report.md`(신규 실측 리포트 문서, T-W4-03) — 2개 상호 배타. **T-W4-03 산출물 경로는 `docs/` 하위에 두지 않는다**(D10-3으로 T-W4-01이 `docs/` 하위를 개방 소유하므로 — 배타 유지 조건, EVAL-ROUND-11 N-4 정정: 舊 이 열은 D10-3 편입을 반영하지 않아 "ROADMAP"·"docs/ 하위"·"D10-3" 3어휘 재현 명령 히트가 0건이었다) | **S+S**(T-W4-01=2파일·T-W4-03=1파일, EVAL-ROUND-11 N-3 반영 — 재실측 상향 시 동반 재판정, D10-3 개방 소유권의 앵커 ⑦ 대조 입력) | Wave 15b(W2 종료 — EVAL-ROUND-8 D8-1 반영, 舊 "Wave 15"), **Wave 17b**(W3 종료 — D4-5 재편 반영, 舊 "Wave 17"), **T-NC-10 스토어 심사 통과**(08§A W4 선행조건 "W1~W3") |
+| **18** | T-W4-01, T-W4-03 | `CLAUDE.md` + `docs/ROADMAP.md` + `docs/` 하위 네이티브 잔재 서술(T-W4-01, **D10-3 편입** — 대상은 착수 시점 재실측) vs `reviews/dod-evidence/w4/maintenance-savings-report.md`(신규 실측 리포트 문서, T-W4-03, 경로 전체는 `docs/plan/exec/reviews/dod-evidence/w4/...`로 **`docs/` 하위**다) — 2개 상호 배타. **배타 근거는 "`docs/` 밖"이 아니라 스윕 범위 제외다**: T-W4-01의 D10-3 판정 명령①(`grep -rn "expo-env\.d\.ts\|EAS Build" CLAUDE.md docs/ --exclude-dir=exec`)이 **`--exclude-dir=exec`로 `exec/` 하위 전체를 스캔 범위에서 제외**하므로 T-W4-03 산출물(`docs/plan/exec/reviews/...`)은 애초에 스윕 대상 밖이라 배타가 성립한다(舊 "`docs/` 밖" 서술은 경로가 실제로는 `docs/` 하위임에도 밖이라 적은 사실 오류 — EVAL-ROUND-14 J-14/D14-4 정정. EVAL-ROUND-11 N-4의 "D10-3 편입 반영" 정정 이력은 유지) | **S+S**(T-W4-01=2파일·T-W4-03=1파일, EVAL-ROUND-11 N-3 반영 — 재실측 상향 시 동반 재판정, D10-3 개방 소유권의 앵커 ⑦ 대조 입력) | Wave 15b(W2 종료 — EVAL-ROUND-8 D8-1 반영, 舊 "Wave 15"), **Wave 17b**(W3 종료 — D4-5 재편 반영, 舊 "Wave 17"), **T-NC-10 스토어 심사 통과**(08§A W4 선행조건 "W1~W3") |
 | **19** | T-W4-02 **[SOLO]** | 단독 — `ci.yml`(웹 E2E 필수 게이트 전환) | **S(1파일**: `ci.yml` — EVAL-ROUND-12 M-8 확정, E2 §C 총계와 등식 성립) | Wave 18 — **W4 종료 웨이브(전 태스크 마감)** |
 
 **사이징 라벨 전건 재판정(DDD1, EVAL-ROUND-3 영역4 감점2·Z-10)**: 43개 코드 태스크 전건을 E2 §C 파일 소유권 열의
@@ -266,25 +274,27 @@ Wave 9·10 참조) 그 사이에 끼워 넣을 여유가 없다 — 새 웨이�
 불변이다(신규 태스크 추가 아님). **E4 재계산 후행 필요**(D6-1 — T-W1-03·T-W1-04·T-W3-01 사이징 변경도 동반,
 아래 §C 각 셀 각주 참조).
 
-**정상 웨이브 코드 태스크 합계(EVAL-ROUND-9 S-1로 지금 재실행한 출력으로 전면 재작성 — 舊 블록은 43/21로 stale,
-D8-1의 T-W2-17 신설·Wave 15a/15b 분리가 미반영돼 있었다. 아래는 §G와 **단일 총계**, Q1 원칙 — 실행 명령·출력 인용)**:
+**정상 웨이브 코드 태스크 합계(EVAL-ROUND-14 지금 재실행한 출력으로 전면 재작성 — 舊 블록은 44/22로 stale,
+D14-1/J-6의 T-W2-18 신설이 미반영돼 있었다. 아래는 §G와 **단일 총계**, Q1 원칙 — 실행 명령·출력 인용)**:
 
 ```
 $ grep -E "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[ab]?" | wc -l
-44
+45
 $ grep -E "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[ab]?" | sort -u | wc -l
-44
+45
 $ grep -cE "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md
 22
 ```
 
-(총 출현 44 = 고유 44 → 중복 0건. 웨이브 **행**은 EVAL-ROUND-8 D8-1 재편으로 21→**22**(15a·15b 분리, T-W2-17
-신설 — 8a·8b·17a·17b 기존 분리와 동형). "태스크" 열만 추출 — `선행 웨이브` 열의 참조성 재언급은 별도 열이라
-이 카운트에 섞이지 않는다.)
-웨이브별 분포: 1(1)+2(4)+3(1)+4(4)+5(4)+6(1)+7(1)+**8a(3)+8b(1)**+9(4)+10(4)+11(1)+12(3)+13(2)+14(1)+**15a(1)+
-15b(1)**+16(1)+**17a(1)+17b(2)**+18(2)+19(1) = **44건**(E2 §C W0~W4 코드 태스크 합계 6+13+**18**+4+3=44와
-일치, EVAL-ROUND-8 D8-1 반영 — 舊 15(1)이 15a(1)+15b(1)로 분리, W2 코드 태스크 17→18은 T-W2-17 신설).
-구현 동시 배정이 4건을 초과하는 웨이브 **0건**(모든 웨이브 태스크 열 ≤4, D3 편성 규칙 위반 없음).
+(총 출현 45 = 고유 45 → 중복 0건. 웨이브 **행**은 22로 EVAL-ROUND-8 이후 불변(EVAL-ROUND-14의 T-W2-18은
+기존 Wave 12 여유 슬롯에 편입 — 신규 웨이브 라벨 없이 태스크 배정 수만 증가). "태스크" 열만 추출 — `선행
+웨이브` 열의 참조성 재언급은 별도 열이라 이 카운트에 섞이지 않는다.)
+웨이브별 분포: 1(1)+2(4)+3(1)+4(4)+5(4)+6(1)+7(1)+**8a(3)+8b(1)**+9(4)+10(4)+11(1)+**12(4)**+13(2)+14(1)+
+**15a(1)+15b(1)**+16(1)+**17a(1)+17b(2)**+18(2)+19(1) = **45건**(E2 §C W0~W4 코드 태스크 합계
+6+13+**19**+4+3=45와 일치, EVAL-ROUND-14 D14-1/J-6 반영 — 舊 12(3)이 T-W2-18 편입으로 12(4)로 증가, W2
+코드 태스크 18→19는 T-W2-18 신설).
+구현 동시 배정이 4건을 초과하는 웨이브 **0건**(모든 웨이브 태스크 열 ≤4, D3 편성 규칙 위반 없음 — Wave 12는
+정확히 4건으로 D3 상한에 도달, qa-verifier 슬롯은 별도 확보 문구로 관리).
 
 ## D. 코드 외/트리거 태스크의 체크포인트 배치 (게이트 트랙)
 
@@ -315,7 +325,7 @@ E2 §D(트리거 대기 코드 3건)·§E(코드 외 **19건**, T-NC-13·14·15�
 | **T-NC-17(패널 R3, EVAL-ROUND-6 D6-3 신설)** | Wave 12 종료(W1 DoD 판정, 앵커 2) + 4주 경과 시점, **Wave 13~15(W2 진행)와 병행 가능·비차단**(D6-3 "W2·W3와 병행") | 08§A 시간축 매핑표 "런칭 4주 후 — 패널 R3(실사용 로그+재방문 인터뷰)"(03§B-1) | 5만 | 없음(비차단, 정보 수집성) |
 | **T-NC-18(03§B-4 1차, EVAL-ROUND-6 D6-3 신설)** | **Wave 15b 종료 직전**(T-NC-07 W2 DoD 판정 직전 단계 = "첫 촬영 재개 전" 시점, D6-3 "W2 DoD 충족 직전" — EVAL-ROUND-8 D8-1 반영, 舊 "Wave 15") | 08§A 시간축 매핑표 "03§B-4 공급자(기자·주민) 사용성 검증 — 1차" | 5만 | 03 리스크 9 트리거(자막 입력 이탈 2명 이상 또는 완료율 90% 미만) 관측 — 미달 시 07 §3-3 대안 검토(본 문서 비범위), 코드 웨이브 자체는 비차단 |
 | **T-NC-19(03§B-4 2차, EVAL-ROUND-6 D6-3 신설)** | Wave 15b 종료(W2 DoD 판정, 첫 촬영 재개) + 4주 경과 시점(EVAL-ROUND-8 D8-1 반영, 舊 "Wave 15"), **Wave 16~18(W3 진행)과 병행 가능·비차단** | 08§A 시간축 매핑표 "03§B-4 공급자(기자·주민) 사용성 검증 — 2차" | 5만 | 없음(비차단, 정보 수집성) |
-| **앵커4(대외 런칭 판정) — 08§A 자체 소유 상시 프로세스 인용, T-NC 아님(EVAL-ROUND-6 W-2·기타확정)** | **Wave 12 종료(앵커2=W1 DoD)와 동시 착수**, 이후 시드 콘텐츠 누적 시마다 재확인(월 1회 W축 진척 점검 회의와 동일 주기, 종료 없음) | 08§A "담당: 기획(PM), 판정 시점: 앵커 2(W1 DoD) 판정과 동시 착수하여 이후 시드 콘텐츠 누적 시마다 재확인" | 해당없음(08§A 자체 소유 상시 프로세스 인용 — 조율자 상시 관리, E2 신규 T-NC 태스크가 아니므로 §G **66건**(EVAL-ROUND-10 P-2 정정 — 舊 "61(→65)건"은 D8-1의 T-W2-17 신설 반영 전 stale, §G 표 합계 행과 이제 단일 총계) 재검산 대상 아님, M1~M12 행과 동형 처리) | 없음(정보성 편입 — 대외 홍보(카톡 채널 공지) 개시 여부만 좌우, 코드 웨이브는 비차단. 舊 §A는 이를 "제외"로 서술했으나 정정 — 앵커2에 W축 결박이라 §D 편입이 맞다) |
+| **앵커4(대외 런칭 판정) — 08§A 자체 소유 상시 프로세스 인용, T-NC 아님(EVAL-ROUND-6 W-2·기타확정)** | **Wave 12 종료(앵커2=W1 DoD)와 동시 착수**, 이후 시드 콘텐츠 누적 시마다 재확인(월 1회 W축 진척 점검 회의와 동일 주기, 종료 없음) | 08§A "담당: 기획(PM), 판정 시점: 앵커 2(W1 DoD) 판정과 동시 착수하여 이후 시드 콘텐츠 누적 시마다 재확인" | 해당없음(08§A 자체 소유 상시 프로세스 인용 — 조율자 상시 관리, E2 신규 T-NC 태스크가 아니므로 §G **67건**(EVAL-ROUND-14 D14-1/J-6 정정 — 舊 "66건"은 T-W2-18 신설 반영 전 stale, §G 표 합계 행과 이제 단일 총계) 재검산 대상 아님, M1~M12 행과 동형 처리) | 없음(정보성 편입 — 대외 홍보(카톡 채널 공지) 개시 여부만 좌우, 코드 웨이브는 비차단. 舊 §A는 이를 "제외"로 서술했으나 정정 — 앵커2에 W축 결박이라 §D 편입이 맞다) |
 | T-TRIG-01(멀티파트 승격) | 트리거(D-T4 문장) 충족 시 — **편입 웨이브 확정 전 조율자가 §B 준-공용 4종(app.module.ts·pnpm-lock.yaml·nginx.conf·`apps/<app>/app/_layout.tsx`) 해당 여부를 판정하고 결과를 §B 목록에 임시 편입한다**(EVAL-ROUND-8 D8-5, R-9, **EVAL-ROUND-13 K-4로 3종→4종 정정** — E2 §D 파일 소유권 열 신설(D8-5) 결과 T-TRIG-01은 기존 `UploadModule` 확장이라 `app.module.ts`·D4 비대상으로 확정됨, `pnpm-lock.yaml`·`nginx.conf`·`app/_layout.tsx`도 무관) 그 시점 이후 첫 여유 웨이브(구현 4건 미달 웨이브)에 편입 | 02§E-12 | (코드 태스크 — E4 §A-5 S/M/L 적용, 5만/건 대상 아님) | 없음(선택적 승격) |
 | T-TRIG-02(B2B 워터마크) | B2B 착수 결정 시 — **편입 웨이브 확정 전 조율자가 §B 준-공용 4종 해당 여부를 판정**(D8-5, R-9, **EVAL-ROUND-13 K-4로 3종→4종 정정** — E2 파일 소유권 확정 결과 `services/media-worker/*`라 4종 전부 무관) — 동일 방식 편입 | 02§E-15 | (코드 태스크) | 없음 |
 | T-TRIG-03(쉘 UA 감지) | 05§A-4 결정 시(전체) 또는 **Wave 17a** 이전 아무 여유 웨이브(감지 로직 선구축분만, 舊 "Wave 17") — **편입 웨이브 확정 전 조율자가 §B 준-공용 4종 해당 여부를 판정**(D8-5, R-9, **EVAL-ROUND-13 K-4로 3종→4종 정정** — E2 파일 소유권 확정 결과 `apps/subscriber/src/shell/*`(라우트 파일이 아닌 유틸리티라 `app/_layout.tsx` Stack.Screen 등록 대상이 아님)라 4종 전부 무관) | 02§E-11 | (코드 태스크) | 없음(전체 기능은 05§A-4 미결정 시 대상 UI 자체가 없어 비차단) |
@@ -336,7 +346,9 @@ E2 §D(트리거 대기 코드 3건)·§E(코드 외 **19건**, T-NC-13·14·15�
    > 각주(경위, EVAL-ROUND-1 영역8 감점6·X-16): "다음 조율자 점검 시점"이라는 舊 표현은 참조 대상이 어느 문서에도
    > 정의되지 않은 미정의 참조였다 — 이를 **E5 §E "웨이브 간 대기 구간 보고"**(웨이브가 외부 대기로 3일 이상
    > 정체 시 조율자가 대기 항목·경과일·해제 조건을 기록하는 주 1회 간이 보고) 절의 정기 시점으로 확정해 닫았다.
-   > E5§E가 아직 갱신 전이면 이 정의는 조율자 재량 판단으로 대체한다(무기한 방치는 금지).
+   > E5§E는 이미 갱신 완료돼 해당 절이 실존한다(리포 실측: `E5-quality-gates.md` §E "웨이브 간 대기 구간
+   > 보고" — EVAL-ROUND-14 J-11/D14-4 정정, 舊 "E5§E가 아직 갱신 전이면 조율자 재량 판단으로 대체한다"는
+   > 이미 종결된 조건을 현재형으로 남긴 잔여였다).
 4. **이월 한도**: 동일 태스크가 **2개 웨이브 연속 이월**되면(재기동 2회 실패), E5§A "동일 유형 위반 2회 이상"
    조항과 동일 기준으로 조율자가 태스크 자체를 재설계(범위 축소/분할)한다 — E2로 피드백해 태스크 정의를 갱신한다.
 5. **웨이브 부분 실패의 재계산**: 한 웨이브에서 5개 중 일부가 이월되면, 그 웨이브의 "완료"는 **성공한 태스크만
@@ -360,17 +372,17 @@ E2 §D(트리거 대기 코드 3건)·§E(코드 외 **19건**, T-NC-13·14·15�
 조율자가 G9 확인 상태를 재점검한다. 미확인 상태로 이 경계를 넘는 것은 E5§A "테스트 미실행 완료 선언 금지"와
 동급의 절차 위반으로 취급한다.
 
-## G. E2 ↔ E3 정합 자체 검산 (EVAL-ROUND-8 재검산 — 66건, 실행 grep 인용)
+## G. E2 ↔ E3 정합 자체 검산 (EVAL-ROUND-14 재검산 — 67건, 실행 grep 인용)
 
-**검산 방법**: E2의 전 태스크 ID(66건: 정상 웨이브 코드 44 + 트리거 대기 3 + 코드 외 19, D8-1 T-W2-17 신설
-반영)를 위 §C 웨이브 표 + §D 체크포인트 표와 대조해, 각 ID가 **정확히 1곳**에만 배정됐는지 확인한다. Q1 원칙에
-따라 실제 실행한 명령·출력을 그대로 인용한다.
+**검산 방법**: E2의 전 태스크 ID(67건: 정상 웨이브 코드 45 + 트리거 대기 3 + 코드 외 19, EVAL-ROUND-14
+D14-1/J-6의 T-W2-18 신설 반영으로 44→45)를 위 §C 웨이브 표 + §D 체크포인트 표와 대조해, 각 ID가 **정확히
+1곳**에만 배정됐는지 확인한다. Q1 원칙에 따라 실제 실행한 명령·출력을 그대로 인용한다(EVAL-ROUND-14 재실행).
 
 ```
 $ grep -E "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[ab]?" | wc -l
-44
+45
 $ grep -E "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[ab]?" | sort -u | wc -l
-44
+45
 $ grep -cE "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md
 22
 $ grep -E "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[ab]?" | sort | uniq -c | awk '$1!=1'
@@ -379,11 +391,11 @@ $ comm -3 <(grep -oE "^\| T-W[0-4]-[0-9]+[ab]?" E2-work-breakdown.md | sed 's/| 
           <(grep -E "^\| \*\*[0-9]+[ab]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[ab]?" | sort -u)
 (빈 출력 — E2 코드 태스크 ID 집합 == E3 웨이브 배정 집합, 차집합 0)
 $ grep -oE "^\| T-W[0-4]-[0-9]+[ab]?" E2-work-breakdown.md | sed 's/| //' | sort -u | wc -l
-44
+45
 $ grep -oE "^\| \**T-NC-[0-9]+" E2-work-breakdown.md | sed 's/[| *]//g' | sort -u | wc -l
 19
 $ grep -oE "^\| \**T-(W[0-4]|NC|TRIG)-[0-9]+[ab]?" E2-work-breakdown.md | sed 's/[| *]//g' | sort -u | wc -l
-66
+67
 ```
 
 (§C 표 "태스크" 열만 대상 — 전체 문서 대상 grep은 §A 의존그래프·§D 체크포인트·§H 리스크 표 등에서 태스크 ID를
@@ -394,21 +406,24 @@ $ grep -oE "^\| \**T-(W[0-4]|NC|TRIG)-[0-9]+[ab]?" E2-work-breakdown.md | sed 's
 42/20으로 실측과 어긋난 것을 이 재현 과정에서 직접 발견해 즉시 정정했다(라벨 셀은 순수 라벨만, 주석은 인접
 열로 이동 — 기존 8a/8b·17a/17b 행과 동형 정합). T-NC 카운트에 `\**`를 추가한 것은 EVAL-ROUND-6 신설
 T-NC-16~19가 E2 §E에서 볼드 없이 등재됐음을 확인하는 과정에서, 舊 grep이 볼드 유무를 가정하지 않은 느슨한
-패턴이라 신설분도 정확히 잡힘을 재확인한 것.)
+패턴이라 신설분도 정확히 잡힘을 재확인한 것. **EVAL-ROUND-14 재검증 각주**: T-W2-18 신설 행을 처음 작성할 때
+ID를 볼드로 감싸(`| **T-W2-18**(...) |`) 코드 태스크 정규식(`^\| T-W[0-4]-[0-9]+[ab]?`)이 매칭에 실패해
+재검산 결과가 44로(기대 45 대비 1건 누락) 나온 것을 이 재현 과정에서 직접 발견해 즉시 정정했다 — ID 셀은
+항상 볼드 없는 순수 텍스트로 시작해야 한다는 기존 컨벤션(T-NC-16 라운드6 사례와 동형)을 재확인.)
 
 | 구간 | E2 태스크 수 | E3 배정 위치 | 중복/누락 |
 |---|---|---|---|
 | W0 코드(T-W0-01~06) | 6 | Wave 1(1)+Wave 2(4)+Wave 4(1, T-W0-06) | 0/0 |
 | W1 코드(T-W1-01~11b, DD1 분할 반영) | 13 | Wave 3(01)+Wave 4(05·06)+Wave 5(08·02)+**Wave 8a(07b·03)+Wave 8b(04)**+Wave 10(11a)+Wave 11(11b)+Wave 9(09·10)+Wave 12(07a) | **13건 전건 배정, 중복 0**(01·05·06·08·02·07b·03·04·11a·09·10·11b·07a = 13개 고유 ID, EVAL-ROUND-6 D6-1로 舊 Wave8(07b·03·04)이 8a(07b·03)+8b(04)로 분리) |
-| W2 코드(T-W2-01~17) | **18**(EVAL-ROUND-8 D8-1 — T-W2-17 신설로 17→18) | Wave4(01)·Wave5(02·04)·Wave6(08)·Wave7(13)·**Wave8a(10)**·Wave9(09·03)·Wave10(11·12·15)·Wave12(14·16a)·Wave13(05·16b)·Wave14(06)·**Wave15a(07)·Wave15b(17)** | **18건 전건 배정, 중복 0**(01·02·03·04·05·06·07·08·09·10·11·12·13·14·15·16a·16b·17 = 18개 고유 ID) |
+| W2 코드(T-W2-01~18) | **19**(EVAL-ROUND-14 D14-1/J-6 — T-W2-18 신설로 18→19) | Wave4(01)·Wave5(02·04)·Wave6(08)·Wave7(13)·**Wave8a(10)**·Wave9(09·03)·Wave10(11·12·15)·**Wave12(14·16a·18)**·Wave13(05·16b)·Wave14(06)·**Wave15a(07)·Wave15b(17)** | **19건 전건 배정, 중복 0**(01·02·03·04·05·06·07·08·09·10·11·12·13·14·15·16a·16b·17·18 = 19개 고유 ID, T-W2-18은 기존 Wave 12 슬롯에 편입 — 신규 웨이브 라벨 불요) |
 | W3 코드(T-W3-01~04) | 4 | Wave16(01)·**Wave17a(02)**·**Wave17b(03·04)**(D4-5 재편 반영, 舊 "Wave17(02·03·04)") | 0/0 |
 | W4 코드(T-W4-01~03) | 3 | Wave18(01·03)·Wave19(02) | 0/0 |
 | 트리거 대기(T-TRIG-01~03) | 3 | §D 표(트리거 발동 시 여유 웨이브 편입 — 고정 웨이브 미배정은 설계 의도, "정확히 한 웨이브"가 아니라 "정확히 한 체크포인트 규칙"에 배정) | 0/0(트랙 배정 완료) |
 | 코드 외(T-NC-01~19, T-NC-16~19 신설 반영 — D6-3) | 19 | §D 체크포인트 표 19행 전건 | 0/0 |
-| **합계** | **66** | **44(웨이브 22라벨)+3(트리거 규칙)+19(체크포인트)=66** | **전건 배정 — 누락 0건, 중복 0건**(DD1 분할로 42→43, DD5 T-NC 신설로 13→15, D4-5 웨이브 라벨 19→20, D6-3 T-NC 15→19·D6-1 웨이브 라벨 20→21, **EVAL-ROUND-8: D8-1 T-W2-17 신설로 코드 43→44·웨이브 라벨 21→22**, 총 61→65→66 태스크) |
+| **합계** | **67** | **45(웨이브 22라벨)+3(트리거 규칙)+19(체크포인트)=67** | **전건 배정 — 누락 0건, 중복 0건**(DD1 분할로 42→43, DD5 T-NC 신설로 13→15, D4-5 웨이브 라벨 19→20, D6-3 T-NC 15→19·D6-1 웨이브 라벨 20→21, EVAL-ROUND-8: D8-1 T-W2-17 신설로 코드 43→44·웨이브 라벨 21→22, **EVAL-ROUND-14: D14-1/J-6 T-W2-18 신설로 코드 44→45(웨이브 라벨 불변 22 — 기존 Wave 12 슬롯 편입)**, 총 61→65→66→67 태스크) |
 
 **앵커4(대외 런칭) 별도 확인**: 위 §D 표의 "앵커4(대외 런칭 판정)" 행은 E2 T-NC ID가 없는 **정보성 편입**(EVAL-ROUND-6
-W-2·기타확정)이라 위 **66건**(EVAL-ROUND-10 P-2 정정 — 舊 "65건"은 D8-1 T-W2-17 신설 반영 전 stale, 바로 위
+W-2·기타확정)이라 위 **67건**(EVAL-ROUND-14 D14-1/J-6 정정 — 舊 "66건"은 T-W2-18 신설 반영 전 stale, 바로 위
 §G 정합 표 합계 행과 동일 총계) 재검산에 포함하지 않는다 — M1~M12 행(05 소유, 본 문서 비범위)과 동일하게
 08§A 자체 소유 상시 프로세스를 인용만 한 것이지 E2가 신설한 태스크가 아니다.
 
@@ -438,7 +453,7 @@ W-2·기타확정)이라 위 **66건**(EVAL-ROUND-10 P-2 정정 — 舊 "65건"�
 - [ ] G9 3항목 상태를 매 웨이브 종료 보고에 표기(§F 우회 경로가 실비용 발생 지점을 넘지 않았는지)
 - [ ] 이월 발생 시 §E 규칙에 따라 하류 태스크 자동 보류 반영
 - [ ] §G 정합 표를 새 태스크(E2 갱신) 발생 시 즉시 재검산(실행 grep 출력 동봉 의무)
-- [ ] **D10-3류 "개방 소유권"(대상 목록이 착수 시점 재실측인 태스크, 예: T-W4-01의 `docs/` 하위)이 같은 웨이브의 타 태스크 신규 산출물 경로와 겹치지 않는지 확인**(EVAL-ROUND-11 N-4 신설 — Wave 18의 T-W4-01/T-W4-03 배타가 그 첫 적용 사례)
+- [ ] **D10-3류 "개방 소유권"(대상 목록이 착수 시점 재실측인 태스크, 예: T-W4-01의 `docs/` 하위)이 같은 웨이브의 타 태스크 신규 산출물 경로와 겹치지 않는지 확인**(EVAL-ROUND-11 N-4 신설 — Wave 18의 T-W4-01/T-W4-03 배타가 그 첫 적용 사례). **판정 기준은 경로가 `docs/` 하위인지 여부가 아니라 D10-3 판정 명령①의 `--exclude-dir=exec` 스윕 제외 범위인지 여부다**(EVAL-ROUND-14 J-14/D14-4 정정 — T-W4-03 산출물은 `docs/` 하위(`docs/plan/exec/reviews/...`)이지만 `exec/` 하위라 스윕 대상에서 제외돼 배타가 성립하며, 신규 개방 소유권 겹침 판단 시마다 이 기준으로 재확인)
 
 ## 신규 위임 목록 (등재 책임 규칙에 따라 제출)
 
@@ -447,7 +462,7 @@ W-2·기타확정)이라 위 **66건**(EVAL-ROUND-10 P-2 정정 — 舊 "65건"�
 
 | # | 발주처 | 수신처 | 요청 내용 | 상태 |
 |---|---|---|---|---|
-| 1 | E3 §C(예상 소요 열) | **E4**(토큰·시간 예산) | 웨이브 **22개**(EVAL-ROUND-6 D6-1 재편으로 20→21, EVAL-ROUND-8 D8-1로 21→22 — Wave 8→8a/8b, Wave 15→15a/15b 분리)의 상대 크기(S/M/L/XL) 표를 절대 토큰 예산 산정의 입력으로 사용 요청 — SOLO 웨이브 8건(D8-1로 7→8)의 병렬 슬롯 손실 + T-W1-03·T-W1-04·T-W3-01 사이징 변경(D6-1) + T-W2-07 Wave 15a 사이징 변경(M→L, EVAL-ROUND-7 D7-2·Q-9) + **T-W2-17(Wave 15b) 신규 태스크 편성(S, EVAL-ROUND-8 D8-1)**을 토큰 예산에 반영 요청 | → 6-11 #9 참조 |
+| 1 | E3 §C(예상 소요 열) | **E4**(토큰·시간 예산) | 웨이브 **22개**(EVAL-ROUND-6 D6-1 재편으로 20→21, EVAL-ROUND-8 D8-1로 21→22, EVAL-ROUND-14는 라벨 수 불변 — Wave 8→8a/8b, Wave 15→15a/15b 분리)의 상대 크기(S/M/L/XL) 표를 절대 토큰 예산 산정의 입력으로 사용 요청 — SOLO 웨이브 8건(D8-1로 7→8)의 병렬 슬롯 손실 + T-W1-03·T-W1-04·T-W3-01 사이징 변경(D6-1) + T-W2-07 Wave 15a 사이징 변경(M→L, EVAL-ROUND-7 D7-2·Q-9) + **T-W2-17(Wave 15b) 신규 태스크 편성(S, EVAL-ROUND-8 D8-1)** + **EVAL-ROUND-14 D14-1/J-6 반영**(T-W2-18 Wave 12 기존 슬롯 신규 편입(S, 2파일) + T-W0-05 Wave 1 M→L(6→9파일)·T-W1-03 Wave 8a M→L(6→7파일) 사이징 상향 + T-W2-03 Wave 9·T-W2-08 Wave 6 파일 수 증가(버킷 불변))를 토큰 예산에 반영 요청 | → 6-11 #9 참조 |
 | 2 | E3 §H(리스크 3행) | **PIVOT-PLAN §6**(대장 소유자) | "인증 어댑터 공용 패키지 추출 없이 기자·관제 독립 구현" 판단을 EXEC-DECISIONS에 1건 기록 요청 | → 6-11 #10 참조(EXEC-DECISIONS #1로 기록 완료 확인) |
 | 3 | E3 §D(T-NC 체크포인트 13행) | **E5**(§C DoD 판정 절차 표) | E2 신규 위임 목록 #3(PoC·패널 증적 경로)과 동일 건 | → 6-11 #8 참조(E2#3과 통합) |
 
