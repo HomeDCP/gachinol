@@ -29,7 +29,7 @@
 | [E4-token-budget.md](E4-token-budget.md) | 토큰 예산·동시 상한·모델/에포트 배분·한도 중단 재개 프로토콜 | 5·6 |
 | [E5-quality-gates.md](E5-quality-gates.md) | 태스크 완료 판정·qa-verifier·회귀·PR·대장 연장 운영 | 7·8 |
 | [reviews/](reviews/) | EXEC-RUBRIC + 라운드별 독립 평가 | (프로세스) |
-| [EXEC-DECISIONS.md](EXEC-DECISIONS.md) | 실행 중 횡단 결정 누적(발생 순번 #n — 코드가 계획과 달라지는 결정·게이트 위반 기록, E5 §D. **#1~#8 기록됨(2026-08-04~06 — M-3 정정: 舊 "#1·#2"는 라운드 1 시점 스냅숏이었다)**) | (프로세스) |
+| [EXEC-DECISIONS.md](EXEC-DECISIONS.md) | 실행 중 횡단 결정 누적(발생 순번 #n — 코드가 계획과 달라지는 결정·게이트 위반 기록, E5 §D. **기록 건수는 그 시점 전수 — 재현: `grep -cE "^## EXEC-DECISIONS #[0-9]+" EXEC-DECISIONS.md`**(라운드 23 W2-3 정정: 고정 범위 표기를 참조형으로 전환. 舊 "#1~#8 기록됨"은 라운드 22 #9 신설로 stale됐고, 그 이전 舊 "#1·#2"도 M-3으로 한 번 정정된 동형 2회차라 수치 갱신이 아니라 형태 전환으로 종결한다 — D7-1 박제 금지)) | (프로세스) |
 | reviews/dod-evidence/ | W단계 DoD 실측 증적 저장소(w0/·w1-poc/·w1-panel-r1/·`w1-panel-r2/`·`w1-panel-r3/`(T-NC-16·17, D6-3)·w1-ttff/·w1-go-link/·w2/·w3/·w4/·`broadcast-url-procedure/`(T-NC-14, DDD2)·`supplier-usability-r1/`·`supplier-usability-r2/`(T-NC-18·19, D6-3) + 상시 리뷰 `ops-review.md`(T-NC-11·12·15) — E5 §C 표의 저장 위치. **첫 실측 시 생성**. 라운드 7 Q-1 정정: D6-3 신설 4경로의 문서맵 미전파 해소) | (프로세스) |
 
 ## 3. 실행 개시 조건 (전 문서 공통)
