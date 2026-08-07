@@ -75,7 +75,7 @@ FE/BE 리드가 스스로 자기 구현의 DoD 충족을 선언하지 않는다.
 | **W1 패널 R1**(W1 진행 중) | 어르신 패널 1차(저해상도 프로토타입) — 프로토콜·판정 항목은 **03 §B-1 정본**, 개방 기점 = **T-W1-01+T-W1-02 완료(=`packages/ui` 토큰 게이트 완료, Wave 5) 직후 ~ T-W1-03 웹 export 스모크 사이**(**D4-4 확정** — 02 §E-1 "스키마 반영만으로는 이 게이트가 닫히지 않는다"·08 §A 시간축 매핑 U3. 舊 "T-W1-01(Wave 3)만으로 개방" 오인용 정정) | 03 §B-1 패널 프로토콜 수행 | 세션 기록·관찰 노트·발견 이슈 목록 | `reviews/dod-evidence/w1-panel-r1/` | QA 리드 | 조율자 |
 | **W2** | 실기기 모바일 웹 촬영→업로드→승인→송출 한 바퀴 + 관제 전기능(데스크톱 1440px·태블릿 1024px) + **Playwright 핵심 시나리오 3종(구독자 4단계·관제 3단계·기자 4단계) × 브라우저 프로필 — 관제·기자 = 3종(Chromium+카카오인앱UA·WebKit·데스크톱Chrome 1440×900 포함), 구독자 = 2종(Chromium+카카오인앱UA·WebKit — 02 §E-9 ② 정본 단서: 데스크톱 프로필은 관제·기자 시나리오 한정) = 합계 8조합 전건**(**D5-2 확정 문안**, U-2 — E2 T-W1-11a와 동일 계수. 舊 "3종×3종 전건"=9조합 요구는 산출 8조합과 어긋나 W2 DoD가 구조적으로 미충족 판정될 수 있었다) + **판정 시점 화면 라우트 전수 스모크**(**EXEC-DECISIONS #4** — 모수는 고정 22가 아니라 판정 시점 실측치. 본 계획 신설 3라우트(T-W1-09 문의하기·T-W1-10 편성표·T-W2-09 주민 링크) 포함 시 판정 시점 예상 모수 **25**, 재현 명령은 §D 앵커 ⑩. 통과 기준은 모수 무관 **전건(100%)** — 22는 피벗 시점 스냅숏 참고용, 판정에 쓰지 않는다) + 주민 링크 업로드 1건 완주 + CF Stream Live Input 발급·상태조회 확인(04 R10) + 링크아웃 클릭 계측 이벤트 1건 이상 + 미성년자 승인 전이가드 완료 확인 | `pnpm --filter <해당앱> exec playwright test` 또는 **CI 잡(T-W2-17) 통과**(**D8-1 확정**, R-1 — T-W2-17 등재 후에는 CI 잡 통과 기록이 정본 증적) 전건 실행 + 촬영→업로드→승인→송출 실기기 시나리오 1회 완주 + `curl`로 CF Stream Live Input 상태 조회 + §D 앵커 ⑩ 명령으로 라우트 모수 실측 | Playwright HTML 리포트(전건 통과 스크린) + 실기기 완주 캡처 시퀀스 + CF Stream API 응답 캡처 + 판정 시점 라우트 전수(예상 25) 스모크 로그 | `reviews/dod-evidence/w2/` | QA 리드 | 조율자 |
 | **W3** | Play 스토어 게시 + App Store 심사 통과(리젝 시 02 §D 플랜B) | 스토어 콘솔 제출·심사 결과 확인(사용자 개입 시점, §E 참조) | 심사 통과 스크린샷/이메일 사본 | `reviews/dod-evidence/w3/` | **사용자**(스토어 제출·심사 대응 — 본인 인증 행위) + **법무/운영 지원**(절차 정리·상태 추적)(**DDD4 확정 문안**, Z-13 — 구 표기 "PM(사용자 승인 동반)"은 E1 §A-1의 "기획(PM)=조율자" 매핑상 실행자=승인자 동일 주체가 되어 D5 원칙과 충돌해 폐기. E2 §E T-NC-10 담당 열도 동일 문안으로 통일 대상) | 조율자 |
-| **W4** | 문서·CI 반영 완료 + 네이티브 트랙 잔재 0(**DD3 확정 문안** — Y-5 대응 재설계, E2 T-NC-13과 **동일 문안**, 한쪽만 고치지 않는다) | **명령①**(문자열 잔재) `grep -rn "expo-env\.d\.ts\|EAS Build" CLAUDE.md docs/ --exclude-dir=exec` — 통과 기준 **0건**. 단 `CLAUDE.md`의 개발 편의 안내 문맥(예: §9 "Expo Go로 충분·EAS Build 불요")의 히트는 잔재가 아니므로 제외 가능 — **제외 시 판정자가 히트별 문맥 1줄을 증적에 기재**(무설명 제외 금지). W4에서 CLAUDE.md §9가 웹 절차로 대체되면 제외 사유 자체가 소멸함을 부기. **명령②**(배포 경로 잔재) `ls eas.json` → 부재 확인 + `grep -rn "eas build\|eas submit\|expo build" .github/workflows/ apps/*/package.json` → **0건** | 두 명령의 실행 전문 + CI yaml에 웹 E2E 필수 게이트 존재 인용 | `reviews/dod-evidence/w4/` | QA 리드 | 조율자 |
+| **W4** | 문서·CI 반영 완료 + 네이티브 트랙 잔재 0(**DD3 확정 문안** — Y-5 대응 재설계. **판정 명령의 정본은 본 행**이고 **E2 §E T-NC-13은 명령①②를 리터럴 인용**, **E3 §D T-NC-13은 축약 인용**(취지 동일·표기는 일정표 셀 문맥에 맞춰 축약)이다. 舊 "E2 T-NC-13과 동일 문안" 선언은 3자 표기가 갈려 리터럴 대조로 반증됐고(**라운드28 G2-1(a)**), **D28-1**에 따라 E2는 ⓐ 문안 통일·E3는 ⓑ 선언 정정으로 종결했다 — 판정 결과는 3자 동일해 실행 영향이 없으므로 축약형을 억지로 통일하지 않는다. 재현(앵커 ⑯ 동일 문안 선언 — 양단 ≥1): **3자 공통 = 명령①** `grep -c 'grep -rn "expo-env\.d\.ts\|EAS Build" CLAUDE.md docs/ --exclude-dir=exec' docs/plan/exec/E5-quality-gates.md docs/plan/exec/E2-work-breakdown.md docs/plan/exec/E3-parallel-schedule.md` → 3자 각각 ≥1 / **E5↔E2 = 명령②** `grep -c 'grep -rn "eas build\|eas submit\|expo build" .github/workflows/ apps/*/package.json' docs/plan/exec/E5-quality-gates.md docs/plan/exec/E2-work-breakdown.md docs/plan/exec/E3-parallel-schedule.md` → E5·E2 각각 ≥1, E3는 축약 인용이라 0이 정상. **정본이 바뀌면 인용 2곳을 같은 커밋에서 동시 갱신한다** — 한쪽만 고치지 않는다) | **명령①**(문자열 잔재) `grep -rn "expo-env\.d\.ts\|EAS Build" CLAUDE.md docs/ --exclude-dir=exec` — 통과 기준 **0건**. 단 `CLAUDE.md`의 개발 편의 안내 문맥(예: §9 "Expo Go로 충분·EAS Build 불요")의 히트는 잔재가 아니므로 제외 가능 — **제외 시 판정자가 히트별 문맥 1줄을 증적에 기재**(무설명 제외 금지). W4에서 CLAUDE.md §9가 웹 절차로 대체되면 제외 사유 자체가 소멸함을 부기. **명령②**(배포 경로 잔재) `ls eas.json` → 부재 확인 + `grep -rn "eas build\|eas submit\|expo build" .github/workflows/ apps/*/package.json` → **0건** | 두 명령의 실행 전문 + CI yaml에 웹 E2E 필수 게이트 존재 인용 | `reviews/dod-evidence/w4/` | QA 리드 | 조율자 |
 
 **미달 시 공통 조치**: 각 W단계 DoD 항목의 "미달 시 조치"는 원 정본(02 §C·08 §A·04 §F 등)을 그대로 따른다 — 본
 표는 재정의하지 않는다. 판정이 기한을 넘기면 08 §D 리스크 테이블 "성능 예산 판정 지연" 행으로 이관(08 §A
@@ -779,11 +779,20 @@ T-NC-16~19 4행 실재 — 舊 "B팀 반영 완료 전까지는 본 절이 유�
        위반으로 보고하지 않으며(신규 작성·수정분의 미동반만 즉시 위반), 이 분기가 존량을 면책하는 것이
        아니라 **처리 순서를 정하는 것**임을 명시한다.
      - **② 분모 명시·진척 지표화**: 존량 규모는 `grep -c` 실측으로 **§E 진행 보고 7항에 기록하고 웨이브마다
-       감소**시킨다. 재현 — 분모(주장 행): `grep -cE "유일|전건|0건|전수" docs/plan/exec/E[1-5]-*.md`(파일별) /
-       존량 잔여(재현 명령 미동반 행): `grep -hE "유일|전건|0건|전수" docs/plan/exec/E[1-5]-*.md | grep -cvE
+       감소**시킨다. 재현 — 분모(주장 행): `grep -cE "유일|전건|0건|전수" docs/plan/exec/*.md`(파일별) /
+       존량 잔여(재현 명령 미동반 행): `grep -hE "유일|전건|0건|전수" docs/plan/exec/*.md | grep -cvE
        "grep |find |awk |python3|재현"`. **그 시점 실측값만 쓰고 본 절에 박제하지 않는다**(D7-1). 이로써 PMO
        보고는 "상시 위반 n건"이 아니라 **"존량 잔여 n건 → n−k건"의 진척 지표**가 된다 — 감소가 멈추면 그
        자체가 조율자 보고 사유다.
+       **정의역 = exec 전 문서**(**D28-2 확정**, 라운드28 G2-2 — 舊 glob `docs/plan/exec/E[1-5]-*.md`는 위
+       정의문이 선언한 정의역("exec 전 문서")보다 좁아 `EXEC-PLAN.md`·`EXEC-DECISIONS.md`·`HANDOFF-SESSION.md`를
+       **구조적으로 분모 밖**에 뒀다. 라운드27 D27-2가 앵커 ⑨ 탐지 보조·⑬에 적용한 *"판정 항목의 정의역이 앵커
+       전종의 정의역보다 좁으면 그 차집합이 곧 사각지대"*가 ⑯에만 미전파된 잔여이므로 **같은 문안으로 닫고**,
+       아래 ④ 스크립트 glob도 **동시에** 교체한다 — 두 재현의 정의역이 갈리면 그 차 자체가 다시 사각지대다.
+       바뀐 것은 **파일 집합뿐이고 판정 정의(행 단위)는 불변**이라 ④가 말하는 "연속성 지표" 성격은 유지되나,
+       라운드28 이전 추이치는 좁은 정의역 기준값이므로 라운드 간 비교 시 그 사실을 1구로 병기한다.
+       `HANDOFF-SESSION.md`는 **루프 종료 시 삭제 예정 문서**이므로 삭제 시점에 분모가 그만큼 줄어드는 것은
+       진척이 아니라 정의역 축소이며, 그 시점 보고에 1구로 구분한다.)
      - **③ 표본 편중 금지**(기존 표본 3건 문안 유지): 표본 3건은 한 문서·한 절에 몰리지 않게 **순환 선정**한다
        (앵커 ⑬의 표본 순환 운용과 동형 — 전체 커버리지를 점진적으로 넓힌다).
      - **④ 줄바꿈 정규화 판정**(**D27-4 확정**, 라운드27 H2-4 — 위 ② 분모·잔여 명령과 아래 ⑤ 부기의 지정
@@ -827,7 +836,7 @@ T-NC-16~19 4행 실재 — 舊 "B팀 반영 완료 전까지는 본 절이 유�
                buf.append((i,l))
            flush(); return out
        A=set(); B=set()
-       for f in sorted(glob.glob('docs/plan/exec/E[1-5]-*.md')):
+       for f in sorted(glob.glob('docs/plan/exec/*.md')):        # 정의역 = exec 전 문서(D28-2 — ② 명령과 동일)
            b=os.path.basename(f)
            for i,l in enumerate(open(f,encoding='utf-8').read().split('\n'),1):      # 대조군 A = 행 단위
                if CLAIM.search(l) and not REPRO.search(l): A.add((b,i))
