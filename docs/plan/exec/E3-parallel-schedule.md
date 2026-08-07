@@ -296,7 +296,8 @@ E2-work-breakdown.md | sort | uniq -c | awk '$1>1' — 그 시점 전수, 닫힌
 "유예 2건"의 태스크 수 양쪽이 실측과 어긋났었다(E2 §C가 이번 라운드 Z2-11로 그 세 태스크의 공유 파일을
 명시 열거했으므로 이 절이 그 입력을 그대로 소비한다).
 
-**정식 등재 판정 2건(舊 "유예 2건" 정정)**: 리포 실측(`grep -n 'watch/\[id\]\.tsx\|classify\.tsx' E2-work-breakdown.md`)
+**정식 등재 판정 2건(舊 "유예 2건" 정정)**: 리포 실측(리포 루트,
+`grep -n 'watch/\[id\]\.tsx\|classify\.tsx' docs/plan/exec/E2-work-breakdown.md`)
 결과 두 파일 모두 **3태스크** 공유로 확인돼 문턱의 "3태스크 이상" 조건에 해당한다 — 아래 **준-공용 자산
 6·7**로 정식 등재한다(既존 5종과 동일 논거: `live/[id].tsx`(자산5)도 정확히 3태스크에서 승격됐던 선례와
 정합).
@@ -520,18 +521,24 @@ D3 상한을 위반하지 않는
 형식으로 전환**: 부재 주장 대신 **현행 문자열의 존재만 재현**한다 — 회고 인용을 포함한 자기 매칭은
 존재 판정(≥1)에서는 오히려 무해하다(더 많이 매칭돼도 "존재한다"는 참인 채로 유지되므로))**:
 
+**실행 컨텍스트**(C팀 위임 #26 수신 — 앵커 ⑨ cwd 판정 항목의 §C 적용): 아래 블록은 **리포 루트**에서 그대로
+재실행한다 — 파일 인자를 **전체 경로**(`docs/plan/exec/…`)로 표기해 §B python 블록·§G 검산 블록과 통일했다.
+**위 괄호 안의 과거형 회고 기록**(舊 부재 주장 `grep -c → 0`, 舊 정규식 `[ab]?` 이력 등)**은 재실행 대상이
+아니다** — 그 시점 상태의 이력이지 현행 재현 주장이 아니므로 cwd 판정·출력 대조 양쪽에서 제외한다(C팀 신설
+규칙의 회고 제외 조항). 재실행 대상은 아래 `$` 5줄이다.
+
 ```
-$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | wc -l
+$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | wc -l
 46
-$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort -u | wc -l
+$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort -u | wc -l
 46
-$ grep -cE "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md
+$ grep -cE "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md
 23
-$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{n=gsub(/T-W[0-4]-[0-9]+[abc]?/,"&",$3); print $2, n}'
+$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md | awk -F'|' '{n=gsub(/T-W[0-4]-[0-9]+[abc]?/,"&",$3); print $2, n}'
  **1** 1 / **2** 4 / **3** 1 / **4** 4 / **5** 4 / **6** 1 / **7** 1 / **8a** 3 / **8b** 1 / **8c** 1 /
  **9** 4 / **10** 3 / **12** 4 / **13a** 3 / **13b** 1 / **14** 1 / **15a** 1 / **15b** 1 / **16** 1 /
  **17a** 1 / **17b** 2 / **18** 2 / **19** 1        (합계 46, 최대 4 — D3 위반 0)
-$ grep -c "10(3)+13a(3)+13b(1)" E3-parallel-schedule.md
+$ grep -c "10(3)+13a(3)+13b(1)" docs/plan/exec/E3-parallel-schedule.md
 (존재 재현 — ≥1이면 성립, 정확한 회수는 자기 매칭 포함이라 계수하지 않는다. D15-3 형식)
 ```
 
@@ -655,31 +662,38 @@ E2 §D(트리거 대기 코드 3건)·§E(코드 외 **20건**, T-NC-13·14·15�
 **EVAL-ROUND-22 D22-1로 T-W1-11c 신설 반영 코드 45→46**(신규 SOLO Wave 8c 삽입 — 웨이브 라벨 22→23),
 EVAL-ROUND-19 R2-3으로 T-NC-20 신설 반영 19→20 — T-NC-20은 T-W2-15에서 산출물을
 분리한 신설이지 코드 태스크 변경이 아니었다)를 위 §C 웨이브 표 + §D 체크포인트 표와 대조해, 각 ID가 **정확히
-1곳**에만 배정됐는지 확인한다. Q1 원칙에 따라 실제 실행한 명령·출력을 그대로 인용한다(EVAL-ROUND-22 재실행 —
+1곳**에만 배정됐는지 확인한다. Q1 원칙에 따라 실제 실행한 명령·출력을 그대로 인용한다.
+
+**실행 컨텍스트**(EXEC-EVAL-ROUND-26 J2-4/D26-4 반영): 아래 블록은 **리포 루트**에서 그대로 재실행한다 — 파일
+인자를 **전체 경로**(`docs/plan/exec/…`)로 표기해 §B python 블록의 "**재현**(리포 루트, …)" 표기·E5 §D 앵커 전종과
+통일했다. 舊 bare 파일명 표기는 리포 루트에서 `No such file or directory`·**exit 2**를 내, 앵커 ⑨이 요구하는
+"그대로 재실행"이 출력 불일치가 아니라 **재현 불가**로 읽혔다(앵커 ⑬ 판정 규칙과 결합하면 매 웨이브 허위 보고).
+
+(EVAL-ROUND-22 재실행 —
 신설 라벨 `8c`·ID `T-W1-11c` 매칭을 위해 정규식을 `[ab]?`→`[abc]?`로 확장했다. 舊 정규식으로는 8c 행이 계수
 자체가 되지 않고 `T-W1-11c`가 `T-W1-11`로 오추출된다).
 
 ```
-$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | wc -l
+$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | wc -l
 46
-$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort -u | wc -l
+$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort -u | wc -l
 46
-$ grep -cE "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md
+$ grep -cE "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md
 23
-$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort | uniq -c | awk '$1!=1'
+$ grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort | uniq -c | awk '$1!=1'
 (빈 출력 — 중복 0건)
-$ comm -3 <(grep -oE "^\| T-W[0-4]-[0-9]+[abc]?" E2-work-breakdown.md | sed 's/| //' | sort -u) \
-          <(grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort -u)
+$ comm -3 <(grep -oE "^\| T-W[0-4]-[0-9]+[abc]?" docs/plan/exec/E2-work-breakdown.md | sed 's/| //' | sort -u) \
+          <(grep -E "^\| \*\*[0-9]+[abc]?\*\* \|" docs/plan/exec/E3-parallel-schedule.md | awk -F'|' '{print $3}' | grep -oE "T-W[0-4]-[0-9]+[abc]?" | sort -u)
 (빈 출력 — E2 코드 태스크 ID 집합 == E3 웨이브 배정 집합, 차집합 0)
-$ grep -oE "^\| T-W[0-4]-[0-9]+[abc]?" E2-work-breakdown.md | sed 's/| //' | sort -u | wc -l
+$ grep -oE "^\| T-W[0-4]-[0-9]+[abc]?" docs/plan/exec/E2-work-breakdown.md | sed 's/| //' | sort -u | wc -l
 46
-$ grep -oE "^\| \**T-NC-[0-9]+" E2-work-breakdown.md | sed 's/[| *]//g' | sort -u | wc -l
+$ grep -oE "^\| \**T-NC-[0-9]+" docs/plan/exec/E2-work-breakdown.md | sed 's/[| *]//g' | sort -u | wc -l
 20
-$ grep -oE "^\| \**T-(W[0-4]|NC|TRIG)-[0-9]+[abc]?" E2-work-breakdown.md | sed 's/[| *]//g' | sort -u | wc -l
+$ grep -oE "^\| \**T-(W[0-4]|NC|TRIG)-[0-9]+[abc]?" docs/plan/exec/E2-work-breakdown.md | sed 's/[| *]//g' | sort -u | wc -l
 69
-$ grep -cE "^\| \*\*T-NC-20" E3-parallel-schedule.md
+$ grep -cE "^\| \*\*T-NC-20" docs/plan/exec/E3-parallel-schedule.md
 1
-$ grep -c "T-W1-11c" E2-work-breakdown.md E3-parallel-schedule.md
+$ grep -c "T-W1-11c" docs/plan/exec/E2-work-breakdown.md docs/plan/exec/E3-parallel-schedule.md
 (양 파일 ≥1 존재 재현 — D15-3 형식, 정확한 회수는 서술 문맥의 자기 매칭을 포함하므로 판정 입력으로 쓰지 않는다)
 ```
 
@@ -787,3 +801,17 @@ T-W3-02 편입의 파급) **3건**. 셋 다 K2-1(D25-1) 확정의 파급이며 B
 (#6의 본체인 T-W3-02 소유권 편입 자체는 조율자 판정으로 **B팀이 본 라운드에 직접 반영 완료** — 위임으로 남은 것은
 E4 측 재현 문안뿐이다). K2-5(D25-2) 반영분(§D T-NC-17·19 배치 셀의 라벨 범위 표기 → 경계 태스크 표기)은 E3 내부
 수정이라 위임이 아니다.
+
+**라운드 26 수정에서 발생한 신규 위임**: **본 문서 발주분 없음**(수신분 1건 — 아래) — J2-4(D26-4) 반영은 §G 검산
+블록의 파일 인자를 **전체 경로**(`docs/plan/exec/…`)로 통일하고 실행 컨텍스트(리포 루트)를 문면에 부기한 E3 내부
+수정이다. **수신분: C팀 위임 #26**(앵커 ⑨ cwd 판정 항목을 대상 절 전체에 적용한 결과 D26-4 지정 범위 밖에서
+발견된 잔여) — E3 몫인 **§C 재검산 블록**에 §G와 동일 조치를 적용해 **같은 라운드에 해소**했고, 함께 §B "정식 등재
+판정 2건"의 인라인 리포 실측 1건도 같은 규칙으로 통일했다(C팀 제출 시점 계수 밖이던 잔여). 해소 판정은 탐지 보조
+명령의 히트 소멸이다 — 리포 루트에서
+`grep -nE '(grep|awk|sed|comm) [^|]*[^/]E[0-9]-[a-z-]+\.md' docs/plan/exec/E3-parallel-schedule.md`를 실행해
+`docs/plan/exec/` 접두 없이 문서 파일을 인자로 넘기는 행이 남지 않았음을 확인한다(현재 **빈 출력**). 같은
+이슈의 나머지 두 수신처는 조율자 선확정으로 이미 배정돼 있다 — **E4 §G #7 두 명령의 경로 통일 = A팀**,
+**E5 §D 앵커 ⑨에 "재현 명령의 실행 컨텍스트(cwd) 명시 여부" 판정 항목 추가 = C팀**. 본 문서가 같은 건을 다시
+발주하면 대장(§6-11) 행이 이중 등재된다(라운드 25 #4~#6에서 발주처를 소유자 문서 하나로 모은 판단과 같은 계열).
+사이징·웨이브 편성·SOLO 건수·lockfile 8종 배치는 본 라운드에 손대지 않았다(모수 불변 — 재현은 §B python 블록과
+위 §G 블록).

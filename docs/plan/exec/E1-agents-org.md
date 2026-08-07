@@ -95,6 +95,14 @@
 > "앵커 ①~⑮"를 **①~⑯**으로 갱신 + ⑯ 표본 3건 재실행 임무 병기) + **D22-1 모수 파급**(코드 45→46·CI 설정
 > 태스크 3→4건 — 현행 상태 주장 리터럴 전수 갱신, 회고·이력 서술은 시점 명시로 보존) — 조율자 선확정
 > 인용, 재해석 금지.
+> **라운드26 수정 근거**: [reviews/EXEC-EVAL-ROUND-26.md](reviews/EXEC-EVAL-ROUND-26.md) 영역8 J2-4,
+> [reviews/EXEC-ROUND-26-DECISIONS.md](reviews/EXEC-ROUND-26-DECISIONS.md) D26-4(+ D26-0 "박제 잔여 일소") —
+> **재현 명령의 실행 컨텍스트 통일**: §E 검증 블록 ①~③과 §B-4 PMO 작업 순서 2·§C-2 서두 원칙 인용의 파일
+> 인자를 **리포 루트 기준 전체 경로**(`docs/plan/exec/…` · `docs/plan/PIVOT-PLAN.md`)로 표기했다. 舊 bare
+> 파일명은 리포 루트에서 `No such file or directory`·**exit 2**를 내, 앵커 ⑨이 요구하는 "그대로 재실행"이
+> 출력 불일치가 아니라 **재현 불가**로 읽혔다(앵커 ⑬ 판정 규칙과 결합하면 매 웨이브 허위 보고). B팀이 같은
+> 라운드에 E3 §G에 적용한 표기와 동형이며, 전환 시점에 §E 블록 명령을 다시 실행해 인용 출력이 불변임을
+> 확인했다(Q1). **역할 경계·템플릿·검증 분리 등 실질 내용은 무변경**(J2-1·J2-2·J2-3은 본 문서 비해당).
 > **범위**: 본 문서는 "누가 어떤 권한
 > 경계로 어떤 형식으로 위임·검증하는가"만 정의한다 — 태스크 목록·크기(E2), 웨이브 스케줄(E3), 토큰·모델
 > 배분 수치(E4)는 재정의하지 않고 인용만 한다(신규 범위 발명 금지, EXEC-PLAN 서두 원칙).
@@ -173,7 +181,7 @@ T-NC-10 담당 열 원문): "**사용자**(스토어 제출·심사 대응 — �
 정확히 이 사유로 정정한 것을, 정작 §A-1 자신의 매핑표는 반영하지 못하고 있었다). Meta 심사(T-NC-09)도
 동일 문안이다. 위 표를 DDD4 그대로 정정했다 — "문서 정리·횡단 결정"과 "대외 심사 제출"을 분리해, 후자만
 사용자+법무/운영 지원 실행·조율자 승인으로 교정한다. E2 §B 테크리드 행은 같은 라운드에 B팀이 이미 동일
-문구로 통일했음을 확인했다(`grep -n "스토어 심사 제출" E2-work-breakdown.md` → "EVAL-ROUND-11 N-2 정정"
+문구로 통일했음을 확인했다(`grep -n "스토어 심사 제출" docs/plan/exec/E2-work-breakdown.md` → "EVAL-ROUND-11 N-2 정정"
 인용 확인, 별도 위임 불요). 본 정정은 **→ 6-11 #24 참조**(조율자 소급 등재).
 
 **③ (라운드19, EXEC-EVAL-ROUND-19 영역2 R2-1 반영 — 다중 소유 채택)**: E1 §A FE 리드 행의 금지 칸은
@@ -393,7 +401,7 @@ Wave <N> 종료 — 이 웨이브에서 완료 보고된 태스크들의 "대장
 
 # 작업 순서
 1. Wave <N> 완료 보고 전건에서 "신규 위임 목록" 절 추출(각 태스크별 "없음" 포함 전건)
-2. "없음"이 아닌 항목마다 PIVOT-PLAN §6-11에 대응 행이 실제로 있는지 `grep -n "<핵심어>" PIVOT-PLAN.md`로 재현
+2. "없음"이 아닌 항목마다 PIVOT-PLAN §6-11에 대응 행이 실제로 있는지 `grep -n "<핵심어>" docs/plan/PIVOT-PLAN.md`로 재현(**리포 루트에서 실행** — 파일 인자는 전체 경로, 라운드26 J2-4/D26-4)
 3. Wave <N>의 diff 자체도 자체 grep(신규 문서·신규 절 탐지)해 완료 보고와 교차검증(발굴 아닌 이중 확인)
 4. 미등재 발견 시 즉시 조율자에게 보고(조율자가 그 웨이브 안에서 반영·재검증, E5 §D 절차5 — PMO 본인은 등재하지 않는다)
 5. **E5 §D 앵커 ①~⑯ 전종 재현**(라운드17 신설, EXEC-ROUND-17-DECISIONS D17-3 — F-8 확정 문안, → 6-11
@@ -598,8 +606,8 @@ D8-6/D17-2 4요소를 공유하되 주체·시점이 다르다).
 
 **정정(라운드21, EXEC-EVAL-ROUND-21 영역2 Y2-3 — "문자 그대로 승격" 실체화)**: 위 9행이 신설 당시
 "문자 그대로 승격"이라 선언했으나 실제로는 E5 §B 문안과 공통 어절이 0이었다(재현: `grep -c "산출물의
-DoD 항목별 자가 대조 체크" E1-agents-org.md` → 舊 0). 대조군인 8행(CI 설정)은 신설 당시부터 리터럴
-일치를 유지했음(`grep -c "변경 diff의 잡 구조 자가 체크" E1-agents-org.md E5-quality-gates.md` → 양쪽
+DoD 항목별 자가 대조 체크" docs/plan/exec/E1-agents-org.md` → 舊 0). 대조군인 8행(CI 설정)은 신설 당시부터 리터럴
+일치를 유지했음(`grep -c "변경 diff의 잡 구조 자가 체크" docs/plan/exec/E1-agents-org.md docs/plan/exec/E5-quality-gates.md` → 양쪽
 ≥1)과 대비된다. 위 9행 삽입문을 **E5 §B "문서 산출물 태스크" 행의 현행 문안 그대로**로 축소 교체했다
 (9.5 도달 수정 지시 (b) 택일 — 구체 명령은 E5 §B 행이 정본, 본 문서는 인용만). **원칙 명시**: "문자
 그대로 승격"이라 적는 행은 실제 리터럴 일치가 성립할 때만 그 표현을 쓴다 — 성립 여부는 `grep -c
@@ -629,7 +637,7 @@ lint 부재)→D17-2(인프라 태스크)→R2-9(CI 설정)→Z2-2(문서 산출
 존재·식별자 정합·시크릿 참조 방식), **게이트② 측 결박 장치가 E1에 없던 공백**을 위 10행 신설이 닫는다
 (#8[인프라 구현자]·#9[CI 설정]·#10[문서 산출물]과 동형 구조의 5회차, 이번엔 검증자 측). 승격 문안은
 E5 §B 신설 행의 **리터럴 그대로**이며(사본 아님 — 구체 명령·축은 E5 §B가 정본, 본 문서는 인용만),
-성립 여부는 §C-2 서두 원칙대로 `grep -c "<공통 어절>" E1-agents-org.md E5-quality-gates.md` **양쪽 ≥1**로
+성립 여부는 §C-2 서두 원칙대로 `grep -c "<공통 어절>" docs/plan/exec/E1-agents-org.md docs/plan/exec/E5-quality-gates.md` **양쪽 ≥1**로
 검증한다 — 실행 출력은 §신규 위임 목록 ③에 기록했다. 대상 태스크의 **역할 경계**(FE 리드가 `infra/shell/*`
 5파일을 소유하는 것의 정당성)는 §A-1 보완 조건 ④가 같은 라운드에 판정했다(22B X2-8 — 두 정정이 같은
 2태스크의 서로 다른 축[게이트 축 ↔ 역할 경계]을 닫는다).
@@ -814,16 +822,23 @@ grep으로 확인**하는 절이라 수치 자체가 정당하다(D9-1의 오분
 (`grep -c "<문구>"` ≥ 1) + 대상 절 명칭 서술"**뿐이다 — 어느 줄에 있는지가 아니라 **존재 여부만** 판정
 하므로 문서가 아무리 편집돼도 재현 결과 자체는 stale될 수 없다(줄번호가 애초에 판정 입력이 아니다).
 
+**실행 컨텍스트**(EXEC-EVAL-ROUND-26 J2-4/D26-4 반영 — 본 절은 앵커 ⑨ 검산 절이다): 아래 ①~③ 블록은
+전부 **리포 루트**에서 그대로 재실행한다. 파일 인자를 **전체 경로**(`docs/plan/exec/…`)로 표기해 E3 §G·
+E4 §F·E5 §D 앵커 전종과 통일했다 — 舊 bare 파일명 표기는 리포 루트에서 `No such file or directory`·
+**exit 2**를 내, 앵커 ⑨이 요구하는 "그대로 재실행"이 출력 불일치가 아니라 **재현 불가**로 읽혔다(앵커 ⑬
+판정 규칙과 결합하면 매 웨이브 허위 보고). 경로 표기 전환 시점에 아래 명령을 다시 실행해 인용 출력이
+불변임을 확인했다(Q1).
+
 ```
-$ grep -c "다중 소유" E2-work-breakdown.md
+$ grep -c "다중 소유" docs/plan/exec/E2-work-breakdown.md
 1  (E2 §B "테크리드" 행 — "E1 §A-1 공식 채택 완료 … CI 설정은 태스크 성격별 다중 소유·SOLO 웨이브
    시점 배타" 확정 문안 실재)
-$ grep -c "잠정 처리\|잠정 적용" E2-work-breakdown.md
+$ grep -c "잠정 처리\|잠정 적용" docs/plan/exec/E2-work-breakdown.md
 1  (E2 §G 리스크3 행 — 아래 확인대로 "해소 완료" 서술 안의 회고적 인용문 1건, 미해소 잔존 아님)
-$ grep -c "해소 완료(라운드1" E2-work-breakdown.md
+$ grep -c "해소 완료(라운드1" docs/plan/exec/E2-work-breakdown.md
 1  (E2 §G 리스크3 행 자체가 종결 상태 서술임을 직접 확인 — "잠정" 문구가 히트하는 것과 무관하게, 그
    문구를 담은 행이 이미 "해소 완료"라는 뜻)
-$ grep -c "SOLO 시점 배타\|시점만 배타" E2-work-breakdown.md
+$ grep -c "SOLO 시점 배타\|시점만 배타" docs/plan/exec/E2-work-breakdown.md
 0  ("SOLO 웨이브 시점 배타"라는 다른 표현으로 반영돼 있다 — 위 "다중 소유" 히트 행에 포함, 별도 잔존 아님)
 ```
 
@@ -843,10 +858,10 @@ $ grep -c "SOLO 시점 배타\|시점만 배타" E2-work-breakdown.md
 같은 자리가 다시 stale되는 구조를 발생 지점에서 제거).
 
 ```
-$ grep -c "사용자\*\*(법무/운영 지원" E2-work-breakdown.md E5-quality-gates.md
-E2-work-breakdown.md ≥1 / E5-quality-gates.md ≥1  (T-NC-08·09·20 등 사용자 실행 주체 행이 존재 —
+$ grep -c "사용자\*\*(법무/운영 지원" docs/plan/exec/E2-work-breakdown.md docs/plan/exec/E5-quality-gates.md
+E2 ≥1 / E5 ≥1  (T-NC-08·09·20 등 사용자 실행 주체 행이 존재 —
   정확한 건수는 T-NC 신설마다 증가하므로 계수하지 않는다)
-$ grep -c "대행 불가" E2-work-breakdown.md
+$ grep -c "대행 불가" docs/plan/exec/E2-work-breakdown.md
 ≥1  ("대외 계정 개설·심사 제출 등 사용자 본인 인증이 필요한 행위의 대행 불가" 확정 문안이 T-NC-08 원본
   행 + 이를 인용한 후속 T-NC 행[T-NC-20 등]에 실재 — 존재만 판정, 행 수는 T-NC 신설마다 증가 가능)
 ```
@@ -867,15 +882,15 @@ T-NC 대외 계정류 담당을 "사용자(법무/운영 지원: 절차 정리·
 
 **(a) §B-1~§B-6 전건의 "신규 위임 목록" 요구 존재**(D22-6 지정 재현 — 舊 §B-5만 0건이었다):
 ```
-$ awk '/^### B-1\./,/^### B-2\./' E1-agents-org.md | grep -c "신규 위임 목록"   # §B-2는 재개형 부가 절이라 템플릿 5종 분모 밖
+$ awk '/^### B-1\./,/^### B-2\./' docs/plan/exec/E1-agents-org.md | grep -c "신규 위임 목록"   # §B-2는 재개형 부가 절이라 템플릿 5종 분모 밖
 ≥1
-$ awk '/^### B-3\./,/^### B-4\./' E1-agents-org.md | grep -c "신규 위임 목록"
+$ awk '/^### B-3\./,/^### B-4\./' docs/plan/exec/E1-agents-org.md | grep -c "신규 위임 목록"
 ≥1
-$ awk '/^### B-4\./,/^### B-5\./' E1-agents-org.md | grep -c "신규 위임 목록"
+$ awk '/^### B-4\./,/^### B-5\./' docs/plan/exec/E1-agents-org.md | grep -c "신규 위임 목록"
 ≥1
-$ awk '/^### B-5\./,/^### B-6\./' E1-agents-org.md | grep -c "신규 위임 목록"
+$ awk '/^### B-5\./,/^### B-6\./' docs/plan/exec/E1-agents-org.md | grep -c "신규 위임 목록"
 ≥1   (라운드22 삽입분 — 舊 0건이 이 정정의 검출 신호였다)
-$ awk '/^### B-6\./,/^## C\./'   E1-agents-org.md | grep -c "신규 위임 목록"
+$ awk '/^### B-6\./,/^## C\./'   docs/plan/exec/E1-agents-org.md | grep -c "신규 위임 목록"
 ≥1
 ```
 → **5개 전문 템플릿(§B-1·§B-3·§B-4·§B-5·§B-6) 전건 ≥1 성립** — §F 체크리스트("…요구가 완료 보고 절에
@@ -883,19 +898,19 @@ $ awk '/^### B-6\./,/^## C\./'   E1-agents-org.md | grep -c "신규 위임 목�
 
 **(b) `infra/shell` 판정 존재**(22B X2-8 지정 재현 — 舊 0건이 결함의 유일한 검출 신호였다):
 ```
-$ grep -c "infra/shell" E1-agents-org.md
+$ grep -c "infra/shell" docs/plan/exec/E1-agents-org.md
 ≥1   (§A FE 리드 금지 칸 예외 1구 + §A-1 보완 조건 ④ + §C-2 10행 + §F 체크 항목)
-$ grep -c "T-W3-04" E1-agents-org.md
+$ grep -c "T-W3-04" docs/plan/exec/E1-agents-org.md
 ≥1   (舊 0건 — 보완 조건 ④가 T-W3-03·T-W3-04를 명시 판정)
 ```
 
 **(c) §C-2 10행 리터럴 승격의 양방향 일치**(Y2-3 원칙 — "문자 그대로 승격"이라 적는 행은 실제 리터럴
 일치가 성립할 때만 그 표현을 쓴다):
 ```
-$ grep -c "게이트② 독립 검증은 쉘 골격 4항" E1-agents-org.md E5-quality-gates.md
-E1-agents-org.md ≥1 / E5-quality-gates.md ≥1
-$ grep -c "패키지·도메인 식별자 정합" E1-agents-org.md E5-quality-gates.md
-E1-agents-org.md ≥1 / E5-quality-gates.md ≥1
+$ grep -c "게이트② 독립 검증은 쉘 골격 4항" docs/plan/exec/E1-agents-org.md docs/plan/exec/E5-quality-gates.md
+E1 ≥1 / E5 ≥1
+$ grep -c "패키지·도메인 식별자 정합" docs/plan/exec/E1-agents-org.md docs/plan/exec/E5-quality-gates.md
+E1 ≥1 / E5 ≥1
 ```
 → **양쪽 ≥1** — E5 §B "쉘 프로젝트 골격 태스크" 행의 게이트② 대체 축 문안과 §C-2 10행이 리터럴 일치
 (8행[CI 설정]·9행[문서 산출물]이 이미 통과한 것과 동일 판정 기준).
