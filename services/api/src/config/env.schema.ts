@@ -100,6 +100,12 @@ export const envSchema = z
     META_PAGE_ACCESS_TOKEN: z.string().optional(),
     X_BEARER_TOKEN: z.string().optional(),
     THREADS_ACCESS_TOKEN: z.string().optional(),
+    // 웹 오리진 화이트리스트(T-W0-01 — CORS + 쿠키 refresh 경로의 CSRF 오리진 검증, 02§E-2).
+    // 콤마/공백 구분. 미설정 = 브라우저 크로스오리진 전면 차단(안전 기본값, 현행 동작과 동일).
+    // ⚠️ 이 키가 스키마에 없으면 zod가 unknown key를 strip해 `.env` 파일 경유 설정이 도달하지
+    //    않는다(@nestjs/config는 validate 통과분만 process.env에 주입). 부팅은 정상이고 쿠키
+    //    경로만 조용히 닫혀 원인 추적이 어렵다 — 조율자 조치로 등재, 근거는 EXEC-DECISIONS #13.
+    WEB_ORIGINS: z.string().optional(),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',

@@ -1,0 +1,135 @@
+# infra/monitoring/uptime-kuma-config.yml
+#
+# T-W0-04 (08§E-3 "Uptime Kuma + 외부 업타임 체크", 08§B "모니터링: Uptime Kuma(제온
+# 자체) + 외부 무료 업타임 체크(제온 자체가 죽는 경우 대비) + api `/health/*`").
+#
+# ── 이 파일의 성격(중요, 정직하게 명시) ──
+# Uptime Kuma(https://github.com/louislam/uptime-kuma)는 SQLite 기반 웹앱이며
+# 공식 "YAML로 모니터 선언 → 부팅 시 자동 반영"류 네이티브 config-import 기능이
+# 없다(2026-08 기준). 따라서 이 파일은 "Kuma에 실제로 적용되는 설정 파일"이 아니라
+# **원하는 상태(desired state)를 코드로 기록한 단일 원천(SSOT) 문서**다. 적용 방법은
+# 둘 중 하나(둘 다 이 태스크의 소유 파일 밖 — 후속 태스크/운영 절차로 남긴다):
+#   ① 수동: Kuma 웹 UI(Settings → Monitors)에 아래 monitors 절을 1:1로 입력
+#   ② 자동화: `uptime-kuma-api`(PyPI, 비공식 REST/socket.io 래퍼)로 이 YAML을 읽어
+#      멱등 upsert하는 소규모 스크립트를 별도 태스크에서 작성(현재 리포에 그 스크립트
+#      없음 — infra/backup/**·infra/monitoring/uptime-kuma-config.yml 3파일만이
+#      이 태스크의 소유 범위라 여기 포함하지 않는다)
+#
+# ── compose 등록은 이 태스크 범위 밖(후속 태스크에 남기는 전제) ──
+# Uptime Kuma 자체를 제온에서 컨테이너로 띄우는 서비스 정의(`infra/docker/**`)는
+# T-W0-03이 지금 편집 중이라 이 태스크에서 손대지 않는다. 참고용 실행 형태만 기록:
+#   docker run -d --name uptime-kuma --restart unless-stopped \
+#     -p 127.0.0.1:3001:3001 -v uptime-kuma-data:/app/data louislam/uptime-kuma:1
+#   (Cloudflare 프록시/nginx 뒤 내부 전용 — 08§B "외부 노출: Cloudflare 프록시 뒤에만")
+#
+# ── 이중 계층 설계(SPOF 회피, 08§B 원문 그대로) ──
+# ① Uptime Kuma = 제온 "자체"에서 도는 내부 감시자. 제온이 죽으면 Kuma도 함께
+#    죽는다 — 그래서 이것만으로는 불충분.
+# ② 외부 무료 업타임 체크 = 제온과 물리적으로 분리된 SaaS가 "제온 자체가 죽는 경우"를
+#    감지(external_uptime_check 절). 이 SaaS 자체 설정(계정·알림 채널)은 그 서비스
+#    콘솔에서 이뤄지므로 이 파일은 "무엇을 등록해야 하는지"의 기록만 담는다.
+
+version: 1
+description: >
+  Gachinol 제온 배포 — Uptime Kuma 내부 모니터 + 외부 업타임 체크 desired-state 기록.
+  적용은 수동(UI) 또는 후속 자동화 스크립트(uptime-kuma-api) — 본 파일은 SSOT.
+
+# ── 알림 채널 (값은 전부 env 참조 — 이 파일에 시크릿 없음) ──
+# BACKUP_ALERT_WEBHOOK_URL과 별개 채널을 둬도 되고 재사용해도 된다(운영 판단).
+# 여기서는 "이름만" 선언 — 실값은 Kuma 자체 DB(UI에서 입력) 또는 비밀 금고에.
+notifications:
+  - name: ops-webhook
+    type: webhook
+    description: 실패 알림(Slack/Discord 호환 incoming webhook, 08§B 대응)
+    url_env: UPTIME_KUMA_ALERT_WEBHOOK_URL # 값은 .env류에 키 이름만(EXEC-DECISIONS 원칙 동형)
+
+# ── ① Uptime Kuma 내부 모니터 (제온 자체에서 실행) ──
+# 대상은 08§B "api `/health/*`" + 제온에 함께 뜨는 컨테이너 표면(nginx/DB/오브젝트
+# 스토리지). 디스크·RAM 경보(32GB 공유 호스트)는 T-W0-06 소유라 여기 포함하지 않는다
+# — 08§B "보안사고 대응"·"디스크·RAM 경보" 2항목은 그 태스크의 `uptime-kuma-alerts.json`
+# (신규)에서 이 monitors 절 위에 규칙으로 얹힌다(신규 위임 아님, 08 원문 인용).
+monitors:
+  - name: api-liveness
+    type: http
+    url: https://api.${GACHINOL_DOMAIN}/health/liveness
+    method: GET
+    interval_sec: 60
+    retries: 3
+    accepted_status_codes: ['200-299']
+    description: 프로세스 생존 프로브(terminus 표준) — services/api/src/health/health.controller.ts
+
+  - name: api-readiness
+    type: http
+    url: https://api.${GACHINOL_DOMAIN}/health/readiness
+    method: GET
+    interval_sec: 60
+    retries: 3
+    accepted_status_codes: ['200-299']
+    description: DB SELECT 1 포함 트래픽 수용 가능 프로브 — Postgres 장애를 여기서 함께 포착
+
+  - name: web-watch
+    type: http
+    url: https://watch.${GACHINOL_DOMAIN}/
+    method: GET
+    interval_sec: 120
+    retries: 2
+    accepted_status_codes: ['200-299']
+    description: 구독자 웹(nginx 정적 서빙) 응답 확인 — T-W0-03 web 서비스 대상
+
+  - name: postgres-tcp
+    type: tcp
+    hostname: 127.0.0.1 # 제온 로컬 — 외부 미노출(08§B "외부 포트 미공개") 전제와 일치
+    port: 5432
+    interval_sec: 60
+    retries: 3
+    description: Postgres 리스닝 확인(내부 네트워크 관측용 — 앱 헬스는 api-readiness가 대표)
+
+  - name: object-storage-reachable
+    type: http
+    # 로컬/제온 = MinIO 헬스 엔드포인트, 프로덕션 R2 전환 시 이 값만 교체(env 치환 — CLAUDE.md §5)
+    url: ${S3_ENDPOINT}/minio/health/live
+    method: GET
+    interval_sec: 120
+    retries: 2
+    accepted_status_codes: ['200-299']
+    description: >
+      오브젝트 스토리지 도달 확인. R2 전환 시 R2에는 동일한 /minio/health/live 경로가
+      없으므로(MinIO 전용 엔드포인트) 이 모니터는 MinIO 배치에서만 유효 — R2 전환 시
+      버킷 HEAD 요청 기반 모니터로 교체 필요(후속 조정, 이 파일이 SSOT로 반영).
+
+  - name: pg-backup-freshness
+    # T-W0-04 백업의 "실행됨" 여부를 헬스체크화 — mc/aws 목록 조회를 감싸는 별도 exec
+    # 모니터는 Kuma 표준 http 타입 밖이라(커스텀 스크립트 필요) 여기서는 "설계 의도"만
+    # 기록한다: 실체크는 T-NC-15(분기 복구 리허설) 시점에 사람이 s3_list로 확인,
+    # 상시 자동화가 필요해지면 별도 태스크(예: pg-dump-to-r2.sh --check-freshness 같은
+    # 서브커맨드 추가)로 승격 — 이 태스크 범위 밖.
+    type: push_or_custom_exec # Kuma 표준 http 타입으로 표현 불가 — 미구현, 설계 기록만
+    implemented: false
+    interval_sec: 86400
+    description: 최근 24시간 내 pg/${POSTGRES_DB}/ 하위에 새 덤프 객체가 있는지(향후 구현)
+
+# ── ② 외부 무료 업타임 체크 (제온 자체 다운 대비, SPOF 회피) ──
+# Kuma 자체가 제온 위에서 돈다는 사실 자체가 SPOF이므로, 물리적으로 분리된 무료
+# SaaS에 동일 헬스 URL을 별도 등록해야 한다(08§B 요구사항의 핵심 근거).
+# 이 절은 그 SaaS 콘솔에 무엇을 등록해야 하는지의 기록 — 계정 생성·실 등록은
+# 이 리포 밖(무료 티어 후보: UptimeRobot / Better Uptime / Freshping — 택1, 서비스
+# 선정 자체는 결정 대기 상태로 둔다. 무지출 원칙(EXEC-DECISIONS #8)과 정합 — 전부
+# 무료 티어로 충분한 요구사항).
+external_uptime_check:
+  candidates: [UptimeRobot, Better Uptime, Freshping]
+  selection_status: 미확정 — 무료 티어 중 택1(운영 결정 대기, 도메인 확정 후 등록)
+  targets:
+    - name: api-liveness-external
+      url: https://api.${GACHINOL_DOMAIN}/health/liveness
+      interval_sec: 300 # 무료 티어 통상 최소 주기(서비스별 상이 — 등록 시 확인)
+    - name: web-watch-external
+      url: https://watch.${GACHINOL_DOMAIN}/
+      interval_sec: 300
+  alert_channel_env: UPTIME_KUMA_ALERT_WEBHOOK_URL # Kuma와 동일 웹훅 재사용 가능(운영 판단)
+
+# ── env 참조 목록(값은 여기 없음 — 전부 .env류에 키 이름만) ──
+env_refs:
+  - GACHINOL_DOMAIN # 도메인 확정 전까지 미설정(08§E "사용자 결정 3건" ①과 동일 미정 항목)
+  - S3_ENDPOINT # 기존 키 재사용(.env.example에 이미 존재) — 신규 아님
+  - POSTGRES_DB # 기존 키 재사용 — 신규 아님
+  - UPTIME_KUMA_ALERT_WEBHOOK_URL # 신규 — 이름만 .env.example에 추가(값 없음)

@@ -32,6 +32,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+      # CORS(T-W0-02, PUT/GET 오리진 화이트리스트 — 브라우저 presigned 업로드/재생 전제).
+      # MinIO Community Edition은 버킷 단위 PutBucketCors를 지원하지 않는다(AIStor 유료 전용,
+      # 2026-08-08 실측: `mc cors set` → NotImplemented). 이 서버 전역 설정이 로컬 MinIO의 유일한
+      # CORS 메커니즘이며, 메서드/헤더는 제한하지 않고 오리진만 화이트리스트한다(실 작업 제한은
+      # presigned URL 서명 자체가 담당). R2 대상 버킷 단위 CORS는 infra/scripts/r2-cors.ts가 별도 처리.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${S3_CORS_ALLOWED_ORIGINS:-http://localhost:8081}
     ports: ['9000:9000', '9001:9001']
     volumes: [miniodata:/data]
     healthcheck:

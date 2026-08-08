@@ -123,7 +123,14 @@ refresh 토큰 전달 방식(바디 vs 쿠키)의 변경만 다룬다(EVAL-ROUND
 현행(앱): access 15m 메모리 + refresh 14d secure-store, 바디로 refresh 전달. 웹에서는 XSS에 노출되므로:
 
 - **웹**: access = 메모리(JS) / refresh = **HttpOnly + Secure + SameSite=Lax 쿠키**(JS 접근 불가).
-  api에 쿠키 기반 refresh 경로 추가(`POST /v1/auth/refresh` 쿠키 수용) — **기존 바디 방식과 병행**(하위호환, 회전·재사용 탐지 로직 재사용).
+  api에 쿠키 기반 refresh 경로 추가 — **기존 바디 방식과 병행**(하위호환, 회전·재사용 탐지 로직 재사용).
+  **경로는 분리 3종 `POST /v1/auth/web/{login,refresh,logout}`이다**(T-W0-01 구현 확정, **EXEC-DECISIONS #14**로
+  정정 — 舊 문안 "`POST /v1/auth/refresh` 쿠키 수용"은 기존 라우트 확장안이었으나, 그러면 바디 부재 시 동작이
+  달라져 네이티브 계약 표면이 변하고 CSRF 가드를 라우트 단위로 좁게 부착할 수 없다. 분리안이 "기존 방식 병행"
+  요건을 구조적으로 더 강하게 만족한다 — 게이트② 독립 검증 판정).
+  재현: `grep -cE "@Post\('web/(login|refresh|logout)'\)" services/api/src/auth/auth.controller.ts` → **3**
+  (`@Controller('auth')` 하위이므로 소스에 `auth/web/` 문자열은 등장하지 않는다 — 경로 문자열로 grep하면
+  재현되지 않으니 데코레이터로 읽는다).
 - **CSRF**: SameSite=Lax + 상태 변경 요청의 커스텀 헤더(`X-Requested-With`) 요구 + Origin 검증. refresh만 쿠키라 공격면 최소.
 - **CORS**: api에 웹 오리진 화이트리스트(env `WEB_ORIGINS`) — credentials 허용은 화이트리스트 오리진 한정.
 - WS(socket.io)는 현행 유지: 채팅=익명 핸드셰이크, 프롬프터·관제=JWT(메모리 access를 함수형 auth로 — 관제 앱에 이미 구현된 `getFreshAccessToken` 패턴 재사용).
