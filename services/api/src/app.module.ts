@@ -11,6 +11,7 @@ import { AppConfigModule } from './config/config.module';
 import { ContentsModule } from './contents/contents.module';
 import { DistributionCoreModule } from './distribution/distribution.module';
 import { FeedModule } from './feed/feed.module';
+import { GoLinkModule } from './go-link/go-link.module';
 import { HealthModule } from './health/health.module';
 import { LiveModule } from './live/live.module';
 import { MediaModule } from './media/media.module';
@@ -39,6 +40,7 @@ import { UsersModule } from './users/users.module';
     RecommendationsModule, // 주간 콘텐츠 추천(센터) — PipelineModule보다 앞
     PipelineModule,
     FeedModule, // 구독자 공개 피드(@Public read 3종)
+    GoLinkModule, // go.<도메인> 단축링크 OG SSR(@Public HTML — 카톡 미리보기·watch. 리다이렉트)
     LiveModule, // 라이브 + WebSocket(게이트웨이·LiveSession·채팅·댓글수집)
     ArbiterModule, // DCP 파이프라인 상호배제(제온 공존 — DCP_ARBITER_URL 설정 시에만 활성)
   ],
