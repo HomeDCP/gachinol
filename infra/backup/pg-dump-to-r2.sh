@@ -42,6 +42,15 @@
 #       [설계 결정] 데이터 보호가 인코딩 자원 양보보다 우선이므로 이 스크립트는 항상 실행하고,
 #       DCP busy가 관측되면 nice/ionice 우선순위를 더 낮춰(경합 완화) 진행한다.)
 #   임시 경로: BACKUP_TMP_DIR (기본 mktemp -d)
+#     ⚠️ [로컬 macOS + colima 한정 함정 — 배포 대상(Debian 13 제온)에는 해당 없음]
+#     macOS에서 colima로 docker를 띄우면 VM에 기본 마운트되는 경로가 $HOME 하위뿐이다
+#     (colima.yaml `mounts: []` = 기본값, $HOME만 virtiofs로 공유). BACKUP_TMP_DIR을
+#     비워두면 macOS 기본 mktemp가 $TMPDIR(예: /var/folders/...)를 쓰는데, 이 경로는
+#     VM에 안 보여서 docker_mc 폴백(3-tier의 마지막 단계, s3_put/s3_prune_old 참조)의
+#     바인드 마운트(`-v "$BACKUP_TMP_DIR:/work:ro"`)가 "not found"로 실패한다(2026-08-08
+#     실측). 로컬에서 이 폴백 경로를 테스트하려면 BACKUP_TMP_DIR을 $HOME 하위로 지정할
+#     것. 제온은 VM 경계 자체가 없는 네이티브 Linux 호스트라 이 함정이 재현되지 않는다
+#     — 실 배포 실패로 오인해 원인을 잘못 짚지 않도록 범위를 여기 한정해 남긴다.
 #
 # ── crontab 시각 선택 근거는 infra/backup/crontab 상단 주석 참조 ──
 set -euo pipefail
@@ -60,10 +69,15 @@ print_restore_instructions() {
    mc ls backup/${BACKUP_S3_BUCKET:-gachinol-backups}/pg/${POSTGRES_DB:-gachinol}/
    (또는) aws --endpoint-url "$BACKUP_S3_ENDPOINT" s3 ls "s3://${BACKUP_S3_BUCKET:-gachinol-backups}/pg/${POSTGRES_DB:-gachinol}/"
 
-2) 다운로드 + 무결성 확인(동봉된 .sha256과 대조):
+2) 다운로드 + 무결성 확인.
+   .sha256 파일에는 다이제스트 "값만" 들어있다(파일명 없음) — 아래처럼 로컬 파일명을
+   검증 시점에 직접 조립해 대조하므로, 다운로드본을 어떤 이름으로 저장/개명해도(아래처럼
+   restore.dump로 바꿔도) 항상 성립한다(표준 `sha256sum -c <파일>`처럼 내부에 적힌 옛
+   파일명을 찾는 방식이 아님 — 개명 시 깨지는 문제가 구조적으로 없다):
    mc cp backup/<bucket>/pg/<db>/<파일>.dump ./restore.dump
    mc cp backup/<bucket>/pg/<db>/<파일>.dump.sha256 ./restore.dump.sha256
-   sha256sum -c restore.dump.sha256
+   printf '%s  %s\n' "$(cat restore.dump.sha256)" restore.dump | sha256sum -c -
+   (sha256sum 없는 macOS 등에서는) printf '%s  %s\n' "$(cat restore.dump.sha256)" restore.dump | shasum -a 256 -c -
 
 3) 리허설은 반드시 "별도 DB/별도 인스턴스"에 먼저 복원한다(운영 DB에 직접 덮어쓰지 않는다):
    createdb -U <user> gachinol_restore_test
@@ -225,11 +239,17 @@ dump_database() {
   [[ -s "$DUMP_PATH" ]] || die "덤프 파일이 비어있음: $DUMP_PATH"
   log "덤프 완료: $DUMP_PATH ($(du -h "$DUMP_PATH" | cut -f1))"
 
-  # 무결성 체크섬(복구 전 검증용, media-worker sha256File 관례와 동형)
+  # 무결성 체크섬(복구 전 검증용, media-worker sha256File 관례와 동형).
+  # [게이트② FAIL 수정] .sha256에는 다이제스트 "값만" 담는다(파일명 한 줄을 담지 않음) —
+  # `sha256sum -c`류 표준 포맷은 내부에 적힌 파일명과 로컬 파일명이 일치해야 검증되므로,
+  # 복구 시 다운로드본을 다른 이름으로 저장/개명하면(자연스러운 운영 습관) 즉시 깨진다.
+  # 다이제스트만 저장하면 검증 명령이 "지금 이 로컬 파일명"을 매번 새로 조립해 대조하므로
+  # 어떤 이름으로 저장하든(원본 유지·개명 전부) 항상 성립한다 — 이름 불변 규율에 기대지 않는
+  # 구조적 해법. --restore-help의 검증 명령과 반드시 짝을 맞출 것(아래 print_restore_instructions).
   if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$BACKUP_TMP_DIR" && sha256sum "$DUMP_FILENAME") >"${DUMP_PATH}.sha256"
+    sha256sum "$DUMP_PATH" | awk '{print $1}' >"${DUMP_PATH}.sha256"
   elif command -v shasum >/dev/null 2>&1; then
-    (cd "$BACKUP_TMP_DIR" && shasum -a 256 "$DUMP_FILENAME") >"${DUMP_PATH}.sha256"
+    shasum -a 256 "$DUMP_PATH" | awk '{print $1}' >"${DUMP_PATH}.sha256"
   else
     log "WARN: sha256sum/shasum 없음 — 체크섬 생략(무결성 검증 불가 상태로 업로드됨)"
   fi
@@ -301,6 +321,8 @@ s3_put() {
         --region "${BACKUP_S3_REGION:-${S3_REGION:-auto}}"
       ;;
     docker_mc)
+      # 로컬 macOS+colima 한정 함정(배포 대상 무관) — 상단 BACKUP_TMP_DIR 주석 참조.
+      # 이 바인드 마운트가 VM에 안 보이는 호스트 경로를 가리키면 "not found"로 실패한다.
       mc_host="$(build_mc_host_env)"
       docker run --rm --add-host=host.docker.internal:host-gateway \
         -e "MC_HOST_backup=${mc_host}" \
