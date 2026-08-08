@@ -12,6 +12,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'light',
   ios: { bundleIdentifier: 'kr.gachinol.subscriber', supportsTablet: true },
   android: { package: 'kr.gachinol.subscriber', edgeToEdgeEnabled: true },
+  web: { bundler: 'metro', output: 'static' },
   experiments: { typedRoutes: false },
   plugins: ['expo-router', 'expo-video'],
 };

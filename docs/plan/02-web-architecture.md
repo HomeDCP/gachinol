@@ -43,6 +43,9 @@ Expo의 웹 타깃(`expo export --platform web`, react-native-web + expo-router 
 
 | 모듈/패턴 | 웹 동작 | 필요 조치 |
 |---|---|---|
+| **react-native-web**(T-W0-05 신규 추가 — 3앱 웹 타깃 활성화의 근간, RN 컴포넌트→DOM 변환 계층. `pnpm --filter <app> exec expo install`로 해석된 실치 버전 `^0.21.0`(고정 `0.21.2`)) | ✅ 웹 타깃 자체가 이 패키지 위에서 동작(D-T1 채택 근거) | 없음 — 3앱 신규 추가 완료(T-W0-05) |
+| **react-dom**(T-W0-05 신규 추가 — react-native-web의 필수 피어, DOM 렌더러. 실치 `19.1.0`, 3앱 `react`와 동일 버전 정합) | ✅ react-native-web 필수 피어 의존성 | 없음 — 3앱 신규 추가 완료(T-W0-05) |
+| **@expo/metro-runtime**(T-W0-05 신규 추가 — `expo export --platform web`·`expo start --web`의 Metro 웹 클라이언트 런타임/Fast Refresh. 실치 `~6.1.2`) | ✅ 웹 export·dev 서버 필수 런타임 | 없음 — 3앱 신규 추가 완료(T-W0-05) |
 | expo-router, TanStack Query, **React Context**(로컬 상태 — `auth-context`·`draft-context`·`board-filter-context`·`feed-filter-context`·`api-context` 등 3앱 6개소, `grep -rl createContext apps` 재현 결과) | ✅ 그대로 | 없음. **사실 정정(EVAL-ROUND-16 정합성 이슈 P-5)**: 舊 "zustand류 스토어"는 3앱 어느 `package.json`에도 없는 미사용 표기였다(`grep -r zustand` 결과 0건) — 실측한 실제 상태관리 수단(TanStack Query + React Context)으로 교체 |
 | socket.io-client (라이브 채팅·프롬프터) | ✅ 그대로 | 없음 (WS는 브라우저 네이티브) |
 | expo-video (VOD 720p mp4 서명 URL 재생) | ✅ DOM `<video>` | 없음 |
