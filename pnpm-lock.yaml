@@ -1,3 +1,4 @@
+# TEMP(검증 전용): setup-node cache 키를 흔들어 콜드 인스톨을 강제한다. 이 브랜치는 검증 후 삭제.
 lockfileVersion: '6.0'
 
 settings:
