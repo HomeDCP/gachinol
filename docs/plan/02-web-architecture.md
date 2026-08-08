@@ -43,6 +43,9 @@ Expo의 웹 타깃(`expo export --platform web`, react-native-web + expo-router 
 
 | 모듈/패턴 | 웹 동작 | 필요 조치 |
 |---|---|---|
+| **react-native-web**(T-W0-05 신규 추가 — 3앱 웹 타깃 활성화의 근간, RN 컴포넌트→DOM 변환 계층. `pnpm --filter <app> exec expo install`로 해석된 실치 버전 `^0.21.0`(고정 `0.21.2`)) | ✅ 웹 타깃 자체가 이 패키지 위에서 동작(D-T1 채택 근거) | 없음 — 3앱 신규 추가 완료(T-W0-05) |
+| **react-dom**(T-W0-05 신규 추가 — react-native-web의 필수 피어, DOM 렌더러. 실치 `19.1.0`, 3앱 `react`와 동일 버전 정합) | ✅ react-native-web 필수 피어 의존성 | 없음 — 3앱 신규 추가 완료(T-W0-05) |
+| **@expo/metro-runtime**(T-W0-05 신규 추가 — `expo export --platform web`·`expo start --web`의 Metro 웹 클라이언트 런타임/Fast Refresh. 실치 `~6.1.2`) | ✅ 웹 export·dev 서버 필수 런타임 | 없음 — 3앱 신규 추가 완료(T-W0-05) |
 | expo-router, TanStack Query, **React Context**(로컬 상태 — `auth-context`·`draft-context`·`board-filter-context`·`feed-filter-context`·`api-context` 등 3앱 6개소, `grep -rl createContext apps` 재현 결과) | ✅ 그대로 | 없음. **사실 정정(EVAL-ROUND-16 정합성 이슈 P-5)**: 舊 "zustand류 스토어"는 3앱 어느 `package.json`에도 없는 미사용 표기였다(`grep -r zustand` 결과 0건) — 실측한 실제 상태관리 수단(TanStack Query + React Context)으로 교체 |
 | socket.io-client (라이브 채팅·프롬프터) | ✅ 그대로 | 없음 (WS는 브라우저 네이티브) |
 | expo-video (VOD 720p mp4 서명 URL 재생) | ✅ DOM `<video>` | 없음 |
@@ -65,17 +68,35 @@ Expo의 웹 타깃(`expo export --platform web`, react-native-web + expo-router 
 동일 형식)**: 이 표의 분모는 3앱 `package.json` `dependencies` 전건이다. 신규 의존성 추가 시 이 표에 행을
 추가하는 것을 PR 체크리스트 항목으로 둔다.
 
-**분모 경계 각주(EVAL-ROUND-17 영역1 감점3·정합성 이슈 Q-6 해소)**: 3앱 `dependencies` 실측 union은 **19개**
-(`@gachinol/shared`·`@react-navigation/bottom-tabs`·`@tanstack/react-query`·`expo`·`expo-camera`·`expo-constants`·
-`expo-file-system`·`expo-image-picker`·`expo-linking`·`expo-router`·`expo-secure-store`·`expo-splash-screen`·
-`expo-status-bar`·`expo-video`·`react`·`react-native`·`react-native-safe-area-context`·`react-native-screens`·
-`socket.io-client`, 3앱 `package.json` `dependencies` 합산 재현 결과 — 실측 2026-08-04)이며, 위 표는 이 중
-18건을 행으로 다룬다(`expo-camera`는 이번 라운드 신설 행, `expo-file-system`은 "presigned PUT 업로드" 행 본문에
-모듈명이 명시돼 있어 별도 행 없이 이미 커버됨). 나머지 3종 **프레임워크(`expo`·`react`·`react-native`)**와
+**분모 경계 각주(EVAL-ROUND-17 영역1 감점3·정합성 이슈 Q-6 해소. **T-W0-05에서 재현 명령 형식으로 전환 —
+EXEC-DECISIONS #10**)**: 이 표의 분모는 **3앱 `dependencies` 실측 union**이며, **그 시점 값은 재현으로 읽는다**
+— 값·열거를 본문에 박지 않는다(D7-1 박제 금지 · EXEC-DECISIONS #9).
+
+```bash
+# 분모(그 시점 union) — 리포 루트에서 실행
+python3 -c "
+import json
+u=set()
+for a in ('reporter','control-center','subscriber'):
+    u|=set(json.load(open(f'apps/{a}/package.json'))['dependencies'])
+print(len(u)); print(sorted(u))
+"
+```
+
+**전환 근거**: 舊 각주는 union 수(**19개**)와 전체 모듈명 열거, 그리고 "위 표는 이 중 18건을 행으로 다룬다"는
+계수를 본문에 고정하고 있었다. T-W0-05(Expo Web 활성화)가 3앱에 `react-native-web`·`react-dom`·
+`@expo/metro-runtime`을 추가하는 순간 union이 19→22로 바뀌어 그 세 수치가 동시에 stale됐다 — **값을 다시 고쳐
+적으면 다음 의존성 추가 태스크(E3 §B 준-공용 자산 2가 열거하는 lockfile 갱신 태스크군)에 또 깨지므로 형식을
+바꿔 종결한다.** 이 각주가 실제로 보장해야 하는 것은 "몇 개냐"가 아니라 **"분모가 무엇이고 무엇이 그 밖인가"**라는
+경계 규칙이다.
+
+**경계 규칙(값이 아니라 규칙이므로 유지)**: **프레임워크 3종(`expo`·`react`·`react-native`)**과
 **`@gachinol/shared`**는 이 표의 분모 밖으로 둔다 — 프레임워크 3종은 D-T1이 이미 "3앱 전체가 커스텀 네이티브
 모듈 0으로 웹 타깃 동작"을 판정한 축(이 표가 재확인할 대상이 아니라 이 표의 전제)이고, `@gachinol/shared`는
 §B `packages/shared` 행(재사용 100%, 무변경)이 소유하는 축이다 — 이 표는 "3앱이 웹에서 그대로 동작하는가"를
 개별 모듈 단위로 판정하는 표이므로, 이미 다른 절이 판정을 끝낸 두 축을 중복 판정하지 않는다.
+`expo-file-system`은 "presigned PUT 업로드" 행 본문에 모듈명이 명시돼 별도 행 없이 커버된다(행 1:1 대응이
+아닌 유일 예외 — 표를 읽을 때 이 행을 누락으로 오판하지 않도록 남긴다).
 
 ### D-T2. 쉘(래퍼) 앱 = 통합 1개 + PWA 병행
 

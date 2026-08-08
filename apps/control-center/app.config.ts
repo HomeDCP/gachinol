@@ -13,6 +13,7 @@ const config: ExpoConfig = {
   // 대시보드 성격상 태블릿 허용 (센터 관제 화면)
   ios: { bundleIdentifier: 'kr.gachinol.controlcenter', supportsTablet: true },
   android: { package: 'kr.gachinol.controlcenter', edgeToEdgeEnabled: true },
+  web: { bundler: 'metro', output: 'static' },
   experiments: { typedRoutes: false },
   plugins: ['expo-router', 'expo-secure-store', 'expo-video'],
 };

@@ -11,6 +11,7 @@ const config: ExpoConfig = {
   userInterfaceStyle: 'light',
   ios: { bundleIdentifier: 'kr.gachinol.reporter', supportsTablet: false }, // 스토어 제출 전 확정 (open question)
   android: { package: 'kr.gachinol.reporter', edgeToEdgeEnabled: true },
+  web: { bundler: 'metro', output: 'static' },
   experiments: { typedRoutes: false },
   plugins: [
     'expo-router',

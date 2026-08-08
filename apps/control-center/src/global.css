@@ -1,0 +1,17 @@
+/* 웹 엔트리 글로벌 CSS 진입점 (T-W0-05, Expo Web 활성화).
+   후속 T-W1-01(packages/ui 디자인 토큰)이 노출하는 --gachinol-font-* 등
+   CSS 커스텀 프로퍼티를 이 파일에서 소비할 예정 — 현재는 배선하지 않는다. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
