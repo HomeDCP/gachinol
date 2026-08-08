@@ -106,6 +106,14 @@ export const envSchema = z
     //    않는다(@nestjs/config는 validate 통과분만 process.env에 주입). 부팅은 정상이고 쿠키
     //    경로만 조용히 닫혀 원인 추적이 어렵다 — 조율자 조치로 등재, 근거는 EXEC-DECISIONS #13.
     WEB_ORIGINS: z.string().optional(),
+    // go. 단축링크 OG SSR(T-W1-05 — 02§E-5·§D-T6). 위 WEB_ORIGINS와 **동일한 strip 함정**이라
+    // 조율자 조치로 등재한다(근거 EXEC-DECISIONS #13 ①b 동형, 게이트②가 실측 재현: 설정 파일에만
+    // 넣으면 ConfigService.get()이 undefined, 셸/컨테이너 env 직접 주입 시에만 도달).
+    // 값 파싱·기본값은 GoLinkService가 소유한다 — 여기서는 strip 방지만 담당하므로 전부 optional string.
+    GO_LINK_BASE_URL: z.string().optional(), // go. 공개 베이스 URL(og:url·og:image·발급 링크 원천). 미설정 시 요청 자기 URL로 저하
+    WEB_WATCH_BASE_URL: z.string().optional(), // 구독자 웹(watch.) 베이스 — 리다이렉트 목적지 + 직접 링크 병행 발급(D-T6 조치2). 미설정 시 리다이렉트 없이 안내 렌더 + no-store
+    GO_LINK_CACHE_TTL_SEC: z.string().optional(), // OG 페이지 엣지/브라우저 캐시 TTL(§D-T6 "짧은 TTL")
+    GO_LINK_STALE_TTL_SEC: z.string().optional(), // stale-if-error 창(api 다운 시 stale 서빙)
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',
