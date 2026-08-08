@@ -82,6 +82,10 @@ venv/
 !**/prisma/**/*.ts
 !**/*.config.ts
 !**/*.d.ts
+# infra 운영 스크립트(T-W0-02 `infra/scripts/r2-cors.ts` 등) — src/test/prisma 어디에도 걸리지 않아
+# 위 `*.ts` 블랑켓 규칙에 삼켜졌다(산출물이 커밋 자체에서 누락되던 결함).
+# 재현: 이 줄을 지우면 `git check-ignore -v infra/scripts/r2-cors.ts` → `.gitignore:78:*.ts` 히트.
+!infra/scripts/*.ts
 *.m3u8
 tmp/
 temp/
