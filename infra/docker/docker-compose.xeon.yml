@@ -7,13 +7,43 @@
 # 제온은 **가동 중인 DCP 파이프라인**(dcpx-api/worker/redis/caddy)과 호스트를 공유한다.
 # 이 오버레이의 목적은 그 공존을 안전하게 만드는 것이다:
 #   ① 리소스 하드리밋 — DCP worker 상한 26GiB + 우리 몫 < 물리 32GB, 최소 6GB 여유 확보
-#   ② 포트 격리 — dcpx-caddy(:443)·dcpx-api(:8080)와 겹치지 않는 4000번대만 사용
+#   ② 포트 격리 — dcpx-caddy(:443)·dcpx-api(:8080)와 겹치지 않는 포트만 사용(4000·9000·9001·8081)
 #   ③ host net 금지 — 전부 bridge. 호스트 도달은 extra_hosts로만
 #   ④ DCP 상호배제 — api의 DcpArbiterService가 DCP busy 동안 미디어 큐를 정지
 #   ⑤ MinIO — 제온엔 오브젝트 스토리지가 없다(프로덕션은 R2. 여기선 로컬 S3 등가물)
+#   ⑥ web(nginx) — 3앱 정적 서빙 + api/go. 리버스 프록시. 서브도메인 5종 vhost 골격(T-W0-03).
+#      nginx.conf·Dockerfile.web 상세는 그 두 파일 자체 주석 참조.
 #
 # 노출 범위는 LAN 한정이다(결정 사항). nftables가 input DROP이므로 아래 포트를
 # 192.168.0.0/24에 허용해야 앱에서 접근된다 — 그 방화벽 변경은 DCP 박스 설정이므로 별도 승인 후 수행.
+#
+# ── 제온 외부(인터넷) 노출 경로 — 미확정, 실 연결 보류(G9 ②, T-NC-02 접수 기록 참조) ──────────
+# 계획(08§D)의 선택지는 Cloudflare Tunnel(cloudflared) / 포트 개방(방화벽 허용 규칙) 2안이며, W0 착수
+# (2026-08-08) + 4주 초과(2026-09-05) 시 승인 없으면 Tunnel 단독안으로 자동 확정된다. 사용자가 검토 중이라
+# 언급한 Tailscale은 이 2안 밖 후보라 **채택 전까지 구현하지 않는다**
+# (reviews/dod-evidence/w0/T-NC-02-g9-receipt.md ② 참조). 아래는 Tunnel 안을 08§D 자동 확정 방향에 맞춰
+# **설정 코드만 미리 작성**한 것 — 주석 해제 전까지는 `docker compose config`에도 이 서비스가 나타나지
+# 않는다(실제로 아무것도 적용되지 않은 상태). 활성화 절차(사용자 확정 후): ① Cloudflare Zero Trust에서
+# 터널 생성 → 토큰 발급 ② infra/docker/env.example의 CLOUDFLARE_TUNNEL_TOKEN을 .env에 채움
+# ③ 아래 블록 주석 해제 ④ 터널 라우팅에서 각 서브도메인 → 이 compose 네트워크 내부의 web:80 / api:4000
+# (WS 포함)로 연결. 포트 개방을 택할 경우 이 서비스는 불필요 — 대신 nftables에 web(80)·api(4000)
+# LAN→인터넷 허용 규칙을 추가한다(OS 방화벽 설정이라 이 compose 파일의 소관이 아니다 — 별도 승인 필요,
+# 여기서는 그 대체 경로가 있다는 사실만 기록한다).
+#
+# cloudflared:
+#   image: cloudflare/cloudflared:latest
+#   restart: unless-stopped
+#   command: tunnel run
+#   environment:
+#     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN 필요(.env) — Tunnel 채택 확정 후 설정}
+#   depends_on:
+#     web:
+#       condition: service_healthy
+#     api:
+#       condition: service_healthy
+#   deploy:
+#     resources:
+#       limits: { memory: 128m }
 
 services:
   # DCP api는 host net에서 127.0.0.1:8080에만 바인드한다 → bridge인 우리는 호스트 게이트웨이로 도달.
@@ -97,6 +127,39 @@ services:
       /bin/sh -c "mc alias set local http://minio:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY}
       && mc mb --ignore-existing local/${S3_BUCKET:-gachinol-media}"
     restart: 'no'
+
+  # nginx 정적 서빙 + api/go. 리버스 프록시 (T-W0-03 골격). prod compose에는 없는 xeon 전용 서비스 —
+  # 이 임시 백엔드가 도메인·CF 없이도 LAN에서 웹 3앱을 서빙/검증할 수 있게 한다.
+  # 산출물 출처: 이 서비스 자체가 멀티스테이지 빌드로 3앱 `expo export --platform web`을 수행한다
+  # (Dockerfile.web 주석 참조) — 별도 CI 아티팩트 주입·볼륨 마운트 불요.
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        # 웹 번들에 빌드 시점 인라인(런타임 env 아님) — 도메인 미확정이라 기본값은 제온 LAN IP
+        # (S3_PUBLIC_ENDPOINT와 동일 패턴). 도메인 확정 후 WEB_EXPO_PUBLIC_API_URL로 재정의.
+        EXPO_PUBLIC_API_URL: ${WEB_EXPO_PUBLIC_API_URL:-http://192.168.0.101:4000}
+    restart: unless-stopped
+    environment:
+      # server_name 치환용(컨테이너 시작 시 envsubst) — 미확정 도메인은 gachinol.local로 대체,
+      # 실제로는 어떤 Host 헤더도 이 값과 일치하지 않으므로 default_server(444)로 안전하게 막힌다.
+      DOMAIN: ${DOMAIN:-gachinol.local}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # LAN 검증용(모바일 실기기 워크플로와 동일 원칙, CLAUDE.md §9). 인터넷 노출은 별건(G9 ②, 위 참조).
+      - '${WEB_PORT_PUBLISH:-8081}:80'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1/healthz']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { memory: 256m }
 
 volumes:
   miniodata: {}
