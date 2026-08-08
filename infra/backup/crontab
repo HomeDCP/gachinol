@@ -1,0 +1,41 @@
+# infra/backup/crontab
+#
+# T-W0-04 (08§E-3 "백업 파이프라인(PG→R2 일일)") — 제온 호스트에 설치할 cron 항목.
+# 이 파일 자체는 cron이 직접 읽지 않는다(파일명이 표준 위치가 아님) — 배포 시 아래 중
+# 하나로 설치한다(운영 편의를 위해 형식만 여기 고정, 설치 자체는 배포 스크립트/운영자 몫):
+#   ① crontab -u <backup 실행 계정> infra/backup/crontab   (사용자 crontab 통째 교체)
+#   ② 또는 systemd timer로 등치 변환(Debian 13 제온은 systemd 표준 — 장기적으로 권장,
+#      본 태스크 범위 밖이라 crontab 형식만 산출물로 남긴다)
+#
+# ── 시각 선택 근거 (04:00 KST 매일) ──────────────────────────────────────────
+# 1) 트래픽 최저 구간: 08§A 편성 원칙상 월~금은 지사 촬영·업로드, 토~일은 라이브 —
+#    어느 요일이든 새벽 4시(KST)는 국내 시청자 활동이 가장 낮은 시간대(01 도메인 특성상
+#    타깃이 제주 지역민 — 야간 시차 편의 없음, 단일 국내 시간대이므로 이 가정이 유효).
+# 2) DCP 파이프라인과의 자원 경합: 08§B "제온은 가동 중인 DCP 파이프라인과 CPU/RAM을
+#    공유"하지만, DCP 인코딩 작업의 실제 스케줄은 우리가 관측할 수 없다(별도 프로젝트).
+#    "안전한 시각"을 추측으로 고정하는 대신 — 정각을 낮은-경합 확률이 높은 새벽대로
+#    고르고(1차 방어), 실행 시점에 pg-dump-to-r2.sh가 DCP_ARBITER_URL로 busy 여부를
+#    조회해 nice/ionice 우선순위를 낮춰 양보한다(2차 방어, 스크립트 내부 로직).
+#    백업은 DcpArbiterService(미디어 큐)와 달리 "정지"하지 않는다 — 데이터 보호가
+#    인코딩 자원 확보보다 우선이라는 판단(설계 결정, 완료 보고에도 명시).
+# 3) media-worker 트랜스코딩과의 경합도 동일 논리 — 새벽대가 지사 업로드(평일 주간)·
+#    주말 라이브(저녁~야간) 모두와 겹치지 않는 유일한 공통 저활동 구간.
+#
+# ── 타임존 주의 ──
+# 아래 "0 4 * * *"는 **cron을 실행하는 시스템의 로컬 타임존** 기준이다.
+# 제온이 시스템 TZ=Asia/Seoul이면 그대로 사용. 시스템이 UTC라면 KST-9h이므로
+# "0 19 * * *"(전날 19:00 UTC = 익일 04:00 KST)로 바꿔야 한다.
+# 확인: `timedatectl` 또는 `cat /etc/timezone`.
+#
+# ── 로그·실패 처리 ──
+# cron MAILTO는 별도 MTA 설정이 필요해 신뢰할 수 없으므로 쓰지 않는다.
+# 대신 ① 표준출력을 로그 파일로 리다이렉트 ② 스크립트 자체가 실패 시
+# BACKUP_ALERT_WEBHOOK_URL로 알림을 보낸다(pg-dump-to-r2.sh 참조, 이중 방어).
+#
+# 설치 시 backup 계정의 셸 env(또는 envdir/EnvironmentFile)에 아래가 이미 로드돼
+# 있어야 한다(크론 자체는 로그인 셸이 아니라 .bashrc/.zshrc를 안 읽음): POSTGRES_*,
+# BACKUP_S3_*, BACKUP_RETENTION_DAYS, BACKUP_ALERT_WEBHOOK_URL, DCP_ARBITER_URL(선택).
+# 값은 이 리포에 절대 두지 않는다(비밀 금고 — 08§B "compose·env는 git+비밀은 별도 금고").
+#
+# 분   시   일   월   요일   명령
+  0    4    *    *    *      cd /opt/gachinol && /opt/gachinol/infra/backup/pg-dump-to-r2.sh >> /var/log/gachinol/pg-backup.log 2>&1
