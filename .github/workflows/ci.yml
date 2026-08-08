@@ -10,6 +10,18 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # redis-memory-server(services/api devDep)의 postinstall은 Redis를 **소스 컴파일**한다.
+  # ubuntu-latest 러너가 새 GCC/OpenSSL 3.x로 롤포워드되며 그 빌드가 깨졌고(-Wdangling-pointer=,
+  # ERR_func_error_string deprecated → make Error 1), pnpm 스토어 캐시가 살아 있는 동안만 가려져 있었다.
+  # lockfile을 바꾸는 PR은 캐시 키(actions/setup-node cache: pnpm)가 빠지면서 이 콜드 인스톨 경로를 밟는다.
+  #
+  # 이 워크플로는 유닛(`pnpm test`)만 돌리고 e2e는 제외하므로(위 헤더 주석) Redis 바이너리가 아예 불필요하다.
+  # → postinstall 선다운로드만 끈다. 로컬 개발·e2e는 무영향(바이너리는 런타임에 온디맨드 조달).
+  # ⚠️ 이 워크플로에 api e2e 잡을 추가하려면 별도 대응이 필요하다(services 컨테이너로 실 Redis 제공 등)
+  #    — 이 변수만으로는 e2e가 런타임에 같은 빌드 실패를 만난다. EXEC-DECISIONS #11 참조.
+  REDISMS_DISABLE_POSTINSTALL: '1'
+
 jobs:
   node:
     name: node (lint·typecheck·test)
