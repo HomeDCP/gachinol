@@ -16,6 +16,7 @@
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
     "@gachinol/shared": "workspace:*",
+    "@gachinol/ui": "workspace:*",
     "@tanstack/react-query": "^5",
     "expo": "~54.0.36",
     "expo-camera": "~17.0.10",

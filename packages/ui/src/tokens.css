@@ -1,0 +1,41 @@
+/**
+ * packages/ui — 웹 빌드 한정 타이포 CSS 커스텀 프로퍼티 진입점 (T-W1-01)
+ *
+ * 원천: docs/plan/03-accessibility-ux.md §A-1 "rem 전환의 실현 경로" —
+ * "packages/ui가 웹 빌드 한정으로 CSS 커스텀 프로퍼티 기반 타이포 스케일(--gachinol-font-body·
+ * --gachinol-font-caption 등)을 노출하고, 웹 엔트리(글로벌 CSS)에서 이 변수를 rem 단위로 주입한다."
+ *
+ * rem 환산 기준(주석 명시 의무, AC4): 브라우저 기본 루트 폰트 크기 16px 전제(1rem = 16px 미재정의).
+ * WCAG 1.4.4(200% 확대) 대응이 이 파일이 px 대신 rem을 쓰는 이유 — 사용자가 브라우저/OS 텍스트 크기를
+ * 키우면 rem 단위는 그 배율을 따라가지만 px 고정값은 따라가지 않는다.
+ *
+ * 소비 방법(이 태스크는 "노출"까지 — 실제 @import 배선은 소유 파일 밖. 정확한 구문은
+ * T-W1-01 완료 보고 "후속 태스크용 소비 계약" 절 참조):
+ *   apps/{reporter,control-center,subscriber}/src/global.css 상단에
+ *   @import "../../../packages/ui/src/tokens.css"; 추가.
+ *
+ * 네이티브(iOS/Android)는 이 파일을 로드하지 않는다 — packages/ui/src/tokens.ts 내부
+ * Platform.select('web') 분기가 네이티브 경로에서는 이 변수들 대신 숫자 리터럴을 직접 반환한다
+ * (03 §A-1 "네이티브는 기존 숫자 상수를 그대로 쓰도록 Platform.select('web')로 분기").
+ */
+
+:root {
+  /* 본문 최소 18px = 18 / 16 = 1.125rem (03 §A-1 확정 수치, 舊 16px에서 상향) */
+  --gachinol-font-body: 1.125rem;
+  /* 자막(캡션) 최소 16px = 16 / 16 = 1rem (03 §A-1 확정 수치, 舊 13px 하향 폐기) */
+  --gachinol-font-caption: 1rem;
+  /* 제목 최소 22px = 22 / 16 = 1.375rem (03 §A-1 확정 수치, 舊 20px에서 상향) */
+  --gachinol-font-title: 1.375rem;
+
+  /*
+   * 큰 자막 모드 스케일 (03 §A-1 "본문 22px·제목 26px" + §A-3 정본 "자막 22~24px" 중 24px 채택 —
+   * 채택 근거는 완료 보고 참조). 값 정의까지만: 이 변수로 전환하는 토글 UI·상태 관리·
+   * localStorage 저장은 이 태스크 범위 밖(별도 태스크 소유)이다.
+   */
+  /* 큰 자막 모드 본문 22px = 22 / 16 = 1.375rem */
+  --gachinol-font-body-large: 1.375rem;
+  /* 큰 자막 모드 자막 24px = 24 / 16 = 1.5rem */
+  --gachinol-font-caption-large: 1.5rem;
+  /* 큰 자막 모드 제목 26px = 26 / 16 = 1.625rem */
+  --gachinol-font-title-large: 1.625rem;
+}

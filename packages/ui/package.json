@@ -1,0 +1,20 @@
+{
+  "name": "@gachinol/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "가치놀 3앱(reporter·control-center·subscriber) 공용 디자인 토큰 레이어 — 03 §A-1/§A-3 확정 수치의 단일 원천",
+  "main": "./src/tokens.ts",
+  "types": "./src/tokens.ts",
+  "sideEffects": false,
+  "files": [
+    "src"
+  ],
+  "peerDependencies": {
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.6.2"
+  }
+}
