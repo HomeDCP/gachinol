@@ -25,6 +25,10 @@ FROM base AS build
 # 1) 매니페스트만 먼저 복사 → frozen-lockfile 정합(전체 워크스페이스 프로젝트 필요) + 설치 레이어 캐시
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY packages/shared/package.json packages/shared/
+# packages/ui: 3앱이 `workspace:*`로 의존하는 디자인 토큰 레이어(T-W1-01, Wave 3). 소비가 0이던
+# 구간에는 이 복사 없이도 빌드가 통과했으나, T-W1-02(Wave 5)가 subscriber에서 실제로 import를
+# 시작하며 부재가 드러났다 — 워크스페이스 링크 대상이 없으면 `--frozen-lockfile` 설치부터 깨진다.
+COPY packages/ui/package.json packages/ui/
 COPY services/api/package.json services/api/
 COPY services/media-worker/package.json services/media-worker/
 COPY apps/reporter/package.json apps/reporter/
@@ -41,6 +45,9 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 # 2) 소스 복사 후 shared 빌드(3앱이 소비하는 `@gachinol/shared`는 dist 산출물을 본다)
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
+# packages/ui는 빌드 산출물이 없다(`main`이 `./src/tokens.ts` 소스를 직접 가리킨다) — 소스만 있으면 된다.
+# 3앱의 `src/global.css`가 `packages/ui/src/tokens.css`를 @import하므로 CSS 경로 해석에도 이 복사가 필요하다.
+COPY packages/ui/ packages/ui/
 COPY apps/reporter/ apps/reporter/
 COPY apps/control-center/ apps/control-center/
 COPY apps/subscriber/ apps/subscriber/
