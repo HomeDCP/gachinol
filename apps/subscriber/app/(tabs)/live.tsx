@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import type { LiveSessionPublic } from '@gachinol/shared';
+import { colors, radii, spacing, typo } from '@gachinol/ui';
 import { userMessageForError } from '../../src/api/errors';
 import { CATEGORY_LABEL } from '../../src/features/feed/labels';
 import { formatViewerCount, isOnAir, LIVE_STATUS_LABEL } from '../../src/live/format';
@@ -9,7 +10,6 @@ import { useLiveSessions } from '../../src/live/queries';
 import { EmptyState } from '../../src/ui/empty-state';
 import { ErrorView } from '../../src/ui/error-view';
 import { Screen } from '../../src/ui/screen';
-import { colors, radii, spacing, typo } from '../../src/ui/theme';
 
 /** 라이브 카드 — 방송중(live)은 빨강 뱃지 강조, 그 외는 회색 예정 뱃지 */
 function LiveCard({ item }: { item: LiveSessionPublic }): React.JSX.Element {

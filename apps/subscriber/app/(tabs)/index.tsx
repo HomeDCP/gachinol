@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import type { FeedItem, ProgramCategory } from '@gachinol/shared';
+import { colors, radii, spacing, typo } from '@gachinol/ui';
 import { userMessageForError } from '../../src/api/errors';
 import { useFeedFilter } from '../../src/feed-filter-context';
 import { formatDuration, formatRelativeTime } from '../../src/features/feed/format';
@@ -20,7 +21,6 @@ import type { FeedFilter } from '../../src/query/keys';
 import { EmptyState } from '../../src/ui/empty-state';
 import { ErrorView } from '../../src/ui/error-view';
 import { Screen } from '../../src/ui/screen';
-import { colors, radii, spacing, typo } from '../../src/ui/theme';
 
 const CATEGORY_FILTERS: readonly ProgramCategory[] = [
   'news',
@@ -202,7 +202,9 @@ const styles = StyleSheet.create({
   thumbFallbackText: { fontSize: typo.body, color: colors.textMuted, fontWeight: '600' },
   cardTitle: { fontSize: typo.body, fontWeight: '700', color: colors.text },
   cardMeta: { fontSize: typo.caption, color: colors.textMuted },
-  cardSummary: { fontSize: typo.caption, color: colors.text, lineHeight: 18 },
+  // #68 부분: lineHeight 하드코딩(18) → 토큰 파생. typo.body는 네이티브 18(숫자 그대로 일치)·
+  // 웹 1.125rem=18px(root 16px 전제, tokens.css 동일 전제)로 舊 하드코딩 값과 픽셀 단위까지 동일하다.
+  cardSummary: { fontSize: typo.caption, color: colors.text, lineHeight: typo.body },
   cardTime: { fontSize: typo.caption, color: colors.textMuted },
   skeletonThumb: {
     width: '100%',

@@ -1,7 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 import type { PropsWithChildren } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors } from './theme';
+import { colors } from '@gachinol/ui';
 
 /** 화면 공통 래퍼 — SafeArea + 배경. 스크롤은 각 화면이 담당 */
 export function Screen({ children }: PropsWithChildren): React.JSX.Element {

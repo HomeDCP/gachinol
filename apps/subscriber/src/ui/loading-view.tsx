@@ -1,5 +1,5 @@
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { colors, spacing } from './theme';
+import { colors, spacing } from '@gachinol/ui';
 
 export function LoadingView(): React.JSX.Element {
   return (
