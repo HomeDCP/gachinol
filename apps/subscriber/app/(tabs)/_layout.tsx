@@ -1,6 +1,6 @@
 import { StyleSheet, Text } from 'react-native';
 import { Tabs } from 'expo-router';
-import { colors } from '../../src/ui/theme';
+import { colors } from '@gachinol/ui';
 
 /** 탭 아이콘 — 신규 의존성 없이 이모지 라벨로 표기 */
 function tabIcon(emoji: string) {

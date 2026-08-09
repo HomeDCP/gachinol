@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { toId } from '@gachinol/shared';
 import type { CaptionCue, ContentId } from '@gachinol/shared';
+import { colors, radii, spacing, typo } from '@gachinol/ui';
 import { isApiClientError, userMessageForError } from '../../src/api/errors';
 import { selectActiveCue } from '../../src/features/feed/captions';
 import { formatRelativeTime } from '../../src/features/feed/format';
@@ -11,7 +12,6 @@ import { usePlayback } from '../../src/features/feed/queries';
 import { ErrorView } from '../../src/ui/error-view';
 import { LoadingView } from '../../src/ui/loading-view';
 import { Screen } from '../../src/ui/screen';
-import { colors, radii, spacing, typo } from '../../src/ui/theme';
 
 /**
  * 재생 플레이어 격리 — 서명 재생 URL(hlsUrl: 현재 720p mp4 서명 GET URL, 앱은 불투명 취급)로 재생하고

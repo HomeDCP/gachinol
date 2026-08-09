@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { badgeTone, radii, spacing, typo } from './theme';
-import type { BadgeToneName } from './theme';
+import { badgeTone, radii, spacing, typo } from '@gachinol/ui';
+import type { BadgeToneName } from '@gachinol/ui';
 
 interface BadgeProps {
   label: string;

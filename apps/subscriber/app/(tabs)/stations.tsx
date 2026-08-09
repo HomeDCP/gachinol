@@ -1,16 +1,16 @@
 import { FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import type { StationStatus, StationSummary } from '@gachinol/shared';
+import type { BadgeToneName } from '@gachinol/ui';
+import { colors, radii, spacing, typo } from '@gachinol/ui';
 import { userMessageForError } from '../../src/api/errors';
 import { useFeedFilter } from '../../src/feed-filter-context';
 import { usePublicStations } from '../../src/features/feed/queries';
 import { Badge } from '../../src/ui/badge';
-import type { BadgeToneName } from '../../src/ui/theme';
 import { EmptyState } from '../../src/ui/empty-state';
 import { ErrorView } from '../../src/ui/error-view';
 import { LoadingView } from '../../src/ui/loading-view';
 import { Screen } from '../../src/ui/screen';
-import { colors, radii, spacing, typo } from '../../src/ui/theme';
 
 // 서버는 operating·dormant만 반환(planned·center 제외)하나 StationStatus 전수 표기(타입 강제)
 const STATION_STATUS: Record<StationStatus, { label: string; tone: BadgeToneName }> = {

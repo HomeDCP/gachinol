@@ -13,6 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { toId } from '@gachinol/shared';
 import type { ChatMessage, LiveSessionId } from '@gachinol/shared';
+import { colors, radii, spacing, typo } from '@gachinol/ui';
 import { isApiClientError, userMessageForError } from '../../src/api/errors';
 import {
   formatChatTime,
@@ -26,7 +27,6 @@ import { isValidNickname, NICKNAME_MAX_LEN, sanitizeNickname } from '../../src/l
 import { ErrorView } from '../../src/ui/error-view';
 import { LoadingView } from '../../src/ui/loading-view';
 import { Screen } from '../../src/ui/screen';
-import { colors, radii, spacing, typo } from '../../src/ui/theme';
 
 /** 재생 영역 — hlsUrl 있으면 재생, 없으면 정직하게 "준비중"(목 스트림 금지) */
 function LivePlayer({ hlsUrl }: { hlsUrl: string | null }): React.JSX.Element {

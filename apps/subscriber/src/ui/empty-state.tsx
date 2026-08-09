@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { colors, radii, spacing, typo } from './theme';
+import { colors, radii, spacing, typo } from '@gachinol/ui';
 
 interface EmptyStateProps {
   message: string;
