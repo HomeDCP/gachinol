@@ -78,6 +78,8 @@ ENV DOMAIN=gachinol.local
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1/healthz || exit 1
-# envsubst 허용목록을 '${DOMAIN}' 하나로 제한 — nginx 자체 변수($host 등, 소문자·중괄호 없음)는
-# 이 목록과 매칭되지 않아 그대로 보존된다(표준 관용구, 공식 nginx 이미지의 20-envsubst-on-templates.sh와 동형).
-CMD ["/bin/sh", "-c", "envsubst '${DOMAIN}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"]
+# envsubst 허용목록을 '${DOMAIN} ${TUNNEL_HOST}' 둘로 제한 — nginx 자체 변수($host·$connection_upgrade 등,
+# 소문자·중괄호 없음)는 이 목록과 매칭되지 않아 그대로 보존된다(표준 관용구, 공식 nginx 이미지의
+# 20-envsubst-on-templates.sh와 동형). TUNNEL_HOST는 Quick Tunnel 임시 호스트 1개를 허용하는 vhost용이며
+# 미설정 시 compose가 도달 불가능한 기본값(tunnel.invalid)을 주입해 노출이 열리지 않게 한다.
+CMD ["/bin/sh", "-c", "envsubst '${DOMAIN} ${TUNNEL_HOST}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'"]
