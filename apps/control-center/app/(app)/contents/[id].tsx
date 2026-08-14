@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -66,6 +65,7 @@ import { ErrorView } from '../../../src/ui/error-view';
 import { LoadingView } from '../../../src/ui/loading-view';
 import { Screen } from '../../../src/ui/screen';
 import { colors, radii, spacing, typo } from '../../../src/ui/theme';
+import { confirmDialog } from '../../../src/ui/feedback';
 import { showToast } from '../../../src/ui/toast';
 
 const TRANSCRIPT_PREVIEW_COUNT = 8;
@@ -360,35 +360,32 @@ export default function ContentDetailScreen(): React.JSX.Element {
     showToast(userMessageForError(err));
   };
 
-  const confirmApprove = (): void => {
-    Alert.alert('승인할까요?', '승인하면 센터 승인 처리되어 송출 단계로 넘어갑니다.', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '승인',
-        onPress: () =>
-          approve.mutate(undefined, {
-            onSuccess: () => showToast('센터 승인 — 송출 대기'),
-            onError: onTransitionError,
-          }),
-      },
-    ]);
+  const confirmApprove = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '승인할까요?',
+      message: '승인하면 센터 승인 처리되어 송출 단계로 넘어갑니다.',
+      confirmText: '승인',
+    });
+    if (!ok) return;
+    approve.mutate(undefined, {
+      onSuccess: () => showToast('센터 승인 — 송출 대기'),
+      onError: onTransitionError,
+    });
   };
 
-  const confirmRetry = (): void => {
-    Alert.alert('재시도할까요?', '실패한 단계를 다시 시도합니다.', [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '재시도',
-        onPress: () =>
-          retry.mutate(undefined, {
-            onSuccess: () => showToast('재시도를 시작했습니다'),
-            onError: (err) => {
-              if (!(isApiClientError(err) && err.status === 409))
-                showToast(userMessageForError(err));
-            },
-          }),
+  const confirmRetry = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '재시도할까요?',
+      message: '실패한 단계를 다시 시도합니다.',
+      confirmText: '재시도',
+    });
+    if (!ok) return;
+    retry.mutate(undefined, {
+      onSuccess: () => showToast('재시도를 시작했습니다'),
+      onError: (err) => {
+        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
       },
-    ]);
+    });
   };
 
   const openSheet = (kind: Exclude<SheetKind, null>): void => {
@@ -563,7 +560,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
           <>
             <Button
               label="승인"
-              onPress={confirmApprove}
+              onPress={() => void confirmApprove()}
               loading={approve.isPending}
               disabled={anyPending}
             />
@@ -583,7 +580,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
             />
           </>
         ) : actions.canRetry ? (
-          <Button label="재시도" onPress={confirmRetry} loading={retry.isPending} />
+          <Button label="재시도" onPress={() => void confirmRetry()} loading={retry.isPending} />
         ) : !isTerminalStatus(content.status) ? (
           <Text style={styles.metaText}>지금은 대기 단계입니다 (기자·파이프라인 소관).</Text>
         ) : null}

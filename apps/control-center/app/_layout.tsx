@@ -6,6 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useSession } from '../src/auth/auth-context';
 import { createQueryClient } from '../src/query/query-client';
 import { ErrorView } from '../src/ui/error-view';
+import { FeedbackHost } from '../src/ui/feedback';
 
 // 세션 판정(loading) 동안 스플래시 유지
 void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -39,6 +40,8 @@ export default function RootLayout(): React.JSX.Element {
       <AuthProvider>
         <StatusBar style="dark" />
         <RootNavigator />
+        {/* 웹 토스트·확인 모달 호스트 — 네이티브에서는 렌더 0(OS 다이얼로그가 담당) */}
+        <FeedbackHost />
       </AuthProvider>
     </QueryClientProvider>
   );

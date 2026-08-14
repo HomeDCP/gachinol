@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -35,6 +34,7 @@ import { ErrorView } from '../../../../src/ui/error-view';
 import { LoadingView } from '../../../../src/ui/loading-view';
 import { Screen } from '../../../../src/ui/screen';
 import { colors, radii, spacing, typo } from '../../../../src/ui/theme';
+import { confirmDialog } from '../../../../src/ui/feedback';
 import { showToast } from '../../../../src/ui/toast';
 
 /**
@@ -147,24 +147,19 @@ export default function PreviewScreen(): React.JSX.Element {
     showToast(userMessageForError(err));
   };
 
-  const confirmApprove = (): void => {
+  const confirmApprove = async (): Promise<void> => {
     // 다이얼로그 문구는 reviewPolicy 분기
     const message =
       content.reviewPolicy === 'reporter_then_center'
         ? '승인하면 센터 검토로 넘어갑니다.'
         : '승인하면 곧바로 송출 단계로 넘어갑니다.';
-    Alert.alert('승인할까요?', message, [
-      { text: '취소', style: 'cancel' },
-      {
-        text: '승인',
-        onPress: () =>
-          approve.mutate(undefined, {
-            // 자동 연쇄 결과 상태 그대로 표시
-            onSuccess: (c) => finish(`승인 완료 — ${STATUS_BADGE[c.status].label}`),
-            onError: onTransitionError,
-          }),
-      },
-    ]);
+    const ok = await confirmDialog({ title: '승인할까요?', message, confirmText: '승인' });
+    if (!ok) return;
+    approve.mutate(undefined, {
+      // 자동 연쇄 결과 상태 그대로 표시
+      onSuccess: (c) => finish(`승인 완료 — ${STATUS_BADGE[c.status].label}`),
+      onError: onTransitionError,
+    });
   };
 
   const submitRevision = (): void => {
@@ -262,7 +257,7 @@ export default function PreviewScreen(): React.JSX.Element {
       <View style={styles.actionBar}>
         <Button
           label="승인"
-          onPress={confirmApprove}
+          onPress={() => void confirmApprove()}
           loading={approve.isPending}
           disabled={anyPending}
         />

@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -27,6 +26,7 @@ import { Button } from '../../../src/ui/button';
 import { EmptyState } from '../../../src/ui/empty-state';
 import { ErrorView } from '../../../src/ui/error-view';
 import { Screen } from '../../../src/ui/screen';
+import { confirmDialog } from '../../../src/ui/feedback';
 import { showToast } from '../../../src/ui/toast';
 import { colors, radii, spacing, typo } from '../../../src/ui/theme';
 
@@ -84,10 +84,14 @@ export default function RecommendationsScreen(): React.JSX.Element {
         onError: (err) => {
           const existingId = conflictRecommendationId(err);
           if (existingId) {
-            Alert.alert(userMessageForError(err), '기존 주차 추천을 열어볼까요?', [
-              { text: '닫기', style: 'cancel' },
-              { text: '열기', onPress: () => router.push(`/recommendations/${existingId}`) },
-            ]);
+            void confirmDialog({
+              title: userMessageForError(err),
+              message: '기존 주차 추천을 열어볼까요?',
+              confirmText: '열기',
+              cancelText: '닫기',
+            }).then((open) => {
+              if (open) router.push(`/recommendations/${existingId}`);
+            });
             return;
           }
           showToast(userMessageForError(err));
