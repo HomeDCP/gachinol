@@ -10,12 +10,19 @@ export const ContentPriority = {
 export type ContentPriority = (typeof ContentPriority)[keyof typeof ContentPriority];
 // category='emergency'인 콘텐츠 생성 시 priority 기본값 'urgent' (서버 규칙)
 
-/** 콘텐츠 유래 — 기자 촬영물 vs 라이브 VOD. reporterId 유무와 검토 경로가 이 값으로 갈린다 */
+/** 콘텐츠 유래 — 기자 촬영물 · 라이브 VOD · 주민 임시 업로드. reporterId 유무와 검토 경로가 이 값으로 갈린다 */
 export const ContentOrigin = {
   /** 기자 앱 촬영·업로드 (기본) */
   ReporterUpload: 'reporter_upload',
   /** 라이브 종료 후 녹화본 전환 (LiveSession.vodContentId가 역참조) */
   LiveVod: 'live_vod',
+  /**
+   * 무인증 주민 임시 업로드 링크로 수집된 제보 (03 §C-5 · 02 §D-T9).
+   * 담당 기자가 없어 reporterId=null이고, **지사 담당자 검수 승인 전에는 정식 파이프라인
+   * (processing 이후)에 진입하지 않는다** — 이 게이트의 서버측 강제는 api resident-links 모듈이
+   * 소유하며, 승인 상태는 ContentStatus가 아니라 별도 테이블 컬럼으로 표현한다(상태 23종 불변).
+   */
+  ResidentLink: 'resident_link',
 } as const;
 export type ContentOrigin = (typeof ContentOrigin)[keyof typeof ContentOrigin];
 
@@ -28,8 +35,9 @@ export interface Content extends Timestamps {
   origin: ContentOrigin;
   /**
    * 담당 기자 (ReporterUser).
-   * 서버 불변식: origin='reporter_upload' ⇔ non-null. origin='live_vod'는 담당 기자가
-   * 없으므로 null — 기자 승인 게이트를 생략하고 센터 검토로 직행한다 (workflow.ts 참조).
+   * 서버 불변식: non-null ⇔ origin='reporter_upload'. 나머지 유래는 담당 기자가 없어 null이다 —
+   * origin='live_vod'는 기자 승인 게이트를 생략하고 센터 검토로 직행하고(workflow.ts 참조),
+   * origin='resident_link'는 업로더가 무인증 주민이라 지사 담당자 검수 승인을 별도 게이트로 거친다.
    */
   reporterId: UserId | null;
   title: string;
