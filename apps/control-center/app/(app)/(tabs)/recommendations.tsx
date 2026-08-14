@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -27,6 +26,7 @@ import { Button } from '../../../src/ui/button';
 import { EmptyState } from '../../../src/ui/empty-state';
 import { ErrorView } from '../../../src/ui/error-view';
 import { Screen } from '../../../src/ui/screen';
+import { confirmDialog } from '../../../src/ui/feedback';
 import { showToast } from '../../../src/ui/toast';
 import { colors, radii, spacing, typo } from '../../../src/ui/theme';
 
@@ -84,10 +84,14 @@ export default function RecommendationsScreen(): React.JSX.Element {
         onError: (err) => {
           const existingId = conflictRecommendationId(err);
           if (existingId) {
-            Alert.alert(userMessageForError(err), '기존 주차 추천을 열어볼까요?', [
-              { text: '닫기', style: 'cancel' },
-              { text: '열기', onPress: () => router.push(`/recommendations/${existingId}`) },
-            ]);
+            void confirmDialog({
+              title: userMessageForError(err),
+              message: '기존 주차 추천을 열어볼까요?',
+              confirmText: '열기',
+              cancelText: '닫기',
+            }).then((open) => {
+              if (open) router.push(`/recommendations/${existingId}`);
+            });
             return;
           }
           showToast(userMessageForError(err));
@@ -134,6 +138,7 @@ export default function RecommendationsScreen(): React.JSX.Element {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
         contentContainerStyle={styles.chipRow}
       >
         {STATUS_FILTERS.map((f, index) => {
@@ -196,6 +201,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   headerHint: { fontSize: typo.caption, color: colors.textMuted, lineHeight: 18 },
+  // horizontal ScrollView는 부모 flex 안에서 세로로 늘거나(flexGrow) 눌린다(flexShrink).
+  // 실배포에서 구독자 웹은 넓은 화면에서 칩이 잘렸고, 관제 웹은 칩이 세로로 길게 늘어났다 —
+  // 같은 원인의 양방향 증상이다. `style`로 세로 크기를 콘텐츠에 고정한다(contentContainerStyle은
+  // 안쪽 여백만 담당하므로 이 문제를 못 막는다).
+  chipScroll: { flexGrow: 0, flexShrink: 0 },
   chipRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.sm },
   chip: {
     borderWidth: 1,

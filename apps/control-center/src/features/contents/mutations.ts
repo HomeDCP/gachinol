@@ -5,9 +5,19 @@ import type {
   ContentDetail,
   ContentId,
   CreateRevisionRequestBody,
+  Publication,
+  PublicationId,
   RejectContentRequest,
 } from '@gachinol/shared';
-import { approveContent, rejectContent, requestRevision, retryContent } from '../../api/contents';
+import {
+  approveContent,
+  distributeContent,
+  rejectContent,
+  requestRevision,
+  retractPublication,
+  retryContent,
+  retryPublication,
+} from '../../api/contents';
 import { useApiClient } from '../../auth/auth-context';
 import { isApiClientError } from '../../api/errors';
 import { contentKeys } from '../../query/keys';
@@ -72,5 +82,48 @@ export function useRetry(id: ContentId) {
     mutationFn: () => retryContent(client, id),
     onSuccess: (content) => applyContentResult(queryClient, content),
     onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/**
+ * 송출 지시 — center_approved → publishing(서버 CAS) + 채널별 Publication queued.
+ * 응답은 Content가 아니라 Publication[]이라 detail 병합 대상이 없다 → prefix 전체 invalidate로
+ * 상태·송출 결과를 함께 다시 읽는다(송출은 비동기라 즉시 published가 아니다).
+ */
+export function useDistribute(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => distributeContent(client, id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contentKeys.all });
+    },
+    onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/** 채널 단위 재시도 — Content 상태와 독립(일부 채널만 실패한 경우의 복구 경로) */
+export function useRetryPublication(contentId: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (publicationId: PublicationId) => retryPublication(client, publicationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contentKeys.all });
+    },
+    onError: (err) => handleTransitionError(queryClient, contentId, err),
+  });
+}
+
+/** 송출 회수 — published Publication만. 되돌리기 어려우므로 호출부가 확인 다이얼로그를 건다 */
+export function useRetractPublication(contentId: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation<Publication, unknown, PublicationId>({
+    mutationFn: (publicationId: PublicationId) => retractPublication(client, publicationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: contentKeys.all });
+    },
+    onError: (err) => handleTransitionError(queryClient, contentId, err),
   });
 }

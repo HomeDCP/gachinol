@@ -13,6 +13,9 @@ export function Screen({ children }: PropsWithChildren): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg },
-  inner: { flex: 1 },
+  safe: { flex: 1, backgroundColor: colors.bg, alignItems: 'center' },
+  // 콘텐츠 폭 상한 — 배경은 전체를 채우고 콘텐츠만 가운데로 모은다.
+  // 960은 구독자(720)와 관제(1440) 사이다: 기자 웹은 현장 모바일이 주 사용처라 관제처럼 넓힐 이유가
+  // 없지만, 장면 자막 입력·수정 폼이 있어 구독자 피드보다는 여유가 필요하다.
+  inner: { flex: 1, width: '100%', maxWidth: 960 },
 });

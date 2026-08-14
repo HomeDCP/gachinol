@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useNavigation } from 'expo-router';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -34,7 +34,8 @@ export default function CaptureScreen(): React.JSX.Element {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (!recordingRef.current) return;
       e.preventDefault();
-      Alert.alert('녹화 중입니다', '나가려면 먼저 녹화를 중지해 주세요.', [{ text: '확인' }]);
+      // 확인 버튼만 있는 알림이라 토스트로 충분하다(웹에서 Alert는 no-op — ui/feedback 주석 참조)
+      showToast('녹화 중입니다 — 나가려면 먼저 녹화를 중지해 주세요');
     });
     return unsubscribe;
   }, [navigation]);

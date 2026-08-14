@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react';
 import {
-  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -43,6 +42,7 @@ import { Button } from '../../../src/ui/button';
 import { ErrorView } from '../../../src/ui/error-view';
 import { LoadingView } from '../../../src/ui/loading-view';
 import { Screen } from '../../../src/ui/screen';
+import { confirmDialog } from '../../../src/ui/feedback';
 import { showToast } from '../../../src/ui/toast';
 import { colors, radii, spacing, typo } from '../../../src/ui/theme';
 
@@ -135,44 +135,38 @@ export default function RecommendationDetailScreen(): React.JSX.Element {
     showToast(userMessageForError(err));
   };
 
-  const confirmApprove = (): void => {
-    Alert.alert(
-      '승인할까요?',
-      '승인하면 이 주차 추천이 확정됩니다. (송출 배선은 후속 — 자동 송출되지 않습니다)',
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '승인',
-          onPress: () =>
-            approve.mutate(undefined, {
-              onSuccess: () => showToast('주간 추천을 승인했습니다'),
-              onError: onTransitionError,
-            }),
-        },
-      ],
-    );
+  const confirmApprove = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '승인할까요?',
+      message: '승인하면 이 주차 추천이 확정됩니다. (송출 배선은 후속 — 자동 송출되지 않습니다)',
+      confirmText: '승인',
+    });
+    if (!ok) return;
+    approve.mutate(undefined, {
+      onSuccess: () => showToast('주간 추천을 승인했습니다'),
+      onError: onTransitionError,
+    });
   };
 
   /** 생성 실패 재시도 = 같은 주차로 POST /v1/recommendations 재호출 */
-  const confirmRetry = (): void => {
-    Alert.alert('다시 생성할까요?', '해당 주차의 추천을 처음부터 다시 만듭니다.', [
-      { text: '취소', style: 'cancel' },
+  const confirmRetry = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '다시 생성할까요?',
+      message: '해당 주차의 추천을 처음부터 다시 만듭니다.',
+      confirmText: '다시 생성',
+    });
+    if (!ok) return;
+    generate.mutate(
+      { weekOf: recommendation.weekOf },
       {
-        text: '다시 생성',
-        onPress: () =>
-          generate.mutate(
-            { weekOf: recommendation.weekOf },
-            {
-              onSuccess: () => showToast('추천 생성을 다시 시작했습니다'),
-              onError: (err) => {
-                if (!(isApiClientError(err) && err.status === 409)) {
-                  showToast(userMessageForError(err));
-                }
-              },
-            },
-          ),
+        onSuccess: () => showToast('추천 생성을 다시 시작했습니다'),
+        onError: (err) => {
+          if (!(isApiClientError(err) && err.status === 409)) {
+            showToast(userMessageForError(err));
+          }
+        },
       },
-    ]);
+    );
   };
 
   const openSheet = (): void => {
@@ -258,7 +252,7 @@ export default function RecommendationDetailScreen(): React.JSX.Element {
           <>
             <Button
               label="승인"
-              onPress={confirmApprove}
+              onPress={() => void confirmApprove()}
               loading={approve.isPending}
               disabled={anyPending}
             />
@@ -271,7 +265,7 @@ export default function RecommendationDetailScreen(): React.JSX.Element {
             />
           </>
         ) : actions.canRetryGeneration ? (
-          <Button label="다시 생성" onPress={confirmRetry} loading={generate.isPending} />
+          <Button label="다시 생성" onPress={() => void confirmRetry()} loading={generate.isPending} />
         ) : (
           <Text style={styles.metaText}>
             {inProgress ? '생성이 끝나면 결정할 수 있습니다.' : '지금은 결정 단계가 아닙니다.'}

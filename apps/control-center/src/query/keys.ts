@@ -47,6 +47,8 @@ export const contentKeys = {
   list: (filter: BoardFilter) => ['contents', 'list', normalizeFilter(filter)] as const,
   detail: (id: ContentId) => ['contents', 'detail', id] as const,
   logs: (id: ContentId) => ['contents', 'logs', id] as const,
+  /** 채널별 송출 결과 — contents prefix 하위라 전이 invalidate에 함께 걸린다 */
+  publications: (id: ContentId) => ['contents', 'publications', id] as const,
 };
 
 export const stationKeys = {

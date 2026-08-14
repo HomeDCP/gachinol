@@ -27,17 +27,32 @@ const makeJob = (over: Record<string, unknown>) => ({
  *   distributionEvents, distributionQueue, publications,
  *   recommendationEvents, recommendationQueue, recommendations)
  */
-const setup = (opts: { analysisEnabled?: boolean; content?: ReturnType<typeof contentRow> } = {}) => {
+const setup = (
+  opts: {
+    analysisEnabled?: boolean;
+    content?: ReturnType<typeof contentRow>;
+    durationSec?: number | null;
+  } = {},
+) => {
   const analysisEnabled = opts.analysisEnabled ?? false;
   const queue = { getJob: jest.fn() };
   const workflow = { applySystemTransition: jest.fn().mockResolvedValue({ applied: true }) };
-  const assets = { upsertOutput: jest.fn().mockResolvedValue(undefined) };
+  const assets = {
+    upsertOutput: jest.fn().mockResolvedValue(undefined),
+    // null을 '길이 없음'으로 전달할 수 있어야 하므로 ??가 아니라 키 존재로 판정한다
+    findDurationSec: jest
+      .fn()
+      .mockResolvedValue('durationSec' in opts ? opts.durationSec : 63),
+  };
   const producer = {
     enqueuePreview: jest.fn().mockResolvedValue(undefined),
     enqueueThumbnail: jest.fn().mockResolvedValue(undefined),
   };
   const prisma = {
-    content: { findUnique: jest.fn().mockResolvedValue(opts.content ?? contentRow()) },
+    content: {
+      findUnique: jest.fn().mockResolvedValue(opts.content ?? contentRow()),
+      update: jest.fn().mockResolvedValue(undefined),
+    },
     publication: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const analysisProducer = {
@@ -113,6 +128,57 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     expect(producer.enqueuePreview).toHaveBeenCalled();
     expect(producer.enqueueThumbnail).toHaveBeenCalled();
     expect(analysisProducer.enqueueAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('transcode completed: 실측 길이를 Content.durationSec으로 확정 (0:00 표시 결함 회귀 방지)', async () => {
+    const { queue, assets, prisma, service } = setup({ analysisEnabled: false, durationSec: 117 });
+    queue.getJob.mockResolvedValue(
+      makeJob({
+        data: { type: 'transcode', payload: { contentId: 'c-1' }, generation: 1 },
+        returnvalue: { assets: [asset('rendition')] },
+      }),
+    );
+    await (service as any).onCompleted(queue, 'transcode:c-1:g1');
+
+    expect(assets.findDurationSec).toHaveBeenCalledWith('c-1');
+    expect(prisma.content.update).toHaveBeenCalledWith({
+      where: { id: 'c-1' },
+      data: { durationSec: 117 },
+    });
+  });
+
+  it('transcode completed: 자산에 길이가 없으면 Content를 건드리지 않는다 (기존 확정값 보존)', async () => {
+    const { queue, prisma, service } = setup({ analysisEnabled: false, durationSec: null });
+    queue.getJob.mockResolvedValue(
+      makeJob({
+        data: { type: 'transcode', payload: { contentId: 'c-1' }, generation: 1 },
+        returnvalue: { assets: [asset('rendition')] },
+      }),
+    );
+    await (service as any).onCompleted(queue, 'transcode:c-1:g1');
+
+    expect(prisma.content.update).not.toHaveBeenCalled();
+  });
+
+  it('transcode completed: 길이 기록이 실패해도 파이프라인은 계속 진행한다 (processing 고착 금지)', async () => {
+    const { queue, workflow, prisma, producer, service } = setup({ analysisEnabled: false });
+    prisma.content.update.mockRejectedValue(new Error('DB 일시 오류'));
+    queue.getJob.mockResolvedValue(
+      makeJob({
+        data: { type: 'transcode', payload: { contentId: 'c-1' }, generation: 1 },
+        returnvalue: { assets: [asset('rendition')] },
+      }),
+    );
+    await (service as any).onCompleted(queue, 'transcode:c-1:g1');
+
+    expect(workflow.applySystemTransition).toHaveBeenNthCalledWith(
+      2,
+      'c-1',
+      'processing',
+      'preview_generating',
+      'transcode:c-1:g1',
+    );
+    expect(producer.enqueuePreview).toHaveBeenCalled();
   });
 
   it('transcode completed + AI 활성·normal: processing→analyzing → enqueueAnalysis + thumbnail (preview 아님)', async () => {

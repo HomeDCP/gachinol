@@ -274,6 +274,10 @@ export class PipelineService implements OnModuleInit {
         for (const asset of result.assets) {
           await this.assets.upsertOutput(contentId, generation, jobId, asset);
         }
+        // 자산에 실린 실측 길이를 Content로 확정한다(shared Content.durationSec = "편집 완료 후 확정").
+        // 이 배선이 없으면 기자·관제 목록과 구독자 피드가 전부 0:00으로 표시된다 — 실측 원천은
+        // media_assets뿐이고 그 값을 읽는 화면이 없기 때문이다(재생정보만 렌디션 폴백을 갖고 있었다).
+        await this.syncContentDuration(contentId);
         // ensure(active 유실 방어)
         await this.workflow.applySystemTransition(contentId, 'uploaded', 'processing', jobId);
 
@@ -575,5 +579,24 @@ export class PipelineService implements OnModuleInit {
 
   private async loadContentRow(contentId: string) {
     return this.prisma.content.findUnique({ where: { id: contentId } });
+  }
+
+  /**
+   * 트랜스코딩 산출물의 실측 길이를 Content.durationSec으로 확정.
+   * 멱등이며(같은 값 재기록 무해) 자산에 길이가 없으면 아무것도 쓰지 않는다 —
+   * 기존 값(수동 확정분·자동편집 결과)을 null로 덮지 않기 위해서다.
+   * 실패해도 파이프라인을 멈추지 않는다: 길이는 표시용 비정규화 값이고, 여기서 throw하면
+   * 트랜스코딩이 끝났는데도 상태가 processing에 갇힌다.
+   */
+  private async syncContentDuration(contentId: string): Promise<void> {
+    try {
+      const durationSec = await this.assets.findDurationSec(contentId);
+      if (durationSec == null) return;
+      await this.prisma.content.update({ where: { id: contentId }, data: { durationSec } });
+    } catch (err) {
+      this.logger.warn(
+        `durationSec 동기화 실패 (contentId=${contentId}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }

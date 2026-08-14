@@ -199,7 +199,13 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
   독립 루브릭 평가 19라운드(11개 영역 전부 9.5/10+, [docs/plan/reviews/](docs/plan/reviews/))를 통과하고 **사용자 승인** 완료.
   다음 실행 = [docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md)의 **W0(기반)→W1(구독자 웹)→W2(기자·관제 웹)→W3(쉘·PWA)→W4(정리)**.
   네이티브 트랙은 승인 즉시 **동결**(버그픽스도 웹에서만). 착수 게이트: 05 §G 운전자금 확인 + 도메인·제온 노출 방식(사용자 결정).
-  테스트 실측 최신치(2026-08-04, `pnpm --filter <app> test` 재현): **reporter 102 · control-center 153 · subscriber 48(3앱 303) · media-worker 24** — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값.
+  테스트 실측 최신치(**2026-08-15**, `pnpm --filter <app> test` 재현): **api 667 · control-center 179 · reporter 143 · subscriber 48 · media-worker 24** — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
+- **✅ 영상 파이프라인 실증 완료 (2026-08-15)**: 실기 촬영본(iPhone 1080p HEVC 가로 63초·세로 `rotation=-90` 117초)으로
+  **촬영본→업로드→트랜스코딩→AI분석→프리뷰→기자승인→(센터승인)→송출→시청** 한 바퀴를 제온 실배포에서 완주했다.
+  3건 `published` + 카카오 목 송출 전건 성공 + 구독자 공개 피드 노출·재생(`206 video/mp4`). 회전 처리 정확(세로 406×720)·faststart 확인.
+  그 과정에서만 드러난 **잠복 결함 6건을 적발·해소**(대장 #90~#95): DCP arbiter 도달 불가로 인한 미디어 큐 전역 정지 ·
+  서브도메인 vhost API 프록시 부재 · react-native-web `Alert` 무력화(승인 불가) · RNW `ScrollView` 칩 레이아웃 ·
+  관제 송출 미배선 · `contents.durationSec` 미기록. 상세·게이트 사각 분석은 [EXEC-DECISIONS #26](docs/plan/exec/EXEC-DECISIONS.md).
 - **지금(피벗 전 이력)**: shared 완료 → **services/api 스캐폴딩+인증+콘텐츠 CRUD 완료**(Prisma·JWT 회전·상태 전이 전 구간·Swagger·시드),
   `infra/docker-compose.yml`(항목 4 선행) 가동 → **apps/reporter Expo 스캐폴딩 완료** →
   **api 미디어 파이프라인 슬라이스(shared+api) 완료**: `media_assets` Prisma 모델·마이그레이션,
@@ -303,7 +309,12 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
 - **배포 인프라 (본 세션 — 착수점 A)**: api·media-worker·ai-worker **컨테이너화(Docker 멀티스테이지, glibc·pnpm deploy)** + **GitHub Actions CI/CD**(`ci.yml` lint·typecheck·test / `build-images.yml` 이미지 빌드→GHCR) + **프로덕션 compose**(`infra/docker/docker-compose.prod.yml` — R2/Cloudflare 전제, 개발용 `infra/docker-compose.yml`과 분리) 완료. 확정된 제품 모델(카카오 반자동·라이브 YT+FB 하향)은 **문서에만 반영**, **코드(어댑터 재구현)은 유예 — 착수점 B**: `KakaoMockAdapter`→`KakaoManualPublishAdapter`·YouTube 실 어댑터·IG/X/Threads 스코프 정리는 후속 슬라이스. 상세 [docs/infrastructure.md](docs/infrastructure.md) §5·§7.
 - **제온 임시 백엔드 (본 세션 — P1)**: 개인 제온 서버(2×Xeon E5-2683 v4 = 32C/64T, 32GB, Debian 13, Docker 29.6)를 **임시 백엔드**로 사용. 이 호스트는 **가동 중인 DCP 파이프라인과 공유**하므로 상호배제가 필수 → `services/api/src/arbiter/` **DcpArbiterService**(인프로세스, `DCP_ARBITER_URL` 게이트): DCP 측 `GET /api/arbiter/state`를 **읽기 전용** 조회해 `busy`면 **BullMQ 미디어 큐를 전역 정지**(`Queue.pause()` — 별도 프로세스인 media-worker도 새 잡을 안 집고 진행 중 1건만 마침, 선점 없음). 갱신은 **SSE(`/api/stream`) 트리거 + 폴백 폴링**이며 **`busy` 불린만 소비**(DCP의 상태머신 재구현 0 → 그쪽 상태 추가에 면역). imminent(`stage===null && queued>0`)는 우리 리스크 정책으로 양보하되, **개입 대기(`review_pending` 등)에는 양보하지 않는다**(사람 대기라 큐가 안 움직여 우리가 영구 정지함). 조회 실패는 `DCP_ARBITER_FAIL_MODE`(기본 hold). 상태 노출 `GET /v1/system/processing-state`. 배포는 `infra/docker/docker-compose.xeon.yml` **오버레이**(prod compose 위에 덧씌움 — MinIO 추가·전 서비스 메모리 리밋·media-worker `cpus:8`+동시성1·포트 4000/9000만·bridge 유지 + `extra_hosts: host.docker.internal`). **shared·Prisma 무변경**, api 유닛 381→419. DCP 측 계약은 그쪽 DSGN-API §2.1(외부 조회 계약)이 원천.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
-  1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD·`reporter_only` 자동 송출 후킹
+  1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD
+     (~~`reporter_only` 자동 송출 후킹~~은 이미 동작 중이며, **센터 송출 지시 UI도 2026-08-15 배선 완료** — 대장 #94)
+  1-1. `auto_edit` 착수 시 `contents.durationSec` 확정 주체 재정리 — 현재는 트랜스코딩 실측이 채우지만
+     (대장 #95) shared 계약은 "편집 완료 후 확정"이라 자동편집 산출물이 원천이 되어야 한다
+  1-2. 세로 영상 썸네일 프로파일 비대칭(`scale=640:-2` 폭 고정 → 세로는 640×1138) — 렌디션·프리뷰의
+     높이 기준(`min(ih,H)`)과 어긋난다. 실사용 목록 확인 후 판단(EXEC-DECISIONS #26 ⑤)
   2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
   3. ai-worker 실 제공자(OpenAI Whisper/비전) 주입 + 추천 **승인→송출(publishing/published)** 배선 + 주간 자동 생성 스케줄(BullMQ repeatable)
   4. ~~`infra` 배포 스크립트/IaC~~ → **컨테이너화·CI/CD·프로덕션 compose 완료**. 남은 것: VM 프로비저닝·배포(CD) 워크플로·백업(R2)/마이그레이션 스크립트

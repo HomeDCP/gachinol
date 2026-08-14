@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { Alert } from 'react-native';
 import { Stack, useNavigation } from 'expo-router';
 import { DraftProvider, useDraft } from '../../../../src/features/contents/draft-context';
+import { confirmDialog } from '../../../../src/ui/feedback';
 
 function WizardStack(): React.JSX.Element {
   const navigation = useNavigation();
@@ -14,14 +14,15 @@ function WizardStack(): React.JSX.Element {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (!isDirtyRef.current) return;
       e.preventDefault();
-      Alert.alert('작성을 그만둘까요?', '저장하지 않은 내용은 사라집니다.', [
-        { text: '계속 작성', style: 'cancel' },
-        {
-          text: '나가기',
-          style: 'destructive',
-          onPress: () => navigation.dispatch(e.data.action),
-        },
-      ]);
+      void confirmDialog({
+        title: '작성을 그만둘까요?',
+        message: '저장하지 않은 내용은 사라집니다.',
+        confirmText: '나가기',
+        cancelText: '계속 작성',
+        destructive: true,
+      }).then((leave) => {
+        if (leave) navigation.dispatch(e.data.action);
+      });
     });
     return unsubscribe;
   }, [navigation, isDirtyRef]);
