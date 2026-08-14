@@ -55,6 +55,10 @@ export class ContentWorkflowService {
     // to 결정 정책 — from 목록 하드코딩 대신 canTransitionContent가 최종 판정
     if (from === 'awaiting_center_review') {
       this.requireCenterActor(user);
+      // 기존에는 이 분기가 policyGuard를 호출하지 않았다(원래 ①~③ 어느 것도 이 전이에 해당하지 않아서
+      // 무해했다) — ④ 미성년자 동의 게이트가 바로 이 전이(승인 단계·센터 검토)를 1차 대상으로 삼으므로
+      // 여기서도 호출해야 한다(그렇지 않으면 HTTP POST /:id/approve 경로가 게이트를 우회한다).
+      this.policyGuard(content, from, 'center_approved', actor);
       this.assertAllowed(from, 'center_approved');
       const now = new Date();
       await this.prisma.$transaction(async (tx) => {
@@ -330,8 +334,22 @@ export class ContentWorkflowService {
   /**
    * §11-4 정책 가드 — 전이 맵(구조적 상한) 위의 서버 몫.
    * ① preview_generating→awaiting_reporter_review: origin='reporter_upload'만
-   * ② preview_generating→awaiting_center_review: origin='live_vod'만 (기자 승인 생략 경로)
+   * ② preview_generating→awaiting_center_review: origin∈{'live_vod','resident_link'} (기자 승인 생략 경로 —
+   *    두 유래 모두 담당 기자가 없다(reporterId=null 불변식, shared content.ts 주석). resident_link 출구는
+   *    대장 #87(T-W2-13 편입분) — T-W2-08이 ContentOrigin에 resident_link를 추가하며 preview_generating의
+   *    두 출구(reporter_upload 전용·live_vod 전용) 중 어느 쪽도 못 타는 사각이 생겼던 것을 해소한다.
+   *    awaiting_reporter_review는 아래 ③의 requireOwnerReporter가 reporterId===user.id를 요구하므로
+   *    reporterId=null인 두 유래는 애초에 그 경로를 완주할 수 없다(선택의 여지 없이 center 경로가 유일해).
    * ③ awaiting_reporter_review 계열 결정(승인·수정요청·반려)의 user 액터는 담당 기자만
+   * ④ 미성년자(만 14세 미만) 피촬영자 동의 게이트 (07 §3-3·02 §E-20, T-W2-13 본체, fail-closed) —
+   *    hasMinorSubject && !minorConsentConfirmedAt이면 "승인"을 차단한다. 정본 문언의 1차 대상은
+   *    승인 단계(센터 검토: awaiting_center_review→center_approved)다. 다만 reviewPolicy='reporter_only'는
+   *    센터 검토를 아예 거치지 않고 reporter_approved가 같은 트랜잭션에서 즉시 publishing으로 자동
+   *    연쇄되므로(afterReporterApproval) — 그 경로에서는 awaiting_reporter_review→reporter_approved가
+   *    실질적인 "승인"(더 이상의 인간 검토 없이 송출 확정)이라 동일 게이트를 적용한다. 그렇지 않으면
+   *    미성년자 플래그가 켜진 콘텐츠가 동의 확인 없이 공개 송출로 직행해 게이트 취지가 무력화된다.
+   *    reviewPolicy='reporter_then_center'의 reporter_approved는 이후 센터 게이트가 다시 잡으므로
+   *    대상에서 제외(중복 차단 불필요, 기자 자신의 검토 단계는 그대로 통과 — AC5 회귀 금지 대상 아님).
    */
   private policyGuard(
     content: ContentRow,
@@ -349,7 +367,7 @@ export class ContentWorkflowService {
       }
     }
     if (from === 'preview_generating' && to === 'awaiting_center_review') {
-      if (content.origin !== 'live_vod') {
+      if (content.origin !== 'live_vod' && content.origin !== 'resident_link') {
         throw new DomainException(
           'invalid_transition',
           "origin='reporter_upload'는 기자 검토(awaiting_reporter_review)를 거쳐야 합니다",
@@ -363,6 +381,22 @@ export class ContentWorkflowService {
       actor.type === 'user'
     ) {
       this.requireOwnerReporter(content, actor.user);
+    }
+    const isCenterApproval = from === 'awaiting_center_review' && to === 'center_approved';
+    const isReporterOnlyTerminalApproval =
+      from === 'awaiting_reporter_review' &&
+      to === 'reporter_approved' &&
+      content.reviewPolicy === 'reporter_only';
+    if (
+      (isCenterApproval || isReporterOnlyTerminalApproval) &&
+      content.hasMinorSubject &&
+      !content.minorConsentConfirmedAt
+    ) {
+      throw new DomainException(
+        'invalid_transition',
+        '피촬영자 만 14세 미만 플래그가 켜져 있습니다 — 법정대리인 동의서 확인 전에는 승인할 수 없습니다',
+        { from, to, hasMinorSubject: true },
+      );
     }
   }
 

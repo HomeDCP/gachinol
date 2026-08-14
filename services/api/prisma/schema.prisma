@@ -57,13 +57,14 @@ model User {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  station                 Station?               @relation(fields: [stationId], references: [id])
-  refreshTokens           RefreshToken[]
-  reportedContents        Content[]              @relation("ContentReporter")
-  approvedContents        Content[]              @relation("ContentApprover")
-  approvedRecommendations WeeklyRecommendation[] @relation("RecommendationApprover")
-  issuedResidentLinks     ResidentUploadLink[]   @relation("ResidentLinkIssuer")
-  reviewedResidentUploads ResidentUpload[]       @relation("ResidentUploadReviewer")
+  station                       Station?               @relation(fields: [stationId], references: [id])
+  refreshTokens                 RefreshToken[]
+  reportedContents              Content[]              @relation("ContentReporter")
+  approvedContents              Content[]              @relation("ContentApprover")
+  minorConsentConfirmedContents Content[]              @relation("ContentMinorConsentConfirmer")
+  approvedRecommendations       WeeklyRecommendation[] @relation("RecommendationApprover")
+  issuedResidentLinks           ResidentUploadLink[]   @relation("ResidentLinkIssuer")
+  reviewedResidentUploads       ResidentUpload[]       @relation("ResidentUploadReviewer")
 
   @@index([role, stationId])
   @@map("users")
@@ -88,40 +89,47 @@ model RefreshToken {
 }
 
 model Content {
-  id                      String    @id
-  stationId               String    @map("station_id")
+  id                            String    @id
+  stationId                     String    @map("station_id")
   // ContentOrigin 3종: 'reporter_upload' | 'live_vod' | 'resident_link'
   // (shared ContentOrigin과 값 집합 정합 — 이 주석과 shared 상수는 같은 마이그레이션에서만 함께 바뀐다)
-  origin                  String    @default("reporter_upload")
-  reporterId              String?   @map("reporter_id") // 불변식: non-null ⇔ origin='reporter_upload' (서비스 강제. live_vod·resident_link는 null)
-  title                   String
-  description             String?
-  category                String // ProgramCategory
-  cultureTopics           String[]  @default([]) @map("culture_topics") // CultureTopic[] — culture일 때만 non-empty
-  status                  String    @default("draft") // ContentStatus 23종
-  priority                String    @default("normal") // ContentPriority
-  reviewPolicy            String    @map("review_policy") // ReviewPolicy
-  generation              Int       @default(1)
-  scenes                  Json      @default("[]") // wire Scene[] 그대로 (JSONB, 키 camelCase)
-  targetChannelAccountIds String[]  @default([]) @map("target_channel_account_ids") // FK 없음 — channel_accounts 미도입
-  tags                    String[]  @default([])
-  remakeOfContentId       String?   @map("remake_of_content_id")
-  lastError               Json?     @map("last_error") // { message, at }
-  durationSec             Int?      @map("duration_sec")
-  approvedByUserId        String?   @map("approved_by_user_id")
-  approvedAt              DateTime? @map("approved_at") @db.Timestamptz(3)
-  publishedAt             DateTime? @map("published_at") @db.Timestamptz(3)
-  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  origin                        String    @default("reporter_upload")
+  reporterId                    String?   @map("reporter_id") // 불변식: non-null ⇔ origin='reporter_upload' (서비스 강제. live_vod·resident_link는 null)
+  title                         String
+  description                   String?
+  category                      String // ProgramCategory
+  cultureTopics                 String[]  @default([]) @map("culture_topics") // CultureTopic[] — culture일 때만 non-empty
+  status                        String    @default("draft") // ContentStatus 23종
+  priority                      String    @default("normal") // ContentPriority
+  reviewPolicy                  String    @map("review_policy") // ReviewPolicy
+  generation                    Int       @default(1)
+  scenes                        Json      @default("[]") // wire Scene[] 그대로 (JSONB, 키 camelCase)
+  targetChannelAccountIds       String[]  @default([]) @map("target_channel_account_ids") // FK 없음 — channel_accounts 미도입
+  tags                          String[]  @default([])
+  remakeOfContentId             String?   @map("remake_of_content_id")
+  lastError                     Json?     @map("last_error") // { message, at }
+  durationSec                   Int?      @map("duration_sec")
+  approvedByUserId              String?   @map("approved_by_user_id")
+  approvedAt                    DateTime? @map("approved_at") @db.Timestamptz(3)
+  // 미성년자(만 14세 미만) 피촬영자 동의 게이트 (07 §3-3·02 §E-20, T-W2-13) — 개인정보 최소수집:
+  // 아동 식별정보(이름·생년월일) 컬럼 없음, "14세 미만 등장 여부" 불린 사실 + 확인자·확인시각만 다룬다.
+  // 기본값 false=미체크(기존 행 안전 백필). 동의서 파일 자체는 저장하지 않는다(템플릿·문구는 07 소관).
+  hasMinorSubject               Boolean   @default(false) @map("has_minor_subject")
+  minorConsentConfirmedByUserId String?   @map("minor_consent_confirmed_by_user_id") // fail-closed 판정: null=미확인
+  minorConsentConfirmedAt       DateTime? @map("minor_consent_confirmed_at") @db.Timestamptz(3)
+  publishedAt                   DateTime? @map("published_at") @db.Timestamptz(3)
+  createdAt                     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  station          Station           @relation(fields: [stationId], references: [id])
-  reporter         User?             @relation("ContentReporter", fields: [reporterId], references: [id])
-  approvedBy       User?             @relation("ContentApprover", fields: [approvedByUserId], references: [id])
-  revisionRequests RevisionRequest[]
-  mediaAssets      MediaAsset[]
-  aiAnalyses       AiAnalysis[]
-  publications     Publication[]
-  residentUpload   ResidentUpload? // origin='resident_link'일 때만 존재(1:1) — 검수 게이트 판정의 원천
+  station                 Station           @relation(fields: [stationId], references: [id])
+  reporter                User?             @relation("ContentReporter", fields: [reporterId], references: [id])
+  approvedBy              User?             @relation("ContentApprover", fields: [approvedByUserId], references: [id])
+  minorConsentConfirmedBy User?             @relation("ContentMinorConsentConfirmer", fields: [minorConsentConfirmedByUserId], references: [id])
+  revisionRequests        RevisionRequest[]
+  mediaAssets             MediaAsset[]
+  aiAnalyses              AiAnalysis[]
+  publications            Publication[]
+  residentUpload          ResidentUpload? // origin='resident_link'일 때만 존재(1:1) — 검수 게이트 판정의 원천
 
   @@index([stationId, status, publishedAt(sort: Desc)]) // shared 권고: "지사별 최신 송출"
   @@index([stationId, createdAt(sort: Desc)]) // 지사별 목록

@@ -118,6 +118,121 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
         'invalid_transition',
       );
     });
+
+    // 대장 #87 (T-W2-13 편입분) — T-W2-08이 ContentOrigin에 resident_link를 추가하며 생긴
+    // preview_generating 출구 사각(reporter_upload·live_vod 어느 쪽도 아님)을 해소한다.
+    // 근거: resident_link도 담당 기자가 없다(reporterId=null, shared content.ts 불변식) — live_vod와
+    // 동일 사유로 센터 검토 직행이 유일하게 완주 가능한 출구다(awaiting_reporter_review는 담당 기자
+    // 소유 검사 때문에 애초에 통과 불능).
+    it('resident_link는 preview_generating→awaiting_center_review로 전이 가능(신설 출구)', async () => {
+      const { prisma, service } = setup(
+        contentRow({ status: 'preview_generating', origin: 'resident_link', reporterId: null }),
+      );
+      await service.transition('c-1', 'awaiting_center_review', adminUser());
+      expect(prisma.content.updateMany.mock.calls[0][0].data.status).toBe('awaiting_center_review');
+    });
+
+    it('resident_link는 preview_generating→awaiting_reporter_review로는 여전히 거절(다른 출구는 불가)', async () => {
+      const { service } = setup(
+        contentRow({ status: 'preview_generating', origin: 'resident_link', reporterId: null }),
+      );
+      await expectDomainError(
+        service.transition('c-1', 'awaiting_reporter_review', adminUser()),
+        'invalid_transition',
+      );
+    });
+  });
+
+  describe('미성년자 피촬영자 동의 게이트 (07 §3-3·02 §E-20, T-W2-13 본체, fail-closed)', () => {
+    it('센터 검토 승인: hasMinorSubject=true + 미확인 → invalid_transition (approve() 경유)', async () => {
+      const row = contentRow({
+        status: 'awaiting_center_review',
+        hasMinorSubject: true,
+        minorConsentConfirmedAt: null,
+      });
+      const { service } = setup(row);
+      const err = await expectDomainError(
+        service.approve(row.id, centerOperatorUser()),
+        'invalid_transition',
+      );
+      expect(err.details).toMatchObject({
+        from: 'awaiting_center_review',
+        to: 'center_approved',
+        hasMinorSubject: true,
+      });
+    });
+
+    it('센터 검토 승인: hasMinorSubject=true + 확인 완료 → 통과 (approve() 경유)', async () => {
+      const row = contentRow({
+        status: 'awaiting_center_review',
+        hasMinorSubject: true,
+        minorConsentConfirmedByUserId: 'u-center',
+        minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
+      });
+      const { prisma, service } = setup(row);
+      await service.approve(row.id, centerOperatorUser());
+      expect(prisma.content.updateMany.mock.calls[0][0].data.status).toBe('center_approved');
+    });
+
+    it('센터 검토 승인: hasMinorSubject=false → 무영향으로 통과 (기존 경로 회귀 없음)', async () => {
+      const row = contentRow({
+        status: 'awaiting_center_review',
+        hasMinorSubject: false,
+        minorConsentConfirmedAt: null,
+      });
+      const { prisma, service } = setup(row);
+      await service.approve(row.id, centerOperatorUser());
+      expect(prisma.content.updateMany.mock.calls[0][0].data.status).toBe('center_approved');
+    });
+
+    it('범용 transition()으로 center_approved 진입해도 동일 게이트 적용(우회 불가)', async () => {
+      const row = contentRow({
+        status: 'awaiting_center_review',
+        hasMinorSubject: true,
+        minorConsentConfirmedAt: null,
+      });
+      const { service } = setup(row);
+      await expectDomainError(
+        service.transition(row.id, 'center_approved', centerOperatorUser()),
+        'invalid_transition',
+      );
+    });
+
+    it('reviewPolicy=reporter_only: hasMinorSubject=true + 미확인 → 기자 승인 자체가 차단(공개 송출 직행 경로 원천 봉쇄)', async () => {
+      const row = contentRow({
+        status: 'awaiting_reporter_review',
+        reviewPolicy: 'reporter_only',
+        hasMinorSubject: true,
+        minorConsentConfirmedAt: null,
+      });
+      const { service } = setup(row);
+      await expectDomainError(service.approve(row.id, reporterUser()), 'invalid_transition');
+    });
+
+    it('reviewPolicy=reporter_only: hasMinorSubject=true + 확인 완료 → publishing까지 자동 연쇄 통과', async () => {
+      const row = contentRow({
+        status: 'awaiting_reporter_review',
+        reviewPolicy: 'reporter_only',
+        hasMinorSubject: true,
+        minorConsentConfirmedByUserId: 'u-center',
+        minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
+      });
+      const { prisma, service } = setup(row);
+      await service.approve(row.id, reporterUser());
+      expect(prisma.content.updateMany.mock.calls[1][0].data.status).toBe('publishing');
+    });
+
+    it('reviewPolicy=reporter_then_center: hasMinorSubject=true + 미확인이어도 기자 승인 단계는 통과(센터 게이트가 후속으로 차단)', async () => {
+      const row = contentRow({
+        status: 'awaiting_reporter_review',
+        reviewPolicy: 'reporter_then_center',
+        hasMinorSubject: true,
+        minorConsentConfirmedAt: null,
+      });
+      const { prisma, service } = setup(row);
+      await service.approve(row.id, reporterUser());
+      expect(prisma.content.updateMany.mock.calls[1][0].data.status).toBe('awaiting_center_review');
+    });
   });
 
   describe('approve — afterReporterApproval 자동 연쇄', () => {
