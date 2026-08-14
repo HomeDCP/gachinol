@@ -93,6 +93,7 @@ export default function FeedScreen(): React.JSX.Element {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
         contentContainerStyle={styles.chipRow}
       >
         <Pressable
@@ -119,6 +120,7 @@ export default function FeedScreen(): React.JSX.Element {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
         contentContainerStyle={styles.chipRow}
       >
         <Pressable
@@ -175,6 +177,11 @@ export default function FeedScreen(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
+  // horizontal ScrollView는 부모 flex 안에서 세로로 늘거나(flexGrow) 눌린다(flexShrink).
+  // 실배포에서 구독자 웹은 넓은 화면에서 칩이 잘렸고, 관제 웹은 칩이 세로로 길게 늘어났다 —
+  // 같은 원인의 양방향 증상이다. `style`로 세로 크기를 콘텐츠에 고정한다(contentContainerStyle은
+  // 안쪽 여백만 담당하므로 이 문제를 못 막는다).
+  chipScroll: { flexGrow: 0, flexShrink: 0 },
   chipRow: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   chip: {
     borderWidth: 1,
