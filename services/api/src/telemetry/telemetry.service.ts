@@ -43,6 +43,23 @@ export type TelemetryEventName = (typeof TelemetryEventName)[keyof typeof Teleme
 export const TELEMETRY_MAX_BATCH_SIZE = 100;
 
 /**
+ * 개별 이벤트 payload 직렬화 크기 상한(바이트) — 대장 #79 조치②: `payload: z.record(...)`가 임의
+ * 키-값을 허용해, 배치(최대 `TELEMETRY_MAX_BATCH_SIZE`건) 각 이벤트마다 거대한 payload를 실을 수
+ * 있던 취약점을 막는다. 실제 카탈로그 payload(percent 숫자·enabled 불리언·mode 문자열)는 수십 바이트
+ * 수준이라 4KB는 충분히 여유롭다. 초과 시 zod가 배치 전체를 400(validation_failed)으로 거부한다 —
+ * 구조 위반이라 "미지의 이벤트 이름은 무시" 정책(위 안내)과 달리 조용히 삼키지 않는다.
+ * env 미도입(고정 상수로 충분한 규모, 조율자 권고).
+ */
+export const TELEMETRY_MAX_PAYLOAD_BYTES = 4096;
+
+/** UTF-8 직렬화 바이트 기준(문자 길이 아님) — 이모지·한글 등 멀티바이트 페이로드를 과소평가하지 않는다 */
+const zTelemetryPayload = z
+  .record(z.string(), z.unknown())
+  .refine((payload) => Buffer.byteLength(JSON.stringify(payload), 'utf8') <= TELEMETRY_MAX_PAYLOAD_BYTES, {
+    message: `payload는 직렬화 시 최대 ${TELEMETRY_MAX_PAYLOAD_BYTES}바이트까지 허용됩니다`,
+  });
+
+/**
  * 이벤트 봉투 — `name`만 구조적으로 강제하고, 트랙별 세부 필드는 느슨한 `payload` 레코드에 싣는다.
  * (이름별로 형태가 다른 discriminated union을 쓰면 낯선 이름 자체가 파싱 단계에서 배치 전체를
  * 400시킨다 — 위 "미지의 이벤트 이름 처리" 결정과 충돌하므로 의도적으로 피한다.)
@@ -56,7 +73,7 @@ export const zTelemetryEvent = z.object({
   contentId: z.string().min(1).max(128).optional(),
   /** 클라이언트 보고 시각(ISO 8601) — 구조화 로그 상관용, 집계 로직은 수신 순서만 사용(아래 참조) */
   occurredAt: z.string().datetime().optional(),
-  payload: z.record(z.string(), z.unknown()).optional(),
+  payload: zTelemetryPayload.optional(),
 });
 export type TelemetryEventInput = z.infer<typeof zTelemetryEvent>;
 
@@ -115,16 +132,39 @@ export interface TelemetrySummary {
     /**
      * KPI "큰 자막 모드 활성 비율" — 세션별 "가장 최근에 관측된 토글 상태"가 ON인 세션의 비율
      * (수신 순서 기준 최종 상태 — `occurredAt` 정렬은 하지 않는다, 단일 프로세스 인메모리 롤업이라
-     * 수신 순서가 곧 관측 순서). `sessionId` 없는 이벤트는 각각 독립 세션으로 취급(집계에서 유실 방지).
-     * 관측된 세션이 0건이면 null.
+     * 수신 순서가 곧 관측 순서). 분모는 **`sessionId`가 있는 이벤트로 상관된 세션만**(아래
+     * `anonymousToggleObservedCount` 참고 — 대장 #79 조치① 이후 익명 이벤트는 제외). 관측된 세션이
+     * 0건이면 null.
      */
     activeRatio: number | null;
+    /**
+     * 대장 #79 조치① — `sessionId` 없는(상관 불가) 토글 이벤트 수. `__anon_${counter++}`로 매번
+     * 새 세션 키를 발급해 세션 Map이 요청마다 무한 증가하던 취약점을 막기 위해, 익명 토글은 세션 Map에
+     * 넣지 않고 이 스칼라 카운터로만 집계한다. `toggleOnEventCount`/`toggleOffEventCount`(원시 총계)
+     * 에는 여전히 포함되지만 `activeRatio`(세션 기반 비율) 분모·분자에서는 제외된다 — 세션 상관이
+     * 불가능한 관측을 세션인 것처럼 비율에 섞으면 부정확해지므로, 정확도를 위해 의도적으로 분리한다.
+     */
+    anonymousToggleObservedCount: number;
   };
   modeSelection: {
     simpleCount: number;
     preciseCount: number;
     /** 01 §C-7 간단 모드 채택률 실측 — simple / (simple + precise). 관측 0건이면 null */
     simpleAdoptionRate: number | null;
+  };
+  /**
+   * 대장 #79 조치② — 세션 Set/Map·contentId Map 각각의 "상한 도달로 신규 키를 드롭한 횟수".
+   * 0이면 관측이 완전하다(상한에 부딪히지 않음). 0보다 크면 해당 카테고리의 세션/콘텐츠 다양성이
+   * `TELEMETRY_MAX_ROLLUP_KEYS`를 넘어섰다는 뜻이며, 그 카테고리의 세션 기반 KPI(완주율·재개
+   * 성공률·자막 활성 비율)가 실제보다 과소추정될 수 있다는 신호다(과대추정은 없음 — 드롭된 세션은
+   * 분자·분모 어디에도 들어가지 않는다). 원시 총계(카운터)는 상한과 무관하게 항상 정확하다.
+   */
+  capacityDrops: {
+    viewCountsByContent: number;
+    sessionsEnteredWizard: number;
+    sessionsResumedUpload: number;
+    sessionsCompletedUpload: number;
+    captionSessionStates: number;
   };
 }
 
@@ -138,10 +178,23 @@ const intersectionSize = (a: ReadonlySet<string>, b: ReadonlySet<string>): numbe
 };
 
 /**
+ * 롤업 세션 Set/Map(진입·재개·완료 세션, 자막 세션 상태) + contentId Map 각각의 최대 엔트리 수 —
+ * 대장 #79 조치③: 상한이 없으면 (레이트리밋 부재와 결합해) 인메모리 롤업이 무한 증가해 메모리
+ * 고갈 벡터가 된다. 5000은 "동시 관측 세션/콘텐츠 다양성"으로 넉넉한 여유치(문자열 키 최대
+ * 128바이트 × 5000 × 컬렉션 5개 ≈ 수백 KB~수 MB 규모로 유계)이며, 실사용 규모(제주 12개 지사) 대비
+ * 과도하게 낮지 않다. 상한 도달 후 "새 키" 추가는 조용히 버리지 않고 `capacityDrops`로 노출한다
+ * (기존 키 갱신은 세트/맵 크기를 늘리지 않으므로 상한과 무관하게 항상 허용). env 미도입.
+ */
+export const TELEMETRY_MAX_ROLLUP_KEYS = 5000;
+
+/**
  * 순수 인메모리 롤업 — 프레임워크 무관(단위 테스트가 NestJS DI 없이 직접 구성 가능).
  * `TelemetryService`가 프로세스 생애주기 동안 단일 인스턴스를 보유한다(싱글턴 프로바이더).
  */
 export class TelemetryRollup {
+  /** 테스트가 작은 상한으로 드롭 동작을 빠르게 검증할 수 있도록 생성자 주입(운영 기본값=상수) */
+  constructor(private readonly maxRollupKeys: number = TELEMETRY_MAX_ROLLUP_KEYS) {}
+
   private totalEventsReceived = 0;
   private unknownEventCount = 0;
 
@@ -153,6 +206,7 @@ export class TelemetryRollup {
     p100: 0,
   };
   private readonly viewCountsByContent = new Map<string, number>();
+  private viewCountsByContentDropped = 0;
 
   private wizardStepEnterCount = 0;
   private wizardStepExitCount = 0;
@@ -162,14 +216,57 @@ export class TelemetryRollup {
   private readonly sessionsEnteredWizard = new Set<string>();
   private readonly sessionsCompletedUpload = new Set<string>();
   private readonly sessionsResumedUpload = new Set<string>();
+  private sessionsEnteredWizardDropped = 0;
+  private sessionsCompletedUploadDropped = 0;
+  private sessionsResumedUploadDropped = 0;
 
   private toggleOnEventCount = 0;
   private toggleOffEventCount = 0;
   private readonly latestCaptionStateBySession = new Map<string, boolean>();
-  private anonCaptionSessionCounter = 0;
+  private captionSessionStatesDropped = 0;
+  /** sessionId 없는(상관 불가) 토글 관측 수 — 세션 Map에는 절대 넣지 않는다(무한 키 발급 방지) */
+  private anonymousToggleObservedCount = 0;
 
   private simpleCount = 0;
   private preciseCount = 0;
+
+  /** contentId 등 카운트형 Map — 기존 키는 항상 갱신, 신규 키는 상한 도달 시 드롭+카운트 */
+  private bumpCappedMapCount(map: Map<string, number>, key: string, onDrop: () => void): void {
+    const existing = map.get(key);
+    if (existing !== undefined) {
+      map.set(key, existing + 1);
+      return;
+    }
+    if (map.size >= this.maxRollupKeys) {
+      onDrop();
+      return;
+    }
+    map.set(key, 1);
+  }
+
+  /** 세션 Set — 이미 있는 값은 그대로(크기 불변), 신규 값만 상한 검사 */
+  private addToCappedSet(set: Set<string>, value: string, onDrop: () => void): void {
+    if (set.has(value)) return;
+    if (set.size >= this.maxRollupKeys) {
+      onDrop();
+      return;
+    }
+    set.add(value);
+  }
+
+  /** 세션별 최신 상태 Map — 기존 세션의 상태 갱신은 상한과 무관하게 항상 허용, 신규 세션만 상한 검사 */
+  private setCappedSessionState(
+    map: Map<string, boolean>,
+    key: string,
+    value: boolean,
+    onDrop: () => void,
+  ): void {
+    if (!map.has(key) && map.size >= this.maxRollupKeys) {
+      onDrop();
+      return;
+    }
+    map.set(key, value);
+  }
 
   /** 카탈로그 밖 이름이면 'unknown'(카운트만 증가), 아니면 트랙별 카운터 갱신 후 'known' */
   record(event: TelemetryEventInput): 'known' | 'unknown' {
@@ -179,9 +276,10 @@ export class TelemetryRollup {
       case TelemetryEventName.PlaybackStart:
         this.playbackStartCount += 1;
         if (event.contentId) {
-          this.viewCountsByContent.set(
+          this.bumpCappedMapCount(
+            this.viewCountsByContent,
             event.contentId,
-            (this.viewCountsByContent.get(event.contentId) ?? 0) + 1,
+            () => (this.viewCountsByContentDropped += 1),
           );
         }
         return 'known';
@@ -196,7 +294,13 @@ export class TelemetryRollup {
 
       case TelemetryEventName.WizardStepEnter:
         this.wizardStepEnterCount += 1;
-        if (event.sessionId) this.sessionsEnteredWizard.add(event.sessionId);
+        if (event.sessionId) {
+          this.addToCappedSet(
+            this.sessionsEnteredWizard,
+            event.sessionId,
+            () => (this.sessionsEnteredWizardDropped += 1),
+          );
+        }
         return 'known';
 
       case TelemetryEventName.WizardStepExit:
@@ -209,12 +313,24 @@ export class TelemetryRollup {
 
       case TelemetryEventName.UploadResume:
         this.uploadResumeCount += 1;
-        if (event.sessionId) this.sessionsResumedUpload.add(event.sessionId);
+        if (event.sessionId) {
+          this.addToCappedSet(
+            this.sessionsResumedUpload,
+            event.sessionId,
+            () => (this.sessionsResumedUploadDropped += 1),
+          );
+        }
         return 'known';
 
       case TelemetryEventName.UploadComplete:
         this.uploadCompleteCount += 1;
-        if (event.sessionId) this.sessionsCompletedUpload.add(event.sessionId);
+        if (event.sessionId) {
+          this.addToCappedSet(
+            this.sessionsCompletedUpload,
+            event.sessionId,
+            () => (this.sessionsCompletedUploadDropped += 1),
+          );
+        }
         return 'known';
 
       case TelemetryEventName.LargeCaptionToggle: {
@@ -222,8 +338,20 @@ export class TelemetryRollup {
         if (typeof enabled === 'boolean') {
           if (enabled) this.toggleOnEventCount += 1;
           else this.toggleOffEventCount += 1;
-          const key = event.sessionId ?? `__anon_${this.anonCaptionSessionCounter++}`;
-          this.latestCaptionStateBySession.set(key, enabled);
+
+          if (event.sessionId) {
+            this.setCappedSessionState(
+              this.latestCaptionStateBySession,
+              event.sessionId,
+              enabled,
+              () => (this.captionSessionStatesDropped += 1),
+            );
+          } else {
+            // sessionId 없음 = 세션 상관 불가 — 과거엔 `__anon_${counter++}`로 매번 새 키를
+            // 세션 Map에 발급해 요청 1건당 1엔트리씩 영구 누적됐다(대장 #79 조치①). 세션 Map에는
+            // 절대 넣지 않고 별도 스칼라로만 집계한다(무한 키 발급 자체를 구조적으로 차단).
+            this.anonymousToggleObservedCount += 1;
+          }
         }
         return 'known';
       }
@@ -272,11 +400,19 @@ export class TelemetryRollup {
         toggleOnEventCount: this.toggleOnEventCount,
         toggleOffEventCount: this.toggleOffEventCount,
         activeRatio: ratio(captionStates.filter(Boolean).length, captionStates.length),
+        anonymousToggleObservedCount: this.anonymousToggleObservedCount,
       },
       modeSelection: {
         simpleCount: this.simpleCount,
         preciseCount: this.preciseCount,
         simpleAdoptionRate: ratio(this.simpleCount, this.simpleCount + this.preciseCount),
+      },
+      capacityDrops: {
+        viewCountsByContent: this.viewCountsByContentDropped,
+        sessionsEnteredWizard: this.sessionsEnteredWizardDropped,
+        sessionsResumedUpload: this.sessionsResumedUploadDropped,
+        sessionsCompletedUpload: this.sessionsCompletedUploadDropped,
+        captionSessionStates: this.captionSessionStatesDropped,
       },
     };
   }
