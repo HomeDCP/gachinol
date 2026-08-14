@@ -5,8 +5,11 @@ import type {
   ContentListQuery,
   ContentSummary,
   CreateRevisionRequestBody,
+  DistributeContentRequest,
   PageQuery,
   Paginated,
+  Publication,
+  PublicationId,
   RejectContentRequest,
   StatusTransitionLog,
 } from '@gachinol/shared';
@@ -62,3 +65,28 @@ export const listTransitionLogs = (
   c.request<Paginated<StatusTransitionLog>>('GET', `/contents/${id}/transition-logs`, {
     query: { page: q.page, pageSize: q.pageSize },
   });
+
+/**
+ * POST /v1/contents/:id/distribute — center_approved만. 송출은 승인과 분리된 별도 지시다
+ * (reporter_only는 기자 승인이 publishing으로 자동 연쇄하지만, reporter_then_center는
+ * 센터 승인 후 여기서 멈춘다 — shared afterReporterApproval).
+ * 대상 채널은 서버가 해석한다(content.targetChannelAccountIds → 소속 지사 connected kakao).
+ */
+export const distributeContent = (
+  c: ApiClient,
+  id: ContentId,
+  body: DistributeContentRequest = {},
+): Promise<readonly Publication[]> =>
+  c.request<readonly Publication[]>('POST', `/contents/${id}/distribute`, { body });
+
+/** GET /v1/contents/:id/publications — 채널별 송출 결과 */
+export const listPublications = (c: ApiClient, id: ContentId): Promise<readonly Publication[]> =>
+  c.request<readonly Publication[]>('GET', `/contents/${id}/publications`);
+
+/** POST /v1/publications/:id/retry — 채널 단위 재시도(failed만). Content 상태와 독립 */
+export const retryPublication = (c: ApiClient, id: PublicationId): Promise<Publication> =>
+  c.request<Publication>('POST', `/publications/${id}/retry`);
+
+/** POST /v1/publications/:id/retract — 송출 후 회수(published만) */
+export const retractPublication = (c: ApiClient, id: PublicationId): Promise<Publication> =>
+  c.request<Publication>('POST', `/publications/${id}/retract`);

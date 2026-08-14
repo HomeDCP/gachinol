@@ -16,6 +16,7 @@ import { toId } from '@gachinol/shared';
 import type {
   AiAnalysis,
   ContentId,
+  Publication,
   RevisionRequest,
   SceneId,
   StatusTransitionLog,
@@ -35,16 +36,26 @@ import {
   isStaleAnalysis,
 } from '../../../src/features/contents/analysis';
 import { centerActionsFor } from '../../../src/features/contents/actions';
-import { CATEGORY_LABEL, CULTURE_TOPIC_LABEL } from '../../../src/features/contents/labels';
+import {
+  CATEGORY_LABEL,
+  CULTURE_TOPIC_LABEL,
+  PLATFORM_LABEL,
+  PUBLICATION_STATUS_LABEL,
+  PUBLICATION_STATUS_TONE,
+} from '../../../src/features/contents/labels';
 import {
   useApprove,
+  useDistribute,
   useReject,
   useRequestRevision,
+  useRetractPublication,
   useRetry,
+  useRetryPublication,
 } from '../../../src/features/contents/mutations';
 import {
   useContentDetail,
   useMediaAccessUrl,
+  usePublications,
   useTransitionLogs,
 } from '../../../src/features/contents/queries';
 import {
@@ -275,6 +286,51 @@ function LogRow({ log }: { log: StatusTransitionLog }): React.JSX.Element {
   );
 }
 
+/**
+ * 채널 1건의 송출 결과. 채널 단위 상태머신은 Content와 독립이라(shared publication.ts)
+ * Content가 published여도 개별 채널은 failed일 수 있다 — 그 경우가 재시도 버튼의 존재 이유다.
+ * 액션 노출은 shared PUBLICATION_STATUS_TRANSITIONS와 같은 조건이다:
+ * failed→queued(재시도) · published→retracted(회수).
+ */
+function PublicationRow({
+  publication,
+  onRetry,
+  onRetract,
+  busy,
+}: {
+  publication: Publication;
+  onRetry: () => void;
+  onRetract: () => void;
+  busy: boolean;
+}): React.JSX.Element {
+  const { status, platform } = publication;
+  return (
+    <View style={styles.logRow}>
+      <View style={styles.pubHeader}>
+        <Text style={styles.bodyText}>{PLATFORM_LABEL[platform]}</Text>
+        <Badge label={PUBLICATION_STATUS_LABEL[status]} tone={PUBLICATION_STATUS_TONE[status]} />
+      </View>
+      <Text style={styles.metaText}>
+        시도 {publication.attempts}회
+        {publication.publishedAt ? ` · ${formatDateTime(publication.publishedAt)}` : ''}
+      </Text>
+      {publication.errorMessage ? (
+        <Text style={styles.pubError}>{publication.errorMessage}</Text>
+      ) : null}
+      {publication.externalUrl ? (
+        <Text style={styles.pubLink} numberOfLines={1}>
+          {publication.externalUrl}
+        </Text>
+      ) : null}
+      {status === 'failed' ? (
+        <Button label="이 채널 재시도" variant="secondary" onPress={onRetry} disabled={busy} />
+      ) : status === 'published' ? (
+        <Button label="회수" variant="secondary" onPress={onRetract} disabled={busy} />
+      ) : null}
+    </View>
+  );
+}
+
 type SheetKind = 'revision' | 'reject' | null;
 
 /** ③④ 콘텐츠 상세 + AI분석 + 프리뷰 + 이력 + 센터 결정 액션바 (통합 1화면) */
@@ -297,6 +353,10 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const requestRevision = useRequestRevision(contentId);
   const reject = useReject(contentId);
   const retry = useRetry(contentId);
+  const distribute = useDistribute(contentId);
+  const retryPublication = useRetryPublication(contentId);
+  const retractPublication = useRetractPublication(contentId);
+  const publications = usePublications(contentId, { poll: focused });
 
   const stationId = detail.data?.content.stationId;
   const station = useStation(stationId);
@@ -349,7 +409,9 @@ export default function ContentDetailScreen(): React.JSX.Element {
     content.scenes.find((s) => s.id === sceneId)?.caption;
   const logItems = logs.data?.pages.flatMap((p) => p.items) ?? [];
   const orderedScenes = [...content.scenes].sort((a, b) => a.order - b.order);
-  const anyPending = approve.isPending || requestRevision.isPending || reject.isPending;
+  const anyPending =
+    approve.isPending || requestRevision.isPending || reject.isPending || distribute.isPending;
+  const publicationRows = publications.data ?? [];
 
   const onTransitionError = (err: unknown): void => {
     if (isApiClientError(err) && err.status === 409) {
@@ -382,6 +444,52 @@ export default function ContentDetailScreen(): React.JSX.Element {
     if (!ok) return;
     retry.mutate(undefined, {
       onSuccess: () => showToast('재시도를 시작했습니다'),
+      onError: (err) => {
+        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
+      },
+    });
+  };
+
+  const confirmDistribute = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '송출할까요?',
+      message: '승인된 콘텐츠를 대상 채널로 내보냅니다. 채널별 결과는 아래에서 확인할 수 있습니다.',
+      confirmText: '송출',
+    });
+    if (!ok) return;
+    distribute.mutate(undefined, {
+      onSuccess: (rows) => showToast(`${rows.length}개 채널로 송출을 시작했습니다`),
+      onError: (err) => {
+        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
+      },
+    });
+  };
+
+  const confirmRetryPublication = async (p: Publication): Promise<void> => {
+    const ok = await confirmDialog({
+      title: `${PLATFORM_LABEL[p.platform]} 재송출할까요?`,
+      message: '이 채널만 다시 시도합니다. 이미 성공한 채널은 영향을 받지 않습니다.',
+      confirmText: '재시도',
+    });
+    if (!ok) return;
+    retryPublication.mutate(p.id, {
+      onSuccess: () => showToast('재송출을 시작했습니다'),
+      onError: (err) => {
+        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
+      },
+    });
+  };
+
+  const confirmRetract = async (p: Publication): Promise<void> => {
+    const ok = await confirmDialog({
+      title: `${PLATFORM_LABEL[p.platform]} 송출을 회수할까요?`,
+      message: '이미 게시된 콘텐츠를 내립니다. 되돌리려면 다시 송출해야 합니다.',
+      confirmText: '회수',
+      destructive: true,
+    });
+    if (!ok) return;
+    retractPublication.mutate(p.id, {
+      onSuccess: () => showToast('송출을 회수했습니다'),
       onError: (err) => {
         if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
       },
@@ -531,6 +639,22 @@ export default function ContentDetailScreen(): React.JSX.Element {
           </View>
         ) : null}
 
+        {/* (f) 채널별 송출 결과 — 송출 지시 이후에만 행이 생긴다(지시 전엔 섹션 자체를 숨긴다) */}
+        {publicationRows.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>송출 채널 ({publicationRows.length})</Text>
+            {publicationRows.map((pub) => (
+              <PublicationRow
+                key={pub.id}
+                publication={pub}
+                onRetry={() => void confirmRetryPublication(pub)}
+                onRetract={() => void confirmRetract(pub)}
+                busy={retryPublication.isPending || retractPublication.isPending}
+              />
+            ))}
+          </View>
+        ) : null}
+
         {/* (f) 전이 이력 (접이식) */}
         <View style={styles.card}>
           <Pressable onPress={() => setLogsOpen((v) => !v)}>
@@ -579,6 +703,13 @@ export default function ContentDetailScreen(): React.JSX.Element {
               disabled={anyPending}
             />
           </>
+        ) : actions.canDistribute ? (
+          <Button
+            label="송출"
+            onPress={() => void confirmDistribute()}
+            loading={distribute.isPending}
+            disabled={anyPending}
+          />
         ) : actions.canRetry ? (
           <Button label="재시도" onPress={() => void confirmRetry()} loading={retry.isPending} />
         ) : !isTerminalStatus(content.status) ? (
@@ -726,6 +857,14 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   subCardTitle: { fontSize: typo.caption, fontWeight: '700', color: colors.textMuted },
+  pubHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  pubError: { fontSize: typo.caption, color: colors.danger },
+  pubLink: { fontSize: typo.caption, color: colors.textMuted },
   logRow: { paddingVertical: spacing.sm, gap: spacing.xs },
   actionBar: {
     padding: spacing.lg,

@@ -1,6 +1,17 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import type { ContentDetail, ContentId, MediaAccessUrl, MediaAssetId } from '@gachinol/shared';
-import { getContentDetail, listContents, listTransitionLogs } from '../../api/contents';
+import type {
+  ContentDetail,
+  ContentId,
+  MediaAccessUrl,
+  MediaAssetId,
+  Publication,
+} from '@gachinol/shared';
+import {
+  getContentDetail,
+  listContents,
+  listPublications,
+  listTransitionLogs,
+} from '../../api/contents';
 import { getMediaAccessUrl } from '../../api/media';
 import { useApiClient } from '../../auth/auth-context';
 import { contentKeys, mediaKeys } from '../../query/keys';
@@ -65,5 +76,26 @@ export function useMediaAccessUrl(assetId: MediaAssetId | undefined) {
     enabled: assetId != null,
     // 서명 URL 만료(DOWNLOAD_URL_TTL_SEC 기본 900s) 전에 재발급되도록 짧게
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * 채널별 송출 결과. 송출은 비동기(큐)라 지시 직후엔 queued뿐이므로, 진행 중(queued/publishing)이
+ * 하나라도 있으면 5s 폴링한다 — 상세의 15s 폴링(자동 진행 상태)보다 촘촘해야 채널 단위 결과가
+ * 제때 보인다. Content가 published여도 개별 채널은 failed일 수 있어 상태만으로는 판정할 수 없다.
+ */
+export function usePublications(id: ContentId, opts?: { poll?: boolean }) {
+  const client = useApiClient();
+  const poll = opts?.poll ?? false;
+  return useQuery<readonly Publication[]>({
+    queryKey: contentKeys.publications(id),
+    queryFn: () => listPublications(client, id),
+    refetchInterval: poll
+      ? (query) => {
+          const rows = query.state.data as readonly Publication[] | undefined;
+          const inFlight = rows?.some((p) => p.status === 'queued' || p.status === 'publishing');
+          return inFlight ? 5_000 : false;
+        }
+      : false,
   });
 }
