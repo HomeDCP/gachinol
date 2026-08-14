@@ -145,6 +145,10 @@ services:
       # server_name 치환용(컨테이너 시작 시 envsubst) — 미확정 도메인은 gachinol.local로 대체,
       # 실제로는 어떤 Host 헤더도 이 값과 일치하지 않으므로 default_server(444)로 안전하게 막힌다.
       DOMAIN: ${DOMAIN:-gachinol.local}
+      # Cloudflare Quick Tunnel의 임시 호스트 1개만 허용하는 vhost용(nginx.conf "터널 노출 vhost").
+      # 미설정 기본값 tunnel.invalid는 실재하지 않는 TLD라 어떤 요청도 매칭되지 않는다 = 노출 0.
+      # 터널 URL이 바뀌면 이 값만 교체하고 `web`을 재기동한다(이미지 재빌드 불요).
+      TUNNEL_HOST: ${TUNNEL_HOST:-tunnel.invalid}
     depends_on:
       api:
         condition: service_healthy

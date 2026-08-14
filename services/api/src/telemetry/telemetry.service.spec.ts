@@ -1,5 +1,7 @@
 import {
   TELEMETRY_MAX_BATCH_SIZE,
+  TELEMETRY_MAX_PAYLOAD_BYTES,
+  TELEMETRY_MAX_ROLLUP_KEYS,
   TelemetryEventName,
   TelemetryRollup,
   TelemetryService,
@@ -42,6 +44,31 @@ describe('zTelemetryEvent', () => {
     expect(() =>
       zTelemetryEvent.parse({ name: 'playback_start', occurredAt: '2026-08-09T00:00:00.000Z' }),
     ).not.toThrow();
+  });
+
+  describe(`payload 직렬화 크기 상한(${TELEMETRY_MAX_PAYLOAD_BYTES}바이트, AC: 과대 payload → 400)`, () => {
+    it('상한 이하는 통과', () => {
+      const payload = { note: 'x'.repeat(TELEMETRY_MAX_PAYLOAD_BYTES - 50) };
+      expect(() => zTelemetryEvent.parse({ name: 'playback_start', payload })).not.toThrow();
+    });
+
+    it('상한 초과는 거부(단일 거대 값)', () => {
+      const payload = { note: 'x'.repeat(TELEMETRY_MAX_PAYLOAD_BYTES + 1) };
+      expect(() => zTelemetryEvent.parse({ name: 'playback_start', payload })).toThrow();
+    });
+
+    it('상한 초과는 거부(다수의 작은 키 합산)', () => {
+      const payload: Record<string, string> = {};
+      for (let i = 0; i < TELEMETRY_MAX_PAYLOAD_BYTES; i += 1) payload[`k${i}`] = '1';
+      expect(() => zTelemetryEvent.parse({ name: 'playback_start', payload })).toThrow();
+    });
+
+    it('멀티바이트(한글) payload는 문자 길이가 아니라 UTF-8 바이트 길이로 판정한다', () => {
+      // 한글 1자 = UTF-8 3바이트. 문자수 기준이면 상한 이하로 보이지만 바이트 기준으로는 초과.
+      const charCount = Math.floor(TELEMETRY_MAX_PAYLOAD_BYTES / 2);
+      const payload = { note: '가'.repeat(charCount) };
+      expect(() => zTelemetryEvent.parse({ name: 'playback_start', payload })).toThrow();
+    });
   });
 });
 
@@ -193,13 +220,40 @@ describe('TelemetryRollup', () => {
       expect(largeCaptionMode.activeRatio).toBeCloseTo(1 / 2); // s1=OFF, s2=ON
     });
 
-    it('sessionId 없는 토글은 각각 독립 세션으로 집계(유실 방지)', () => {
+    it('대장 #79 조치① — sessionId 없는 토글은 세션 Map에 넣지 않고 별도 스칼라로만 집계(activeRatio에서 제외)', () => {
       const rollup = new TelemetryRollup();
       rollup.record({ name: TelemetryEventName.LargeCaptionToggle, payload: { enabled: true } });
       rollup.record({ name: TelemetryEventName.LargeCaptionToggle, payload: { enabled: false } });
+      // 세션 있는 이벤트 1건도 섞어서, 익명 이벤트가 activeRatio 분모에 전혀 기여하지 않음을 확인
+      rollup.record({
+        name: TelemetryEventName.LargeCaptionToggle,
+        sessionId: 's1',
+        payload: { enabled: true },
+      });
 
       const { largeCaptionMode } = rollup.toSummary();
-      expect(largeCaptionMode.activeRatio).toBeCloseTo(0.5); // 2개의 독립 "세션" 중 1개 ON
+      expect(largeCaptionMode.toggleOnEventCount).toBe(2); // 익명 ON 1 + 세션 ON 1(원시 총계는 그대로 포함)
+      expect(largeCaptionMode.toggleOffEventCount).toBe(1);
+      expect(largeCaptionMode.activeRatio).toBe(1); // 세션 기반 분모=1건(s1=ON)뿐 — 익명 2건은 제외
+      expect(largeCaptionMode.anonymousToggleObservedCount).toBe(2); // 익명 관측은 별도로 노출
+    });
+
+    it('AC① — 익명(sessionId 없는) 토글 1만 건을 넣어도 세션 Map은 전혀 자라지 않는다(드롭도 0건 — 애초에 시도조차 안 함)', () => {
+      const rollup = new TelemetryRollup();
+      for (let i = 0; i < 10_000; i += 1) {
+        rollup.record({ name: TelemetryEventName.LargeCaptionToggle, payload: { enabled: i % 2 === 0 } });
+      }
+
+      const summary = rollup.toSummary();
+      expect(summary.largeCaptionMode.anonymousToggleObservedCount).toBe(10_000);
+      expect(summary.largeCaptionMode.toggleOnEventCount + summary.largeCaptionMode.toggleOffEventCount).toBe(
+        10_000,
+      );
+      // 세션 Map이 비어있다는 증거: activeRatio는 "관측된 세션 0건"이라 null, 상한 드롭도 0건
+      // (드롭이 0이라는 것은 애초에 이 Map에 삽입을 시도조차 하지 않았다는 뜻 — 시도했다면 5000건째부터
+      // 드롭 카운터가 올라갔을 것이다)
+      expect(summary.largeCaptionMode.activeRatio).toBeNull();
+      expect(summary.capacityDrops.captionSessionStates).toBe(0);
     });
 
     it('payload.enabled가 boolean이 아니면 무시(카운터·비율 모두 미반영)', () => {
@@ -248,6 +302,97 @@ describe('TelemetryRollup', () => {
     it('관측 0건이면 채택률 null', () => {
       const rollup = new TelemetryRollup();
       expect(rollup.toSummary().modeSelection.simpleAdoptionRate).toBeNull();
+    });
+  });
+
+  describe('대장 #79 조치③ — 롤업 컬렉션 상한 + 드롭 카운터(AC: 상한 초과 시 드롭 카운터가 오른다)', () => {
+    it('TelemetryRollup() 기본 생성자는 운영 상수(TELEMETRY_MAX_ROLLUP_KEYS)를 사용한다', () => {
+      const rollup = new TelemetryRollup();
+      for (let i = 0; i < TELEMETRY_MAX_ROLLUP_KEYS + 3; i += 1) {
+        rollup.record({ name: TelemetryEventName.PlaybackStart, contentId: `c-${i}` });
+      }
+      const summary = rollup.toSummary();
+      expect(Object.keys(summary.consumption.viewCountsByContent)).toHaveLength(TELEMETRY_MAX_ROLLUP_KEYS);
+      expect(summary.capacityDrops.viewCountsByContent).toBe(3);
+    });
+
+    it('viewCountsByContent(contentId Map) — 상한 초과 시 신규 contentId만 드롭, 기존 키 갱신·원시 총계는 항상 정확', () => {
+      const rollup = new TelemetryRollup(2); // 테스트 속도를 위해 작은 상한 주입
+      rollup.record({ name: TelemetryEventName.PlaybackStart, contentId: 'c-1' });
+      rollup.record({ name: TelemetryEventName.PlaybackStart, contentId: 'c-2' });
+      rollup.record({ name: TelemetryEventName.PlaybackStart, contentId: 'c-3' }); // 상한 초과 → 드롭
+      rollup.record({ name: TelemetryEventName.PlaybackStart, contentId: 'c-1' }); // 기존 키 갱신은 항상 허용
+
+      const summary = rollup.toSummary();
+      expect(summary.consumption.viewCountsByContent).toEqual({ 'c-1': 2, 'c-2': 1 });
+      expect(summary.capacityDrops.viewCountsByContent).toBe(1);
+      expect(summary.consumption.playbackStartCount).toBe(4); // 드롭돼도 원시 총계는 항상 전부 집계
+    });
+
+    it('sessionsEnteredWizard(세션 Set) — 상한 초과 시 신규 sessionId만 드롭', () => {
+      const rollup = new TelemetryRollup(2);
+      rollup.record({ name: TelemetryEventName.WizardStepEnter, sessionId: 's1' });
+      rollup.record({ name: TelemetryEventName.WizardStepEnter, sessionId: 's2' });
+      rollup.record({ name: TelemetryEventName.WizardStepEnter, sessionId: 's3' }); // 드롭
+      rollup.record({ name: TelemetryEventName.WizardStepEnter, sessionId: 's1' }); // 기존 키 재관측은 무해(Set 크기 불변)
+
+      const summary = rollup.toSummary();
+      expect(summary.capacityDrops.sessionsEnteredWizard).toBe(1);
+      expect(summary.uploadFunnel.wizardStepEnterCount).toBe(4); // 원시 총계는 항상 정확
+    });
+
+    it('sessionsResumedUpload(세션 Set) — 상한 초과 시 신규 sessionId만 드롭', () => {
+      const rollup = new TelemetryRollup(1);
+      rollup.record({ name: TelemetryEventName.UploadResume, sessionId: 's1' });
+      rollup.record({ name: TelemetryEventName.UploadResume, sessionId: 's2' }); // 드롭
+
+      expect(rollup.toSummary().capacityDrops.sessionsResumedUpload).toBe(1);
+    });
+
+    it('sessionsCompletedUpload(세션 Set) — 상한 초과 시 신규 sessionId만 드롭', () => {
+      const rollup = new TelemetryRollup(1);
+      rollup.record({ name: TelemetryEventName.UploadComplete, sessionId: 's1' });
+      rollup.record({ name: TelemetryEventName.UploadComplete, sessionId: 's2' }); // 드롭
+
+      expect(rollup.toSummary().capacityDrops.sessionsCompletedUpload).toBe(1);
+    });
+
+    it('latestCaptionStateBySession(세션별 최신 상태 Map) — 상한 초과 시 신규 세션만 드롭, 기존 세션 상태 갱신은 항상 허용', () => {
+      const rollup = new TelemetryRollup(1);
+      rollup.record({
+        name: TelemetryEventName.LargeCaptionToggle,
+        sessionId: 's1',
+        payload: { enabled: true },
+      });
+      rollup.record({
+        name: TelemetryEventName.LargeCaptionToggle,
+        sessionId: 's2', // 상한(1) 초과 → 드롭
+        payload: { enabled: true },
+      });
+      rollup.record({
+        name: TelemetryEventName.LargeCaptionToggle,
+        sessionId: 's1', // 기존 세션 상태 갱신은 상한과 무관하게 항상 허용
+        payload: { enabled: false },
+      });
+
+      const summary = rollup.toSummary();
+      expect(summary.capacityDrops.captionSessionStates).toBe(1);
+      expect(summary.largeCaptionMode.activeRatio).toBe(0); // s1만 추적됨, 최종 상태 OFF
+      expect(summary.largeCaptionMode.toggleOnEventCount).toBe(2); // 드롭돼도 원시 총계는 항상 정확
+    });
+
+    it('상한에 부딪히지 않으면 모든 capacityDrops 필드가 0(관측 완전)', () => {
+      const rollup = new TelemetryRollup();
+      rollup.record({ name: TelemetryEventName.PlaybackStart, contentId: 'c-1' });
+      rollup.record({ name: TelemetryEventName.WizardStepEnter, sessionId: 's1' });
+
+      expect(rollup.toSummary().capacityDrops).toEqual({
+        viewCountsByContent: 0,
+        sessionsEnteredWizard: 0,
+        sessionsResumedUpload: 0,
+        sessionsCompletedUpload: 0,
+        captionSessionStates: 0,
+      });
     });
   });
 });
