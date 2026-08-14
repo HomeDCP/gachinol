@@ -19,6 +19,7 @@ import { PipelineModule } from './pipeline/pipeline.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QueueModule } from './queue/queue.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
+import { ResidentLinksModule } from './resident-links/resident-links.module';
 import { StationsModule } from './stations/stations.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { UploadModule } from './upload/upload.module';
@@ -45,6 +46,7 @@ import { UsersModule } from './users/users.module';
     LiveModule, // 라이브 + WebSocket(게이트웨이·LiveSession·채팅·댓글수집)
     ArbiterModule, // DCP 파이프라인 상호배제(제온 공존 — DCP_ARBITER_URL 설정 시에만 활성)
     TelemetryModule, // 계측 집계(콘텐츠 소비·업로드 퍼널·모드 선택 3트랙, 구조화 로그+인메모리 롤업)
+    ResidentLinksModule, // 주민 임시 업로드 링크(무인증 발급·검증·수신 + 지사 담당자 검수 게이트)
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },
