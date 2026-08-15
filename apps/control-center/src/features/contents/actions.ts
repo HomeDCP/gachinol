@@ -1,5 +1,5 @@
 import type { Content } from '@gachinol/shared';
-import { ContentStatus, isFailureStatus } from '@gachinol/shared';
+import { CONTENT_STATUS_TRANSITIONS, ContentStatus, isFailureStatus } from '@gachinol/shared';
 
 /**
  * 센터 결정·재시도 게이팅 — 전이 맵 사본 금지, shared 상태·헬퍼 재사용.
@@ -17,6 +17,14 @@ export interface CenterActions {
    * 멈추고 여기서 사람이 송출을 지시한다. 서버 `POST /contents/:id/distribute`도 같은 상태만 받는다.
    */
   canDistribute: boolean;
+  /**
+   * 수동 전이 목적지 — auto_edit 워커 부재로 자동 전진 코드가 없는 상태의 탈출구(대장 #98).
+   * `POST /v1/contents/:id/transitions`(서버 실재) 소비용. shared `CONTENT_STATUS_TRANSITIONS[status]`
+   * 에서 파생(사본 금지 — `features/live/labels.ts`의 availableLifecycleActions 선례).
+   * revision_requested만 비어있지 않다 — 다른 정지 상태(실패 6종)는 canRetry가, awaiting_center_review는
+   * canDecide가 이미 진행 경로를 제공해 별도 수동 탈출구가 불필요하다. 빈 배열 = 버튼 미노출.
+   */
+  manualTransitionTargets: readonly ContentStatus[];
 }
 
 /**
@@ -29,5 +37,9 @@ export function centerActionsFor(c: Pick<Content, 'status'>): CenterActions {
     canDecide: c.status === ContentStatus.AwaitingCenterReview,
     canRetry: isFailureStatus(c.status),
     canDistribute: c.status === ContentStatus.CenterApproved,
+    manualTransitionTargets:
+      c.status === ContentStatus.RevisionRequested
+        ? CONTENT_STATUS_TRANSITIONS[c.status]
+        : [],
   };
 }

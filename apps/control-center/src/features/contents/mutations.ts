@@ -8,6 +8,7 @@ import type {
   Publication,
   PublicationId,
   RejectContentRequest,
+  TransitionContentRequest,
 } from '@gachinol/shared';
 import {
   approveContent,
@@ -17,6 +18,7 @@ import {
   retractPublication,
   retryContent,
   retryPublication,
+  transitionContent,
 } from '../../api/contents';
 import { useApiClient } from '../../auth/auth-context';
 import { isApiClientError } from '../../api/errors';
@@ -80,6 +82,21 @@ export function useRetry(id: ContentId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => retryContent(client, id),
+    onSuccess: (content) => applyContentResult(queryClient, content),
+    onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/**
+ * 범용 수동 전이(대장 #98) — auto_edit 워커 부재로 자동 진행 코드가 없는 상태의 탈출구.
+ * 대상은 호출부(`app/(app)/contents/[id].tsx`)가 `centerActionsFor().manualTransitionTargets`
+ * (shared 파생)에서만 골라 전달한다 — 여기서 목적지를 검증하지 않는다(서버 assertAllowed가 최종 관문).
+ */
+export function useTransitionContent(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: TransitionContentRequest) => transitionContent(client, id, body),
     onSuccess: (content) => applyContentResult(queryClient, content),
     onError: (err) => handleTransitionError(queryClient, id, err),
   });
