@@ -12,6 +12,7 @@ import type {
   PublicationId,
   RejectContentRequest,
   StatusTransitionLog,
+  TransitionContentRequest,
 } from '@gachinol/shared';
 import type { ApiClient } from './client';
 
@@ -90,3 +91,16 @@ export const retryPublication = (c: ApiClient, id: PublicationId): Promise<Publi
 /** POST /v1/publications/:id/retract — 송출 후 회수(published만) */
 export const retractPublication = (c: ApiClient, id: PublicationId): Promise<Publication> =>
   c.request<Publication>('POST', `/publications/${id}/retract`);
+
+/**
+ * POST /v1/contents/:id/transitions — 범용 수동 전이(대장 #98). 워커 부재 구간의 임시 탈출구다.
+ * 현재 UI 노출은 revision_requested뿐(auto_edit 미구현으로 나가는 코드가 없다) — 전이 대상은
+ * `features/contents/actions.ts`의 `manualTransitionTargets`가 shared `CONTENT_STATUS_TRANSITIONS`
+ * 에서 파생한다(사본 금지). `to==='revision_requested'`는 서버가 이 엔드포인트에서 거부한다
+ * (request-revision 전용 — RevisionRequest 레코드 생성과 같은 트랜잭션이어야 해서).
+ */
+export const transitionContent = (
+  c: ApiClient,
+  id: ContentId,
+  body: TransitionContentRequest,
+): Promise<Content> => c.request<Content>('POST', `/contents/${id}/transitions`, { body });

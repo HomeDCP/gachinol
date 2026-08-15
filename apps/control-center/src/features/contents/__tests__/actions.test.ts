@@ -1,4 +1,4 @@
-import { ContentStatus, isFailureStatus } from '@gachinol/shared';
+import { CONTENT_STATUS_TRANSITIONS, ContentStatus, isFailureStatus } from '@gachinol/shared';
 import { centerActionsFor } from '../actions';
 
 describe('centerActionsFor', () => {
@@ -7,6 +7,7 @@ describe('centerActionsFor', () => {
       canDecide: true,
       canRetry: false,
       canDistribute: false,
+      manualTransitionTargets: [],
     });
   });
 
@@ -24,6 +25,7 @@ describe('centerActionsFor', () => {
       canDecide: false,
       canRetry: false,
       canDistribute: true,
+      manualTransitionTargets: [],
     });
   });
 
@@ -40,6 +42,7 @@ describe('centerActionsFor', () => {
       canDecide: false,
       canRetry: false,
       canDistribute: false,
+      manualTransitionTargets: [],
     });
   });
 
@@ -63,5 +66,37 @@ describe('centerActionsFor', () => {
       expect(a.canDecide).toBe(false);
       expect(a.canDistribute).toBe(false);
     }
+  });
+});
+
+/**
+ * manualTransitionTargets (대장 #98) — revision_requested의 유일한 진행 수단.
+ * shared CONTENT_STATUS_TRANSITIONS에서 파생(사본 금지) — 서버 맵이 바뀌면 이 테스트가 실측한다.
+ */
+describe('centerActionsFor — manualTransitionTargets', () => {
+  test('revision_requested → shared CONTENT_STATUS_TRANSITIONS.revision_requested와 정확히 동일', () => {
+    expect(centerActionsFor({ status: 'revision_requested' }).manualTransitionTargets).toEqual(
+      CONTENT_STATUS_TRANSITIONS.revision_requested,
+    );
+    // 실측 고정 — 맵이 조용히 바뀌면(예: canceled 제거) 이 단언이 잡는다
+    expect(centerActionsFor({ status: 'revision_requested' }).manualTransitionTargets).toEqual([
+      'regenerating',
+      'canceled',
+    ]);
+  });
+
+  test('revision_requested 외 22종은 전부 빈 배열 — 다른 정지 상태는 canRetry/canDecide가 이미 진행 경로를 제공', () => {
+    for (const status of Object.values(ContentStatus)) {
+      if (status === ContentStatus.RevisionRequested) continue;
+      expect(centerActionsFor({ status }).manualTransitionTargets).toEqual([]);
+    }
+  });
+
+  test('manualTransitionTargets가 있으면 canDecide·canRetry·canDistribute는 전부 false (탈출구 중복 없음)', () => {
+    const a = centerActionsFor({ status: 'revision_requested' });
+    expect(a.manualTransitionTargets.length).toBeGreaterThan(0);
+    expect(a.canDecide).toBe(false);
+    expect(a.canRetry).toBe(false);
+    expect(a.canDistribute).toBe(false);
   });
 });

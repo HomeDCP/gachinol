@@ -22,8 +22,19 @@ export const STATUS_BADGE = {
   preview_generating: { label: '프리뷰 생성 중', tone: 'progress' },
   preview_failed: { label: '프리뷰 실패 — 센터 확인 중', tone: 'danger' },
   awaiting_reporter_review: { label: '내 확인 대기', tone: 'warning', needsMyAction: true },
+  /**
+   * needsMyAction 유지(대장 #98) — 초안 수정은 실제로 가능하고 의미 있는 조치다
+   * (서버 EDITABLE_STATUSES에 draft·revision_requested 포함). 다만 수정해도 자동으로
+   * 다음 단계로 넘어가지는 않는다 — STATUS_DESCRIPTION이 그 사실을 명시해 "확인 필요"가
+   * "고치면 끝난다"로 오독되지 않게 한다.
+   */
   revision_requested: { label: '수정 요청됨', tone: 'warning', needsMyAction: true },
-  regenerating: { label: '수정 반영 중', tone: 'progress' },
+  /**
+   * 라벨·톤 정정(대장 #98) — 이 상태를 세팅하는 콘텐츠 도메인 코드가 없어(auto_edit 미구현)
+   * 'progress'(진행 중) 톤은 거짓이었다. 센터의 수동 전이로 처음 도달 가능해진 상태라 지금부터는
+   * 실제로 관측될 수 있다.
+   */
+  regenerating: { label: '재생성 대기 중', tone: 'warning' },
   regeneration_failed: { label: '재생성 실패 — 센터 확인 중', tone: 'danger' },
   reporter_approved: { label: '승인 처리 중', tone: 'progress' },
   awaiting_center_review: { label: '센터 검토 대기', tone: 'info' },
@@ -49,8 +60,9 @@ export const STATUS_DESCRIPTION = {
   preview_generating: '저화질 프리뷰를 생성하고 있습니다.',
   preview_failed: '프리뷰 생성에 실패했습니다. 센터에서 재시도를 진행합니다.',
   awaiting_reporter_review: '프리뷰가 준비되었습니다. 확인 후 승인·수정요청·반려를 선택하세요.',
-  revision_requested: '수정이 요청되었습니다. 초안을 수정하면 반영 후 재생성됩니다.',
-  regenerating: '수정 사항을 반영해 다시 생성하고 있습니다.',
+  revision_requested:
+    '수정이 요청되었습니다. 초안은 수정할 수 있지만 자동으로 반영·재생성되지 않습니다 — 이후 진행은 센터가 결정합니다.',
+  regenerating: '재생성 상태입니다. 자동으로 진행하는 처리가 아직 없어 여기서 멈춰 있습니다. 센터 확인이 필요합니다.',
   regeneration_failed: '재생성에 실패했습니다. 센터에서 재시도를 진행합니다.',
   reporter_approved: '승인이 처리되고 있습니다. 잠시 후 자동으로 다음 단계로 넘어갑니다.',
   awaiting_center_review: '센터 검토를 기다리고 있습니다.',
@@ -70,14 +82,17 @@ export const TERMINAL_STATUSES: readonly ContentStatus[] = ['rejected', 'cancele
 
 export const isTerminalStatus = (s: ContentStatus): boolean => TERMINAL_STATUSES.includes(s);
 
-/** 자동 진행 상태 — 상세 화면 15s 폴링 대상 (WS 미도입 MVP의 대안) */
+/**
+ * 자동 진행 상태 — 상세 화면 15s 폴링 대상 (WS 미도입 MVP의 대안).
+ * regenerating 제외(대장 #98 보강) — 그 상태를 진행시키는 코드가 없어(auto_edit 미구현)
+ * 15s마다 영원히 폴링만 하고 값이 바뀌지 않는다. "자동 진행"이 아니라 "정지" 상태다.
+ */
 export const AUTO_PROGRESS_STATUSES: readonly ContentStatus[] = [
   'uploading',
   'uploaded',
   'processing',
   'analyzing',
   'preview_generating',
-  'regenerating',
   'publishing',
   'reporter_approved',
 ];

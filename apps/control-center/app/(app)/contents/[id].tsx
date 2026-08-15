@@ -51,6 +51,7 @@ import {
   useRetractPublication,
   useRetry,
   useRetryPublication,
+  useTransitionContent,
 } from '../../../src/features/contents/mutations';
 import {
   useContentDetail,
@@ -331,7 +332,10 @@ function PublicationRow({
   );
 }
 
-type SheetKind = 'revision' | 'reject' | null;
+type SheetKind = 'revision' | 'reject' | 'manual-transition' | null;
+
+/** 대장 #98 — revision_requested의 유일한 진행 수단. shared 맵 목적지 2종뿐이라 리터럴 유니온으로 충분 */
+type ManualTransitionTarget = 'regenerating' | 'canceled';
 
 /** ③④ 콘텐츠 상세 + AI분석 + 프리뷰 + 이력 + 센터 결정 액션바 (통합 1화면) */
 export default function ContentDetailScreen(): React.JSX.Element {
@@ -356,6 +360,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const distribute = useDistribute(contentId);
   const retryPublication = useRetryPublication(contentId);
   const retractPublication = useRetractPublication(contentId);
+  const manualTransition = useTransitionContent(contentId);
   const publications = usePublications(contentId, { poll: focused });
 
   const stationId = detail.data?.content.stationId;
@@ -410,7 +415,11 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const logItems = logs.data?.pages.flatMap((p) => p.items) ?? [];
   const orderedScenes = [...content.scenes].sort((a, b) => a.order - b.order);
   const anyPending =
-    approve.isPending || requestRevision.isPending || reject.isPending || distribute.isPending;
+    approve.isPending ||
+    requestRevision.isPending ||
+    reject.isPending ||
+    distribute.isPending ||
+    manualTransition.isPending;
   const publicationRows = publications.data ?? [];
 
   const onTransitionError = (err: unknown): void => {
@@ -494,6 +503,40 @@ export default function ContentDetailScreen(): React.JSX.Element {
         if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
       },
     });
+  };
+
+  /**
+   * 대장 #98 — revision_requested의 유일한 탈출구. 두 목적지 모두 되돌리기 어려운 조작이라
+   * confirmDialog로 한 번 더 확인한다(feedback.tsx — 웹은 Alert.alert이 무동작이라 이 경로가 필수).
+   * 'regenerating'은 진짜 탈출구가 아니라 재배치일 뿐이다 — 서버에 그 상태를 나가는 코드가 없어
+   * (auto_edit 미구현) 이 앱에서는 이후 되돌릴 수단이 전혀 없다(취소도 안 됨, shared 전이맵 실측:
+   * regenerating→{analyzing, preview_generating, regeneration_failed}뿐). 메시지가 그 사실을 명시한다.
+   */
+  const submitManualTransition = async (to: ManualTransitionTarget): Promise<void> => {
+    const ok = await confirmDialog({
+      // 고정 문구로 한글 조사(을/를·으로/로) 활용 문제를 원천 차단(대장 #98 보강) — 라벨 보간 금지
+      title: to === 'canceled' ? '취소 처리할까요?' : '재생성 상태로 전이할까요?',
+      message:
+        to === 'canceled'
+          ? '파이프라인을 종결합니다. 되돌릴 수 없고 재작업은 새 콘텐츠로 진행합니다.'
+          : '자동 재생성 코드가 없어 여기서도 멈춥니다. 이 앱에서는 이후 되돌릴 수단이 없습니다(취소도 불가) — 정말 필요한 경우에만 사용하세요.',
+      confirmText: to === 'canceled' ? '취소 처리' : '전이',
+      destructive: true,
+    });
+    if (!ok) return;
+    const trimmedNote = note.trim();
+    manualTransition.mutate(
+      { toStatus: to, ...(trimmedNote ? { note: trimmedNote } : {}) },
+      {
+        onSuccess: () => {
+          setSheet(null);
+          showToast(
+            to === 'canceled' ? '취소 처리되었습니다' : '재생성 상태로 전이했습니다 (자동 진행 없음)',
+          );
+        },
+        onError: onTransitionError,
+      },
+    );
   };
 
   const openSheet = (kind: Exclude<SheetKind, null>): void => {
@@ -712,6 +755,21 @@ export default function ContentDetailScreen(): React.JSX.Element {
           />
         ) : actions.canRetry ? (
           <Button label="재시도" onPress={() => void confirmRetry()} loading={retry.isPending} />
+        ) : actions.manualTransitionTargets.length > 0 ? (
+          <Button
+            label="직접 전이 (임시 조치)"
+            variant="secondary"
+            onPress={() => openSheet('manual-transition')}
+            disabled={anyPending}
+          />
+        ) : content.status === 'regenerating' ? (
+          // regenerating 전용 폴백(대장 #98 보강) — 아래 공용 폴백("기자·파이프라인 소관")은 이 상태에서
+          // 거짓이다. 기자도 편집할 수 없고(reporterActionsFor.canEdit는 draft·revision_requested만)
+          // 파이프라인도 진행시키지 않는다(auto_edit 미구현) — manualTransitionTargets도 빈 배열이라
+          // 이 앱에는 버튼이 아예 없다.
+          <Text style={styles.metaText}>
+            기자·파이프라인 모두 이 상태를 진행시키지 않습니다. 관리자의 직접 개입이 필요합니다.
+          </Text>
         ) : !isTerminalStatus(content.status) ? (
           <Text style={styles.metaText}>지금은 대기 단계입니다 (기자·파이프라인 소관).</Text>
         ) : null}
@@ -729,7 +787,15 @@ export default function ContentDetailScreen(): React.JSX.Element {
               contentContainerStyle={styles.sheetBodyContent}
               keyboardShouldPersistTaps="handled"
             >
-              {sheet === 'reject' ? (
+              {sheet === 'manual-transition' ? (
+                <>
+                  <Text style={styles.sectionTitle}>직접 전이 (임시 조치)</Text>
+                  <Text style={styles.warningText}>
+                    자동편집(auto_edit) 기능이 아직 없어 수정 요청 후 자동으로 진행되지 않습니다.
+                    아래에서 다음 상태를 직접 선택하세요 — 이것이 유일한 진행 수단입니다.
+                  </Text>
+                </>
+              ) : sheet === 'reject' ? (
                 <>
                   <Text style={styles.sectionTitle}>반려</Text>
                   <Text style={styles.warningText}>
@@ -743,10 +809,16 @@ export default function ContentDetailScreen(): React.JSX.Element {
                 style={styles.sheetInput}
                 value={note}
                 onChangeText={setNote}
-                placeholder={sheet === 'reject' ? '반려 사유 (필수)' : '수정 요청 내용 (필수)'}
+                placeholder={
+                  sheet === 'manual-transition'
+                    ? '메모 (선택, 500자 이내)'
+                    : sheet === 'reject'
+                      ? '반려 사유 (필수)'
+                      : '수정 요청 내용 (필수)'
+                }
                 placeholderTextColor={colors.textMuted}
                 multiline
-                maxLength={2000}
+                maxLength={sheet === 'manual-transition' ? 500 : 2000}
               />
               {sheet === 'revision'
                 ? orderedScenes.map((scene) => (
@@ -765,9 +837,48 @@ export default function ContentDetailScreen(): React.JSX.Element {
                     </View>
                   ))
                 : null}
+              {sheet === 'manual-transition' ? (
+                <>
+                  {actions.manualTransitionTargets.includes('regenerating') ? (
+                    <View style={styles.subCard}>
+                      {/* 고정 문구(대장 #98 보강) — 라벨 보간형 "{label}(으)로 전이"는 조사 플레이스홀더가
+                          그대로 노출됐다("재생성 대기 중(으)로 전이") */}
+                      <Text style={styles.bodyText}>재생성 상태로 전이</Text>
+                      <Text style={styles.warningText}>
+                        진짜 탈출구가 아닙니다 — 재생성을 자동으로 시작하는 코드가 없어 여기서도
+                        멈추고, 이 앱에서는 이후 되돌릴 수단이 전혀 없습니다(취소도 불가). 자동편집
+                        기능이 도입되면 이어서 처리될 수 있습니다(보장되지 않음).
+                      </Text>
+                      <Button
+                        label="재생성으로 전이"
+                        variant="secondary"
+                        onPress={() => void submitManualTransition('regenerating')}
+                        loading={manualTransition.isPending}
+                        disabled={anyPending}
+                      />
+                    </View>
+                  ) : null}
+                  {actions.manualTransitionTargets.includes('canceled') ? (
+                    <View style={styles.subCard}>
+                      <Text style={styles.bodyText}>취소 처리 (권장)</Text>
+                      <Text style={styles.metaText}>
+                        파이프라인을 깔끔하게 종결합니다. 되돌릴 수 없고 재작업은 새 콘텐츠로
+                        진행합니다.
+                      </Text>
+                      <Button
+                        label="취소 처리"
+                        variant="destructive"
+                        onPress={() => void submitManualTransition('canceled')}
+                        loading={manualTransition.isPending}
+                        disabled={anyPending}
+                      />
+                    </View>
+                  ) : null}
+                </>
+              ) : null}
               {noteError ? <Text style={styles.errorText}>{noteError}</Text> : null}
             </ScrollView>
-            {sheet === 'reject' ? (
+            {sheet === 'manual-transition' ? null : sheet === 'reject' ? (
               <Button
                 label="반려 확정"
                 variant="destructive"
