@@ -87,6 +87,110 @@ describe('ContentsService', () => {
     });
   });
 
+  describe('createDraft — remakeOfContentId 재작업 원본 검증(T-W2-20)', () => {
+    it('remakeOfContentId 없이 생성 — 기존 경로 무영향, null로 저장', async () => {
+      const { prisma, service } = setup();
+      await service.createDraft(reporterUser(), draftDto() as never);
+      expect(prisma.content.findUnique).not.toHaveBeenCalled();
+      expect(prisma.content.create.mock.calls[0][0].data.remakeOfContentId).toBeNull();
+    });
+
+    it('유효한 참조(같은 지사·rejected)로 생성 → DB에 기록', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ id: 'c-source', stationId: 's-aewol', status: 'rejected' }),
+      );
+      const result = await service.createDraft(
+        reporterUser(),
+        draftDto({ remakeOfContentId: 'c-source' }) as never,
+      );
+      expect(prisma.content.findUnique).toHaveBeenCalledWith({ where: { id: 'c-source' } });
+      expect(prisma.content.create.mock.calls[0][0].data.remakeOfContentId).toBe('c-source');
+      expect(result.remakeOfContentId).toBe('c-source');
+    });
+
+    it('유효한 참조(같은 지사·canceled)로도 생성 허용', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ id: 'c-source', stationId: 's-aewol', status: 'canceled' }),
+      );
+      await service.createDraft(
+        reporterUser(),
+        draftDto({ remakeOfContentId: 'c-source' }) as never,
+      );
+      expect(prisma.content.create.mock.calls[0][0].data.remakeOfContentId).toBe('c-source');
+    });
+
+    it('참조 대상이 존재하지 않으면 404 not_found', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(null);
+      const err = await service
+        .createDraft(reporterUser(), draftDto({ remakeOfContentId: 'c-ghost' }) as never)
+        .then(
+          () => null,
+          (e) => e,
+        );
+      expect(err).toMatchObject({ code: 'not_found' });
+      expect(prisma.content.create).not.toHaveBeenCalled();
+    });
+
+    it('참조 대상이 다른 지사 소속이면 403 forbidden', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ id: 'c-other', stationId: 's-jeju', status: 'rejected' }),
+      );
+      const err = await service
+        .createDraft(reporterUser(), draftDto({ remakeOfContentId: 'c-other' }) as never)
+        .then(
+          () => null,
+          (e) => e,
+        );
+      expect(err).toMatchObject({ code: 'forbidden' });
+      expect(prisma.content.create).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 순서 판별 케이스: 위 테스트("다른 지사 + rejected")는 지사 검증·상태 검증 어느 쪽을 먼저 해도
+     * 결과가 forbidden으로 같아 검증 순서를 가르지 못한다. "다른 지사 + 비허용 상태(draft)"만이
+     * 두 순서의 결과가 갈리는 유일한 조합(지사 우선=forbidden, 상태 우선=validation_failed) —
+     * 이 테스트가 실제로 지사 경계를 먼저 판정함(=타 지사 콘텐츠의 상태를 노출하지 않음)을 회귀로 고정한다.
+     */
+    it('다른 지사 + 비허용 상태(draft) — 지사 경계가 상태 확인보다 먼저 판정되어 forbidden (validation_failed 아님, 상태 유출 없음)', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ id: 'c-other', stationId: 's-jeju', status: 'draft' }),
+      );
+      const err = await service
+        .createDraft(reporterUser(), draftDto({ remakeOfContentId: 'c-other' }) as never)
+        .then(
+          () => null,
+          (e) => e,
+        );
+      expect(err).toMatchObject({ code: 'forbidden' });
+      // details에 참조 대상 status가 실리지 않음 — 지사 경계 판정이 상태 확인 이전에 끝났다는 증거
+      expect(err.details).not.toHaveProperty('status');
+      expect(prisma.content.create).not.toHaveBeenCalled();
+    });
+
+    it.each(['draft', 'published', 'archived', 'awaiting_reporter_review'])(
+      '참조 대상 상태가 %s면 400 validation_failed (rejected|canceled만 허용)',
+      async (status) => {
+        const { prisma, service } = setup();
+        prisma.content.findUnique.mockResolvedValue(
+          contentRow({ id: 'c-source', stationId: 's-aewol', status }),
+        );
+        const err = await service
+          .createDraft(reporterUser(), draftDto({ remakeOfContentId: 'c-source' }) as never)
+          .then(
+            () => null,
+            (e) => e,
+          );
+        expect(err).toMatchObject({ code: 'validation_failed' });
+        expect(prisma.content.create).not.toHaveBeenCalled();
+      },
+    );
+  });
+
   describe('update — 상태 제한·SceneId 보존', () => {
     it('draft·revision_requested 외 상태는 409 conflict', async () => {
       const { prisma, service } = setup();

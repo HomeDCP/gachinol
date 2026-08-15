@@ -56,6 +56,27 @@ describe('content.schemas', () => {
     });
   });
 
+  describe('remakeOfContentId — 선택 필드(T-W2-20)', () => {
+    it('미지정이면 undefined로 성공 (기존 경로 무영향)', () => {
+      const res = zCreateContentDraft.safeParse(base);
+      expect(res.success).toBe(true);
+      if (res.success) expect(res.data.remakeOfContentId).toBeUndefined();
+    });
+
+    it('유효한 UUID면 성공', () => {
+      const res = zCreateContentDraft.safeParse({
+        ...base,
+        remakeOfContentId: '018f4b2a-0000-7000-8000-000000000001',
+      });
+      expect(res.success).toBe(true);
+    });
+
+    it('UUID 형식이 아니면 실패', () => {
+      const res = zCreateContentDraft.safeParse({ ...base, remakeOfContentId: 'not-a-uuid' });
+      expect(res.success).toBe(false);
+    });
+  });
+
   describe('zPage — 기본값·clamp', () => {
     it('기본 page=1, pageSize=20', () => {
       expect(zPage.parse({})).toEqual({ page: 1, pageSize: 20 });

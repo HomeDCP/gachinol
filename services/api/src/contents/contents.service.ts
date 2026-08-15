@@ -59,6 +59,10 @@ export class ContentsService {
       throw new DomainException('forbidden', '콘텐츠 초안 생성은 기자만 가능합니다');
     }
 
+    if (dto.remakeOfContentId) {
+      await this.assertRemakeSource(dto.remakeOfContentId, user.stationId);
+    }
+
     const scenes: Scene[] = dto.scenes.map((s) => ({ ...s, id: newId<SceneId>() }));
     const row = await this.prisma.content.create({
       data: {
@@ -78,9 +82,50 @@ export class ContentsService {
         // channel_accounts 도입 시 "소속 지사 kakao 채널" 기본 규칙 활성화
         targetChannelAccountIds: [],
         tags: [],
+        remakeOfContentId: dto.remakeOfContentId ?? null,
       },
     });
     return toContent(row);
+  }
+
+  /**
+   * 재작업 원본(remakeOfContentId) 검증 (T-W2-20).
+   * - 실재 확인(404) → 지사 경계(403, 타 지사 콘텐츠 상태 비유출 — loadReadable/loadOwned와 동일 순서) →
+   *   상태 확인(400, rejected|canceled만 허용).
+   * - rejected(반려)뿐 아니라 canceled(파이프라인 중단)도 허용: 둘 다 워크플로 종결 상태이면서
+   *   "정상 송출 실패"라는 공통점이 있다(published→archived처럼 성공 후 종결과는 성격이 다르다).
+   *   published·archived는 이미 성공적으로 나간 결과물이라 "재작업"이 아니라 신규 촬영/후속편 성격이라 제외.
+   * - rejected·canceled는 전이 맵상 종결(하위 전이 없음)이라 이 확인 이후 상태가 바뀔 수 없다 —
+   *   생성 트랜잭션과 별도 조회여도 TOCTOU 경합이 구조적으로 없다.
+   * - 순환 참조: 참조 대상은 반드시 이 호출 이전에 이미 존재해야 하고(신규 id는 여기서 아직 미발급),
+   *   remakeOfContentId는 생성 시점에만 기록되고 수정 API(UpdateContentDraftRequest)에는 필드가 없어
+   *   사후 변경 경로가 없다 → 사이클이 구조적으로 불가능. 체인 길이는 상한을 두지 않는다(단일 홉 계보
+   *   필드일 뿐 재귀 순회가 없어 무한 체인이어도 성능·정합 리스크가 없다).
+   */
+  private async assertRemakeSource(
+    remakeOfContentId: string,
+    reporterStationId: string,
+  ): Promise<void> {
+    const source = await this.prisma.content.findUnique({ where: { id: remakeOfContentId } });
+    if (!source) {
+      throw new DomainException('not_found', '재작업 대상 콘텐츠를 찾을 수 없습니다', {
+        remakeOfContentId,
+      });
+    }
+    if (source.stationId !== reporterStationId) {
+      throw new DomainException(
+        'forbidden',
+        '재작업은 같은 지사 콘텐츠만 대상으로 할 수 있습니다',
+        { remakeOfContentId },
+      );
+    }
+    if (source.status !== 'rejected' && source.status !== 'canceled') {
+      throw new DomainException(
+        'validation_failed',
+        '재작업은 반려(rejected)·취소(canceled) 상태의 콘텐츠만 대상으로 할 수 있습니다',
+        { remakeOfContentId, status: source.status },
+      );
+    }
   }
 
   async list(user: User, query: ContentListQueryDto): Promise<Paginated<ContentSummary>> {
