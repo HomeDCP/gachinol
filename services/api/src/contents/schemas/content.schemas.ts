@@ -1,6 +1,7 @@
 import type {
   CancelContentRequest,
   ChannelAccountId,
+  ContentId,
   CreateContentDraftRequest,
   CreateRevisionRequestBody,
   DistributeContentRequest,
@@ -61,6 +62,8 @@ export const zCreateContentDraft = z
     category: zEnum(ProgramCategory),
     cultureTopics: z.array(zEnum(CultureTopic)).optional(),
     scenes: z.array(zSceneInput).max(200),
+    /** 반려/취소 콘텐츠 재작업 원본 — 실재·상태·지사 검증은 서비스 계층(contents.service.ts) */
+    remakeOfContentId: zId<ContentId>().optional(),
   })
   .superRefine((v, ctx) => {
     // 서버 불변식 — shared 순수 헬퍼가 검증 규칙의 원천

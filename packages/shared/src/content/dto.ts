@@ -31,6 +31,11 @@ export interface CreateContentDraftRequest {
   category: ProgramCategory;
   cultureTopics?: readonly CultureTopic[];
   scenes: readonly SceneInput[];
+  /**
+   * 반려(rejected)·취소(canceled)된 콘텐츠 재작업 시 원본 참조 (T-W2-20).
+   * 서버가 검증: 원본 실재·상태(rejected|canceled)·같은 지사(stationId) 소속.
+   */
+  remakeOfContentId?: ContentId;
 }
 
 /** 부분 수정 — draft·revision_requested 상태에서만 허용 (서버 검증) */
