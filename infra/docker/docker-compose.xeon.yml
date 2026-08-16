@@ -133,6 +133,12 @@ services:
   # 산출물 출처: 이 서비스 자체가 멀티스테이지 빌드로 3앱 `expo export --platform web`을 수행한다
   # (Dockerfile.web 주석 참조) — 별도 CI 아티팩트 주입·볼륨 마운트 불요.
   web:
+    # ⚠️ `image:`가 없으면 `docker compose pull web`이 "빌드 대상"이라며 건너뛰고 `up`이 **제온에서
+    # 재빌드**를 시도한다 — DCP 파이프라인과 CPU를 공유하는 호스트에서 금지 사항이며, Dockerfile.web
+    # 주석이 선언한 "CI가 만든 이미지를 pull && up으로 배포"가 성립하지 않는다(T-W1-11c 구현자 발견,
+    # 대장 #143). **기본값은 compose가 자동 생성하던 태그와 동일**하므로(프로젝트명 `gachinol-prod` +
+    # 서비스명 `web`) 로컬 빌드 흐름은 무회귀이고, CI 배포는 `WEB_IMAGE`로 GHCR 태그를 주입한다.
+    image: ${WEB_IMAGE:-gachinol-prod-web}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.web
