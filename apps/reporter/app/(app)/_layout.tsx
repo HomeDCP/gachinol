@@ -13,6 +13,8 @@ export default function AppLayout(): React.JSX.Element | null {
       <Stack.Screen name="contents/[id]/index" options={{ title: '콘텐츠 상세' }} />
       <Stack.Screen name="contents/[id]/edit" options={{ title: '초안 수정' }} />
       <Stack.Screen name="contents/[id]/preview" options={{ title: '프리뷰 확인' }} />
+      <Stack.Screen name="resident-uploads/index" options={{ title: '주민 업로드 검수' }} />
+      <Stack.Screen name="resident-uploads/[id]" options={{ title: '검수 상세' }} />
     </Stack>
   );
 }
