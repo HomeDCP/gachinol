@@ -1,4 +1,10 @@
-import type { ContentId, ContentStatus, ProgramCategory, StationId } from '@gachinol/shared';
+import type {
+  ContentId,
+  ContentStatus,
+  ProgramCategory,
+  ResidentUploadStatus,
+  StationId,
+} from '@gachinol/shared';
 
 /** 캐시 키는 팩토리로만 생성 — 리터럴 산개 금지 */
 
@@ -34,4 +40,22 @@ export const authKeys = {
 export const systemKeys = {
   /** 미디어 처리 게이트 상태 — DCP 공존 대기 안내 */
   processingState: ['system', 'processing-state'] as const,
+};
+
+/** 주민 업로드 검수 대기열 (T-W2-25b) — stationId는 키에 없다: 서버가 강제해 앱이 보내지 않는다 */
+export interface ResidentUploadListFilter {
+  status?: ResidentUploadStatus;
+}
+
+function normalizeResidentUploadFilter(filter: ResidentUploadListFilter): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  if (filter.status !== undefined) normalized.status = filter.status;
+  return normalized;
+}
+
+export const residentUploadKeys = {
+  /** prefix 앵커 — invalidate 대상 */
+  all: ['resident-uploads'] as const,
+  list: (filter: ResidentUploadListFilter) =>
+    ['resident-uploads', 'list', normalizeResidentUploadFilter(filter)] as const,
 };

@@ -114,6 +114,15 @@ export default function ContentListScreen(): React.JSX.Element {
           <ProcessingHoldBanner state={processing.data!} />
         </View>
       ) : null}
+      <Pressable
+        style={styles.residentUploadEntry}
+        onPress={() => router.push('/resident-uploads')}
+      >
+        <Text style={styles.residentUploadEntryTitle}>주민 업로드 검수</Text>
+        <Text style={styles.residentUploadEntryMeta}>
+          우리 지사에 접수된 주민 제보 영상을 확인하세요 ›
+        </Text>
+      </Pressable>
       <View style={styles.filterRow}>
         {FILTERS.map((f, index) => {
           const selected = index === filterIndex;
@@ -173,6 +182,18 @@ export default function ContentListScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   signOut: { color: colors.primary, fontSize: typo.caption, padding: spacing.sm },
   bannerSlot: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  residentUploadEntry: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    backgroundColor: colors.card,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    gap: spacing.xs,
+  },
+  residentUploadEntryTitle: { fontSize: typo.body, fontWeight: '600', color: colors.text },
+  residentUploadEntryMeta: { fontSize: typo.caption, color: colors.textMuted },
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
