@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Paginated, User } from '@gachinol/shared';
-import { isReporterUser } from '@gachinol/shared';
+import {
+  isReporterUser,
+  RESIDENT_UPLOAD_STATUS_TRANSITIONS,
+  ResidentUploadStatus,
+} from '@gachinol/shared';
 import type { Prisma, ResidentUpload as ResidentUploadRow } from '@prisma/client';
 import { DomainException } from '../common/errors/domain.exception';
 import { toPaginated, toSkipTake } from '../common/pagination/pagination.util';
@@ -8,11 +12,7 @@ import { MediaAssetsService } from '../media/media-assets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueProducerService } from '../queue/queue-producer.service';
 import { ResidentLinksService } from './resident-links.service';
-import {
-  canTransitionResidentUpload,
-  RESIDENT_UPLOAD_STATUS_TRANSITIONS,
-  ResidentUploadStatus,
-} from './resident-upload-status';
+import { canTransitionResidentUpload } from './resident-upload-status';
 import type { ResidentReviewQueryDto } from './schemas/resident-review.schemas';
 
 /* ══════════════════════════════════════════════════════════════════════════

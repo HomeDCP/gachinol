@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { ContentId, StationId, User } from '@gachinol/shared';
-import { ContentOrigin, isReporterUser } from '@gachinol/shared';
+import { ContentOrigin, isReporterUser, ResidentUploadStatus } from '@gachinol/shared';
 import type { ResidentUpload as ResidentUploadRow, ResidentUploadLink as ResidentUploadLinkRow } from '@prisma/client';
 import { DomainException } from '../common/errors/domain.exception';
 import { newId } from '../common/ids';
@@ -22,7 +22,6 @@ import {
   RESIDENT_UPLOAD_MAX_BYTES,
 } from './resident-links.constants';
 import { assertResidentReviewApproved } from './resident-review.gate';
-import { ResidentUploadStatus } from './resident-upload-status';
 import type { IssueResidentLinkDto, ResidentUploadRequestDto } from './schemas/resident-link.schemas';
 
 /* ══════════════════════════════════════════════════════════════════════════
