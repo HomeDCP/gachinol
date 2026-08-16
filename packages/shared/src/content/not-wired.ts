@@ -68,6 +68,15 @@ export interface NotWiredContentTransition {
  *    고정하는 단위 테스트(content-workflow.service.spec.ts)가 이 엣지를 실 applyHop으로 밟게 됐다.
  *    구동부(PipelineService.onCompleted(transcode))는 원래 실재했고 `untested`였을 뿐이라 이 삭제는
  *    "구현이 늘었다"가 아니라 "단위 커버리지가 생겼다"는 뜻이다(관측 21→22 · 등재 26→25).
+ *  · T-W2-31(2026-08-16): `uploaded→canceled` **삭제**. 주민 업로드 검수 반려가 연결된 Content를
+ *    종결시키도록 배선하면서(대장 #112, `ResidentReviewsService.reject` →
+ *    `ContentWorkflowService.cancelBySystem`) 그 반려 스위트가 이 엣지를 실 applyHop으로 밟게 됐다.
+ *    ★ 앞 항목과 성격이 다르다: 이건 "구현이 늘었다"이다. 舊 사유는 이 엣지의 구동부를 `cancel()`
+ *    이라고 적었는데 **거짓이었다** — 이 엣지에 도달하는 `uploaded` 콘텐츠의 실사용 원천은
+ *    `origin='resident_link'`(무주, `reporterId=null`)이고, `cancel()`은 소유 기자 또는 센터 액터를
+ *    요구해 그 콘텐츠에는 애초에 적용될 수 없었다. 즉 12건을 한 문장으로 묶어 쓴 사유가 이 한 건에
+ *    대해서는 틀렸고, 멤버십 판정만 정확했다(헤더 "한계 ②"의 사례가 하나 더 늘었다).
+ *    (관측 22→23 · 등재 25→24).
  *
  * 재산출: `GACHINOL_WIRING_REPORT=1 pnpm --filter @gachinol/api test`
  * (services/api/test/wiring/global-teardown.ts가 관측·미관측 전문을 출력한다).
@@ -118,12 +127,14 @@ export const NOT_WIRED_CONTENT_TRANSITIONS: readonly NotWiredContentTransition[]
     to: 'archived',
     kind: NotWiredKind.Unimplemented,
     reason:
-      '보관(archive) **전용** 구동부가 없다 — 이 엣지를 지정해 실행하는 제품 액션·엔드포인트·스케줄러·워커가 0건이고, 범용 수동 전이(POST /v1/contents/:id/transitions)가 유일 경로다. api src에 archived 문자열은 있으나(content-workflow.service.ts transition()의 `to === "archived"` 분기 = T-W2-10의 공개 객체 제거 훅) 그것은 도달 **후** 부작용이지 전이를 일으키는 곳이 아니다. (舊 사유는 "api src 전체에 문자열 archived 참조 0건"이라 적었고 T-W2-10 이후 거짓이 됐다 — 대장 #125에서 정정. 멤버십 판정은 그때도 정확했다: 헤더 "한계 ②" 참조.)',
+      '보관(archive) **전용 서버 구동부**가 없다 — 이 엣지를 지정해 실행하는 전용 엔드포인트·스케줄러·워커가 0건이고, 범용 수동 전이(POST /v1/contents/:id/transitions)가 유일 경로다(레지스트리 규칙상 범용 수동 전이는 구동으로 세지 않는다 — `revision_requested→regenerating`도 같은 취급). api src에 archived 문자열은 있으나(content-workflow.service.ts transition()의 `to === "archived"` 분기 = T-W2-10의 공개 객체 제거 훅) 그것은 도달 **후** 부작용이지 전이를 일으키는 곳이 아니다. **관제 앱에는 T-W2-32(대장 #124)로 보관 버튼이 생겼다** — 그 버튼이 부르는 것도 범용 수동 전이라 멤버십은 그대로다. (사유 문구가 stale해진 것이 이번이 **두 번째**다: 舊①"api src 전체에 참조 0건"→T-W2-10이 반증(대장 #125), 舊②"제품 액션 0건"→T-W2-32가 반증. 멤버십 판정은 두 번 다 정확했다 — 헤더 "한계 ②" 참조. **사유에 "0건"류 전수 주장을 쓰면 반드시 stale된다**: 검증 불가능한 형태를 피하고 판정 근거만 적을 것.)',
   },
 
   // ── untested — 전용 구동부는 실재하나 api 단위 스위트가 밟지 않는다 ──
-  // 취소 12건: ContentsController `POST /:id/cancel` → ContentWorkflowService.cancel().
+  // 취소 11건: ContentsController `POST /:id/cancel` → ContentWorkflowService.cancel().
   // from을 하드코딩하지 않고 전이맵이 판정하므로 코드는 단일하고, 상태별 커버리지만 없다.
+  // (`uploaded→canceled`는 T-W2-31에서 빠졌다 — 아래 갱신 이력 참조. 그 엣지의 구동부는 cancel()이
+  //  아니라 주민 업로드 반려 연쇄이며, 무주 콘텐츠라 cancel()로는 애초에 도달할 수 없었다.)
   {
     from: 'draft',
     to: 'canceled',
@@ -132,12 +143,6 @@ export const NOT_WIRED_CONTENT_TRANSITIONS: readonly NotWiredContentTransition[]
   },
   {
     from: 'upload_failed',
-    to: 'canceled',
-    kind: NotWiredKind.Untested,
-    reason: 'cancel() 실재 — 이 from 상태를 밟는 단위 테스트만 없다.',
-  },
-  {
-    from: 'uploaded',
     to: 'canceled',
     kind: NotWiredKind.Untested,
     reason: 'cancel() 실재 — 이 from 상태를 밟는 단위 테스트만 없다.',

@@ -12,6 +12,7 @@ import type {
 } from '@gachinol/shared';
 import {
   approveContent,
+  confirmMinorConsent,
   distributeContent,
   rejectContent,
   requestRevision,
@@ -19,6 +20,7 @@ import {
   retryContent,
   retryPublication,
   transitionContent,
+  withdrawMinorConsent,
 } from '../../api/contents';
 import { useApiClient } from '../../auth/auth-context';
 import { isApiClientError } from '../../api/errors';
@@ -88,7 +90,12 @@ export function useRetry(id: ContentId) {
 }
 
 /**
- * 범용 수동 전이(대장 #98) — auto_edit 워커 부재로 자동 진행 코드가 없는 상태의 탈출구.
+ * 범용 수동 전이 — 두 용도가 이 훅 하나를 공유한다:
+ *  ① auto_edit 워커 부재로 자동 진행 코드가 없는 상태의 탈출구 (대장 #98)
+ *  ② **보관(archive)** 제품 액션 (대장 #124) — 전용 엔드포인트를 만들지 않고 이 범용 전이를
+ *     운반 수단으로 재사용한다(사용자 결정 2026-08-16). 서버는 `to==='archived'` 커밋 후
+ *     공개 객체 제거 + CF 캐시 퍼지를 수행하므로 **되돌릴 수 없다** — 호출부가 전용 확인
+ *     다이얼로그와 경고 문구를 붙인다.
  * 대상은 호출부(`app/(app)/contents/[id].tsx`)가 `centerActionsFor().manualTransitionTargets`
  * (shared 파생)에서만 골라 전달한다 — 여기서 목적지를 검증하지 않는다(서버 assertAllowed가 최종 관문).
  */
@@ -97,6 +104,40 @@ export function useTransitionContent(id: ContentId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: TransitionContentRequest) => transitionContent(client, id, body),
+    onSuccess: (content) => applyContentResult(queryClient, content),
+    onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/**
+ * 미성년자 동의 **확인** (대장 #130) — 상태 전이가 아니라 게이트가 요구하는 **사실의 기록**이다.
+ * 응답 Content의 status는 그대로이고 `minorConsentConfirmedAt`만 채워진다 → 승인 가드
+ * (policyGuard ④)가 그 순간부터 통과한다. 서버가 멱등 200이라 재호출도 안전하지만,
+ * 호출부는 `minorConsentActionsFor().canConfirm`으로만 버튼을 그린다.
+ * 목록·보드 배지도 같은 필드에서 파생하므로 `contentKeys.all` invalidate가 필수다
+ * (applyContentResult가 detail 병합 + prefix invalidate를 함께 한다).
+ */
+export function useConfirmMinorConsent(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => confirmMinorConsent(client, id),
+    onSuccess: (content) => applyContentResult(queryClient, content),
+    onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/**
+ * 미성년자 동의 확인 **철회** — 되돌리기 어려운 조작이라 호출부가 확인 다이얼로그를 건다.
+ * 서버는 "게이트 전이가 이미 로그에 있으면" 409로 거부하며, 그 조건은 UI가 미리 판정해
+ * 버튼을 감춘다(`minorConsentActionsFor().canWithdraw`). 그럼에도 남는 경합(다른 운영자가
+ * 방금 승인)은 409로 오고 `handleTransitionError`가 invalidate+토스트로 수렴시킨다.
+ */
+export function useWithdrawMinorConsent(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => withdrawMinorConsent(client, id),
     onSuccess: (content) => applyContentResult(queryClient, content),
     onError: (err) => handleTransitionError(queryClient, id, err),
   });

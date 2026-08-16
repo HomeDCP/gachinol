@@ -40,6 +40,28 @@ export const listContents = (
 export const getContentDetail = (c: ApiClient, id: ContentId): Promise<ContentDetail> =>
   c.request<ContentDetail>('GET', `/contents/${id}`);
 
+/**
+ * POST /v1/contents/:id/minor-consent — 미성년자 피촬영자 법정대리인 동의 **확인** (센터 전용, T-W2-23).
+ * 바디 없음. 서버 계약(contents.controller.ts·contents.service.ts 실측):
+ *  · `hasMinorSubject=false`면 400 validation_failed (선확인 후 플래그를 켜는 우회 차단)
+ *  · 이미 확인된 콘텐츠는 **멱등 200**이며 최초 확인자·시각을 덮어쓰지 않는다(감사 기록 보존)
+ *  · 응답은 갱신된 `Content` (status는 바뀌지 않는다 — 이 게이트는 상태와 직교한다)
+ */
+export const confirmMinorConsent = (c: ApiClient, id: ContentId): Promise<Content> =>
+  c.request<Content>('POST', `/contents/${id}/minor-consent`);
+
+/**
+ * DELETE /v1/contents/:id/minor-consent — 동의 확인 **철회** (센터 전용).
+ * 사유 바디를 받지 않는다(저장할 컬럼이 없다). 서버가 거부하는 두 경우 모두 409다:
+ *  · 미확인 상태 ("철회할 대상이 없다")
+ *  · **게이트가 지키는 전이가 이미 `status_transition_logs`에 있음** — 철회해도 송출을 막지 못하므로
+ *    거짓 안심을 만들지 않기 위해 거부한다. 판정은 `approvedAt`이 아니라 로그 실측이다(D5 정정).
+ * 그래서 UI는 `features/contents/actions.ts`의 `minorConsentActionsFor`가 같은 조건을 미리 판정해
+ * 버튼 자체를 그리지 않는다 — 이 함수가 호출되는 시점엔 이미 통과 가능해야 한다.
+ */
+export const withdrawMinorConsent = (c: ApiClient, id: ContentId): Promise<Content> =>
+  c.request<Content>('DELETE', `/contents/${id}/minor-consent`);
+
 /** POST /v1/contents/:id/approve — 센터: awaiting_center_review → center_approved (송출은 Distribute 몫) */
 export const approveContent = (c: ApiClient, id: ContentId): Promise<Content> =>
   c.request<Content>('POST', `/contents/${id}/approve`);

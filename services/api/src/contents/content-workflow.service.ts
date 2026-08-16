@@ -21,7 +21,14 @@ import {
 import type { CreateRevisionRequestDto } from './schemas/content.schemas';
 import { recordContentTransition } from './transition-probe';
 
-/** 전이 액터 — phase-1 시스템 액터는 reporter approve 자동 연쇄뿐 (워커 도입 시 jobId 사용) */
+/**
+ * 전이 액터. 시스템 액터의 `jobId`가 **선택**인 이유: 잡이 낳지 않은 시스템 전이가 있다.
+ * · 잡 유래 — 큐 이벤트 소비자(`PipelineService`)·추천 워커. jobId를 싣는다.
+ * · 잡 없음 — 사람이 방아쇠를 당겼지만 그 사람이 **그 콘텐츠의 액터가 될 수 없는** 경우
+ *   (`cancelBySystem`: 주민 업로드 반려에 따른 무주 콘텐츠 종결, T-W2-31). jobId는 null이고
+ *   방아쇠를 당긴 사람은 `note`로 남는다 — `status_transition_logs`의 불변식이
+ *   "actorType='user' ⇒ actorUserId 필수"라 system 행에는 사용자 id를 실을 자리가 없다.
+ */
 export type TransitionActor =
   { type: 'user'; user: User } | { type: 'system'; jobId?: string; note?: string };
 
@@ -285,6 +292,52 @@ export class ContentWorkflowService {
       await this.syncPublicMediaAfterPublish(contentId, content.generation);
     }
     return { applied };
+  }
+
+  /**
+   * ★ 무주(unowned) 콘텐츠의 시스템 종결 — `expectedFrom` → canceled, **호출자 트랜잭션 안에서**
+   * (T-W2-31, 대장 #112). `beginPublishing`·`resumePublishing`과 같은 tx-수취 형태다.
+   *
+   * ── 왜 `cancel()`이 아니라 이것인가 ────────────────────────────────────────
+   * `cancel()`은 `requireOwnerOrCenter`로 **사용자 액터**를 요구한다. `origin='resident_link'`
+   * 콘텐츠는 shared 불변식상 `reporterId=null`(무주)이라 소유 기자 판정을 통과할 수 없고, 검수자는
+   * 지사 기자(`reporter`)라 센터 액터도 아니다. 액터 판정을 완화하면 **모든** 무주 콘텐츠에 대한
+   * 기자 취소 권한이 열리므로(주민 링크와 무관한 `live_vod`까지), 완화 대신 액터를 system으로 둔다.
+   *
+   * ── 감사 (한계 포함) ──────────────────────────────────────────────────────
+   * actorType='system' ⇒ `actorUserId`는 null이다(shared 불변식). 그래서 **방아쇠를 당긴 사람과
+   * 사유는 `note` 문자열에만** 남는다 — 구조화 컬럼이 아니라 질의로 집계할 수 없다. 반려 사유를
+   * 컬럼으로 보존하는 것은 별건(대장 #113)이며 여기서 만들지 않는다. 검수자 id는 `resident_uploads.
+   * reviewed_by_user_id`에 구조화돼 있으므로 역추적 자체는 그쪽과 이 note를 함께 보면 가능하다.
+   *
+   * ── 멱등·비파괴 ───────────────────────────────────────────────────────────
+   * 콘텐츠가 이미 `expectedFrom`을 떠났으면(다른 경로로 진행·종결됨) **덮어쓰지 않고** no-op이다
+   * (`ResidentReviewsService.enterPipeline`이 재인큐를 막는 판단과 같다). 행이 아예 없어도 no-op —
+   * 여기서 404를 던지면 이미 커밋 대상인 검수 결정까지 함께 롤백된다(반려는 막히면 안 된다).
+   * 반환의 `status`는 **이 호출 후 그 콘텐츠의 상태**(no-op이면 관측된 현재 상태, 행 부재면 null)라
+   * 호출부가 "왜 안 됐는지"를 재조회 없이 로그로 남길 수 있다.
+   */
+  async cancelBySystem(
+    tx: Tx,
+    contentId: string,
+    expectedFrom: ContentStatus,
+    note: string,
+  ): Promise<{ applied: boolean; status: ContentStatus | null }> {
+    const content = await tx.content.findUnique({ where: { id: contentId } });
+    if (!content) return { applied: false, status: null };
+
+    const from = content.status as ContentStatus;
+    if (from !== expectedFrom) return { applied: false, status: from };
+
+    const to: ContentStatus = 'canceled';
+    const actor: TransitionActor = { type: 'system' };
+    this.policyGuard(content, from, to, actor);
+    this.assertAllowed(from, to);
+
+    // idempotent=true — 같은 tx 밖의 동시 전이가 먼저 이겨 CAS가 0행이면 409를 던지지 않고 no-op.
+    // 반려(검수 결정)는 인프라·경합 사정으로 막혀서는 안 된다(07 §3-15 "즉시 반려").
+    const applied = await this.applyHop(tx, content, from, to, actor, { note }, true);
+    return { applied, status: applied ? to : from };
   }
 
   /**

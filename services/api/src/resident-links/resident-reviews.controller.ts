@@ -68,10 +68,13 @@ export class ResidentReviewsController {
   @HttpCode(200)
   @Roles('reporter', 'admin')
   @ApiOperation({
-    summary: '검수 반려 [종결] — 파이프라인 미진입 확정',
+    summary: '검수 반려 [종결] — 파이프라인 미진입 확정 + 콘텐츠 종결(canceled)',
     description:
-      '07 §3-15 "불법촬영물 의심 시 즉시 반려" 대응. 사유 바디는 받지 않는다(저장할 컬럼이 없어 ' +
-      '받아도 버려진다 — 사유 보존은 후속 위임). 인큐하지 않으며 큐 가용성도 요구하지 않는다.',
+      '07 §3-15 "불법촬영물 의심 시 즉시 반려" 대응. resident_uploads.status=rejected 기록과 ' +
+      '연결된 콘텐츠 종결(uploaded→canceled, 시스템 액터)이 한 트랜잭션이라 부분 성공이 없다. ' +
+      '콘텐츠가 이미 uploaded를 떠났으면 덮어쓰지 않고 종결만 생략한다. 멱등이며(재전송·더블클릭) ' +
+      '종결이 유실된 건은 같은 호출로 보정된다. 사유 바디는 받지 않는다(저장할 컬럼이 없어 받아도 ' +
+      '버려진다 — 자유입력 사유 보존은 별건). 인큐하지 않으며 큐 가용성도 요구하지 않는다.',
   })
   reject(@CurrentUser() user: User, @Param('id') id: string): Promise<ResidentUploadReviewItem> {
     return this.reviews.reject(user, id);

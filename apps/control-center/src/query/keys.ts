@@ -60,6 +60,8 @@ export const contentKeys = {
 };
 
 export const stationKeys = {
+  /** prefix 앵커 — 지사 전이·생성·수정 후 invalidate 대상 (list·detail 전부를 덮는다) */
+  all: ['stations'] as const,
   list: (filter: StationFilter) => ['stations', 'list', normalizeStationFilter(filter)] as const,
   detail: (id: StationId) => ['stations', 'detail', id] as const,
 };

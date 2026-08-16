@@ -496,4 +496,91 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
       expect(prisma.residentUpload.findUnique).not.toHaveBeenCalled();
     });
   });
+
+  /* ───────── 무주 콘텐츠의 시스템 종결 (T-W2-31 — 대장 #112) ─────────
+   * `cancel()`은 사용자 액터(소유 기자 또는 센터)를 요구한다. `origin='resident_link'` 콘텐츠는
+   * `reporterId=null`이라 그 판정을 통과할 수 없어 종결 경로가 아예 없었다.
+   * 소비자는 `ResidentReviewsService.reject`이며, 반려→종결 연쇄는 그쪽 스위트가 고정한다. */
+  describe('cancelBySystem — 호출자 트랜잭션 안의 종결 홉', () => {
+    const cancelSetup = (status = 'uploaded') => {
+      const prisma = makePrismaMock();
+      const row = contentRow({ id: 'c-1', origin: 'resident_link', reporterId: null, status });
+      prisma.content.findUnique.mockResolvedValue(row);
+      return { prisma, service: new ContentWorkflowService(prisma) };
+    };
+
+    it('uploaded → canceled: CAS(where.status=uploaded) + system 액터 감사 로그', async () => {
+      const { prisma, service } = cancelSetup();
+
+      const res = await service.cancelBySystem(prisma, 'c-1', 'uploaded', '사유 문구');
+
+      expect(res).toEqual({ applied: true, status: 'canceled' });
+      expect(prisma.content.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c-1', status: 'uploaded' },
+        data: { status: 'canceled' },
+      });
+      expect(prisma.statusTransitionLog.create.mock.calls[0][0].data).toMatchObject({
+        entityType: 'content',
+        entityId: 'c-1',
+        fromStatus: 'uploaded',
+        toStatus: 'canceled',
+        actorType: 'system',
+        actorUserId: null, // shared 불변식: system 행에는 사용자 id를 실을 자리가 없다
+        jobId: null, // 잡이 낳은 전이가 아니다
+        note: '사유 문구', // ⇒ 방아쇠를 당긴 사람·사유의 유일한 흔적
+      });
+    });
+
+    it('★ expectedFrom을 떠난 콘텐츠는 덮어쓰지 않는다 — 관측된 현재 상태를 돌려준다', async () => {
+      const { prisma, service } = cancelSetup('published');
+
+      const res = await service.cancelBySystem(prisma, 'c-1', 'uploaded', 'n');
+
+      expect(res).toEqual({ applied: false, status: 'published' });
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+      expect(prisma.statusTransitionLog.create).not.toHaveBeenCalled();
+    });
+
+    it('★ 행이 없어도 던지지 않는다 — 404가 호출자 트랜잭션(검수 결정)까지 롤백시키면 안 된다', async () => {
+      const { prisma, service } = cancelSetup();
+      prisma.content.findUnique.mockResolvedValue(null);
+
+      await expect(service.cancelBySystem(prisma, 'c-none', 'uploaded', 'n')).resolves.toEqual({
+        applied: false,
+        status: null,
+      });
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('★ CAS 경합(count=0)도 409가 아니라 무해 no-op이다 (idempotent 홉)', async () => {
+      const { prisma, service } = cancelSetup();
+      prisma.content.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.cancelBySystem(prisma, 'c-1', 'uploaded', 'n')).resolves.toEqual({
+        applied: false,
+        status: 'uploaded',
+      });
+      expect(prisma.statusTransitionLog.create).not.toHaveBeenCalled();
+    });
+
+    it('전이맵이 금지하는 from이면 invalid_transition (규칙 사본 없이 shared가 판정)', async () => {
+      const { prisma, service } = cancelSetup('published'); // published에는 canceled 출구가 없다
+      const err = await expectDomainError(
+        service.cancelBySystem(prisma, 'c-1', 'published', 'n'),
+        'invalid_transition',
+      );
+      expect(err.details).toMatchObject({ from: 'published', to: 'canceled' });
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('호출자 트랜잭션을 그대로 쓴다 — 자기 $transaction을 열지 않는다', async () => {
+      const { prisma, service } = cancelSetup();
+      const tx = { content: prisma.content, statusTransitionLog: prisma.statusTransitionLog };
+
+      await service.cancelBySystem(tx as never, 'c-1', 'uploaded', 'n');
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.content.updateMany).toHaveBeenCalled();
+    });
+  });
 });

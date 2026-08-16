@@ -8,6 +8,7 @@ import {
 import type { Prisma, ResidentUpload as ResidentUploadRow } from '@prisma/client';
 import { DomainException } from '../common/errors/domain.exception';
 import { toPaginated, toSkipTake } from '../common/pagination/pagination.util';
+import { ContentWorkflowService } from '../contents/content-workflow.service';
 import { MediaAssetsService } from '../media/media-assets.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueueProducerService } from '../queue/queue-producer.service';
@@ -97,6 +98,7 @@ export class ResidentReviewsService {
     private readonly residentLinks: ResidentLinksService,
     private readonly producer: QueueProducerService,
     private readonly assets: MediaAssetsService,
+    private readonly workflow: ContentWorkflowService,
   ) {}
 
   /* ────────────────────────── ① 검수 대기열 조회 ────────────────────────── */
@@ -161,14 +163,37 @@ export class ResidentReviewsService {
    * 07 §3-15가 "불법촬영물 의심 시 **즉시 반려**"를 관리적 조치로 요구하므로, 인프라 상태가
    * 위험 콘텐츠 차단을 막아서는 안 된다.
    *
-   * 반려된 업로드의 Content는 `uploaded`에 남는다(종결 전이는 하지 않는다): 주민 콘텐츠는
-   * `reporterId=null`이라 `ContentWorkflowService.cancel`의 소유 기자 판정을 통과할 수 없고,
-   * 그 배선은 이 태스크의 파일 소유권 밖이다. 게이트가 영구히 막으므로 **안전하지만 정돈되지는 않은**
-   * 상태이며, 후속 위임 대상이다(완료 보고 참조).
+   * ★ 반려 = ⓐ 검수 결정 기록(CAS) + ⓑ **Content 종결**(`uploaded`→`canceled`)이며 **한 트랜잭션**이다
+   * (T-W2-31, 대장 #112). 이전에는 ⓑ가 없어 반려된 콘텐츠가 `uploaded`에 영구 잔류했고, 게이트가
+   * 파이프라인 진입을 막아 **안전하긴 했지만** 종결되지 않았다 — 부수 효과로 shared
+   * `AUTO_PROGRESS_CONTENT_STATUSES`(`uploaded` 포함) 파생상 UI에 "처리 중"으로 보였다.
+   *
+   * ── 왜 `rejected`가 아니라 `canceled`인가 (사용자 결정 2026-08-16) ──────────────
+   * ContentStatus의 `rejected`는 "기자/센터 **검토** 반려"라는 기존 도메인 의미를 갖는다
+   * (전이맵상 `awaiting_reporter_review`에서만 도달 가능하다 — 애초에 `uploaded`에서 갈 수 없다).
+   * 주민 업로드 검수 반려는 그 검토 단계에 들어가기 **전**의 접수 거절이라 성격이 다르다.
+   *
+   * ── 왜 시스템 액터인가 ────────────────────────────────────────────────────
+   * 주민 콘텐츠는 `reporterId=null`이라 검수자가 `cancel()`의 소유 기자 판정을 통과할 수 없다.
+   * 액터 판정을 완화하는 대신 `ContentWorkflowService.cancelBySystem`(system 액터)을 쓰고,
+   * 검수자·반려 사실은 감사 note에 남긴다(구조화 컬럼 부재의 한계는 그쪽 주석 참조).
+   *
+   * ── 트랜잭션 경계 ─────────────────────────────────────────────────────────
+   * ⓐ와 ⓑ가 같은 인터랙티브 트랜잭션이라 **부분 성공이 없다**: 둘 다 커밋되거나 둘 다 롤백된다
+   * (롤백 시 대기열에 그대로 남아 검수자가 같은 버튼을 다시 누르면 된다). 이것이 `approve()`와
+   * 다른 이유는 그쪽의 ⓓ가 **외부 큐 인큐**라 DB 트랜잭션에 넣을 수 없기 때문이다(인큐-애프터-커밋).
+   * 여기 ⓑ는 같은 DB 안이라 원자성을 그냥 살 수 있다.
+   *
+   * 멱등: 같은 건을 다시 반려해도 200이며, ⓑ가 유실된 건(구버전에서 반려됐거나 롤백 후 재시도)은
+   * 같은 호출로 종결이 보정된다 — `decide`가 멱등 통과한 뒤에도 종결 연쇄를 **건너뛰지 않는다**.
    */
   async reject(user: User, uploadId: string): Promise<ResidentUploadReviewItem> {
     const upload = await this.loadForReview(user, uploadId);
-    const decided = await this.decide(upload, user, ResidentUploadStatus.Rejected);
+    const decided = await this.prisma.$transaction(async (tx) => {
+      const row = await this.decide(upload, user, ResidentUploadStatus.Rejected, tx);
+      await this.closeRejectedContent(tx, row, user);
+      return row;
+    });
     return toReviewItem(decided);
   }
 
@@ -234,11 +259,15 @@ export class ResidentReviewsService {
    * 검수 결정 기록 — `awaiting_branch_review` 조건부 UPDATE(CAS)로 동시 검수 중 하나만 승리시킨다.
    * 허용 여부 판정은 모듈 전이맵(`RESIDENT_UPLOAD_STATUS_TRANSITIONS`)이 소유한다 — from 목록 하드코딩 금지.
    * 같은 결정이 이미 기록돼 있으면 **멱등 성공**이다(더블클릭·재전송·복구 재승인).
+   *
+   * `db`는 기본이 `this.prisma`(자기 트랜잭션 없음 — 승인 경로)이고, 반려 경로만 호출자 트랜잭션을
+   * 넘긴다(검수 결정과 Content 종결의 원자성 — `reject()` 주석 참조).
    */
   private async decide(
     upload: ReviewRow,
     user: User,
     to: ResidentUploadStatus,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<ReviewRow> {
     const from = upload.status as ResidentUploadStatus;
     if (from === to) return upload; // 이미 같은 결정 — 검수자·시각은 최초 결정을 보존
@@ -250,19 +279,55 @@ export class ResidentReviewsService {
     }
 
     const reviewedAt = new Date();
-    const res = await this.prisma.residentUpload.updateMany({
+    const res = await db.residentUpload.updateMany({
       where: { id: upload.id, status: ResidentUploadStatus.AwaitingBranchReview },
       data: { status: to, reviewedByUserId: user.id, reviewedAt },
     });
     if (res.count === 0) {
       // 경합 패배 — 승자의 결정이 내 결정과 같으면 멱등 성공, 다르면 409
-      const fresh = await this.prisma.residentUpload.findUnique({ where: { id: upload.id } });
+      const fresh = await db.residentUpload.findUnique({ where: { id: upload.id } });
       if (fresh?.status === to) return { ...upload, ...fresh } as ReviewRow;
       throw new DomainException('conflict', '다른 검수자가 먼저 처리했습니다', {
         status: fresh?.status ?? null,
       });
     }
     return { ...upload, status: to, reviewedByUserId: user.id, reviewedAt };
+  }
+
+  /**
+   * ★ 반려된 업로드의 Content 종결 — `uploaded`→`canceled` (T-W2-31, 대장 #112).
+   * 호출자 트랜잭션 안에서 실행되므로 검수 결정과 함께 커밋되거나 함께 롤백된다.
+   *
+   * 두 가지 무해 no-op이 있고 둘 다 **의도된** 것이다(로그로만 남긴다):
+   *  · `contentId=null` — 완료 통지 전에는 Content가 없다. 지금의 `decide`는 `awaiting_branch_review`
+   *    행만 결정할 수 있고 그 상태 편입은 Content 생성과 **같은 트랜잭션**이라(`completeUpload`)
+   *    정상 흐름에서 도달 불가지만, 판정 근거 부재를 예외로 바꾸면 반려 자체가 막히므로 통과시킨다.
+   *  · 콘텐츠가 이미 `uploaded`를 떠남 — 승인 후 반려(경합)·수동 전이 등. **덮어쓰지 않는다**
+   *    (`enterPipeline`이 같은 이유로 재인큐를 막는 판단과 동형).
+   */
+  private async closeRejectedContent(
+    tx: Prisma.TransactionClient,
+    upload: ReviewRow,
+    user: User,
+  ): Promise<void> {
+    if (!upload.contentId) {
+      this.logger.warn(`주민 업로드 반려 — 연결된 콘텐츠가 없어 종결 생략 (uploadId=${upload.id})`);
+      return;
+    }
+    // 시스템 액터라 actorUserId를 실을 수 없다 — 검수자·사유는 이 note가 유일한 감사 흔적이다
+    // (반려 사유 자유입력 컬럼은 별건, 대장 #113).
+    const note = `주민 업로드 검수 반려로 종결 (uploadId=${upload.id}, 검수자=${user.id})`;
+    const { applied, status } = await this.workflow.cancelBySystem(
+      tx,
+      upload.contentId,
+      'uploaded',
+      note,
+    );
+    if (!applied) {
+      this.logger.warn(
+        `주민 업로드 반려 — 콘텐츠 종결 생략 (uploadId=${upload.id}, contentId=${upload.contentId}, status=${status ?? '행 없음'})`,
+      );
+    }
   }
 
   /**
