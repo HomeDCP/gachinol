@@ -13,6 +13,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { DomainException } from '../common/errors/domain.exception';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateRevisionRequestDto } from './schemas/content.schemas';
+import { recordContentTransition } from './transition-probe';
 
 /** 전이 액터 — phase-1 시스템 액터는 reporter approve 자동 연쇄뿐 (워커 도입 시 jobId 사용) */
 export type TransitionActor =
@@ -467,6 +468,9 @@ export class ContentWorkflowService {
         at: now,
       },
     });
+    // 미구동 계약 계측(EXEC-DECISIONS #29 1계층) — 테스트 외 환경에서는 본문 없는 함수다.
+    // CAS 성공·감사 로그 기록 이후에만 부른다: 실제로 적용된 홉만 "관측"으로 센다(경합 no-op 제외).
+    recordContentTransition(from, to);
     return true;
   }
 }

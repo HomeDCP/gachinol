@@ -1,4 +1,9 @@
 import type { ContentStatus } from '@gachinol/shared';
+import {
+  AUTO_PROGRESS_CONTENT_STATUSES,
+  isAutoProgressContentStatus,
+  isStalledAutomationContentStatus,
+} from '@gachinol/shared';
 
 export type StatusTone = 'neutral' | 'info' | 'progress' | 'success' | 'warning' | 'danger';
 
@@ -9,7 +14,14 @@ export interface StatusBadge {
   needsMyAction?: true;
 }
 
-/** 23종 전수를 컴파일 타임 강제 — 상태 추가 시 tsc가 즉시 잡음 */
+/**
+ * 23종 전수를 컴파일 타임 강제 — 상태 추가 시 tsc가 즉시 잡음.
+ *
+ * ⚠ 이 표를 **직접 읽지 말고 `statusBadge()`를 쓸 것**. 여기 적힌 `tone`은 "그 단계의 구동부가
+ * 정상 동작할 때"의 얼굴이고, "구동부가 없어 멈춰 있다"는 판정과 그 결과(경고 톤)는
+ * `statusBadge()`가 shared `NOT_WIRED` 레지스트리에서 파생한다(EXEC-DECISIONS #29 ④).
+ * 그래서 auto_edit이 구현되면 UI가 자동으로 따라오고, 사람이 되돌릴 것을 기억할 필요가 없다.
+ */
 export const STATUS_BADGE = {
   draft: { label: '작성 중', tone: 'neutral' },
   uploading: { label: '업로드 중', tone: 'progress' },
@@ -30,11 +42,13 @@ export const STATUS_BADGE = {
    */
   revision_requested: { label: '수정 요청됨', tone: 'warning', needsMyAction: true },
   /**
-   * 라벨·톤 정정(대장 #98) — 이 상태를 세팅하는 콘텐츠 도메인 코드가 없어(auto_edit 미구현)
-   * 'progress'(진행 중) 톤은 거짓이었다. 센터의 수동 전이로 처음 도달 가능해진 상태라 지금부터는
-   * 실제로 관측될 수 있다.
+   * 대장 #98 — auto_edit 미구현이라 이 상태는 지금 **멈춘다**. 그 판정은 여기 하드코딩돼 있지
+   * 않다: shared `NOT_WIRED`가 `regenerating`의 출구 3엣지를 미구현으로 등재하고 있어
+   * `statusBadge()`가 아래 'progress'를 'warning'으로 덮는다. auto_edit이 구현돼 그 엣지들이
+   * 레지스트리에서 빠지면 덮개가 사라지고 'progress'가 그대로 나온다.
+   * (문구는 사람 몫이라 자동 전환하지 않는다 — 그때 라벨·설명만 손보면 된다.)
    */
-  regenerating: { label: '재생성 대기 중', tone: 'warning' },
+  regenerating: { label: '재생성 대기 중', tone: 'progress' },
   regeneration_failed: { label: '재생성 실패 — 센터 확인 중', tone: 'danger' },
   reporter_approved: { label: '승인 처리 중', tone: 'progress' },
   awaiting_center_review: { label: '센터 검토 대기', tone: 'info' },
@@ -75,7 +89,13 @@ export const STATUS_DESCRIPTION = {
   archived: '보관 처리되었습니다.',
 } as const satisfies Record<ContentStatus, string>;
 
-export const statusBadge = (s: ContentStatus): StatusBadge => STATUS_BADGE[s];
+/**
+ * ★ 배지 조회 — 표(사람이 쓴 문구·톤) 위에 **레지스트리 파생 판정**을 얹는다(EXEC-DECISIONS #29 ④).
+ * 자동 진행하기로 된 단계인데 구동부가 없어 멈춘 상태면 '진행 중' 톤을 쓰지 않는다.
+ * 판정은 shared `isStalledAutomationContentStatus`(= NOT_WIRED 파생) 하나뿐 — 상태 이름 하드코딩 0.
+ */
+export const statusBadge = (s: ContentStatus): StatusBadge =>
+  isStalledAutomationContentStatus(s) ? { ...STATUS_BADGE[s], tone: 'warning' } : STATUS_BADGE[s];
 
 /** 종결 상태 3종 */
 export const TERMINAL_STATUSES: readonly ContentStatus[] = ['rejected', 'canceled', 'archived'];
@@ -84,18 +104,11 @@ export const isTerminalStatus = (s: ContentStatus): boolean => TERMINAL_STATUSES
 
 /**
  * 자동 진행 상태 — 상세 화면 15s 폴링 대상 (WS 미도입 MVP의 대안).
- * regenerating 제외(대장 #98 보강) — 그 상태를 진행시키는 코드가 없어(auto_edit 미구현)
- * 15s마다 영원히 폴링만 하고 값이 바뀌지 않는다. "자동 진행"이 아니라 "정지" 상태다.
+ * **shared 파생**(`SYSTEM_DRIVEN_CONTENT_STATUSES` 중 NOT_WIRED에 구현된 출구가 남아 있는 것) —
+ * 목록도 제외 규칙도 여기 없다. `regenerating`이 빠지는 이유는 auto_edit 엣지가 미구동으로
+ * 등재돼 있기 때문이고, 구현되는 순간 이 목록에 자동 복귀한다(#29 ④).
+ * 관제 앱과 같은 원천을 쓰므로 두 앱이 어긋날 수 없다.
  */
-export const AUTO_PROGRESS_STATUSES: readonly ContentStatus[] = [
-  'uploading',
-  'uploaded',
-  'processing',
-  'analyzing',
-  'preview_generating',
-  'publishing',
-  'reporter_approved',
-];
+export const AUTO_PROGRESS_STATUSES: readonly ContentStatus[] = AUTO_PROGRESS_CONTENT_STATUSES;
 
-export const isAutoProgressStatus = (s: ContentStatus): boolean =>
-  AUTO_PROGRESS_STATUSES.includes(s);
+export const isAutoProgressStatus = (s: ContentStatus): boolean => isAutoProgressContentStatus(s);

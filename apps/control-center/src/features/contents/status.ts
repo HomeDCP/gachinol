@@ -1,4 +1,9 @@
 import type { ContentStatus } from '@gachinol/shared';
+import {
+  AUTO_PROGRESS_CONTENT_STATUSES,
+  isAutoProgressContentStatus,
+  isStalledAutomationContentStatus,
+} from '@gachinol/shared';
 
 export type StatusTone = 'neutral' | 'info' | 'progress' | 'success' | 'warning' | 'danger';
 
@@ -6,18 +11,26 @@ export interface StatusBadge {
   label: string;
   tone: StatusTone;
   /**
-   * 센터의 조치가 필요한 상태 — 정확히 9종 (테스트로 고정):
-   * awaiting_center_review(결정) + 6개 *_failed(재시도) + revision_requested·regenerating(대장 #98).
-   * 후자 둘은 auto_edit 워커 부재로 나가는 코드가 0건인 정지 상태다(actions.ts manualTransitionTargets는
-   * revision_requested에서만 채워진다 — regenerating은 앱 내 탈출구가 아예 없다).
+   * 센터의 조치가 필요한 상태 — 현재 정확히 9종 (테스트로 고정):
+   * awaiting_center_review(결정) + 6개 *_failed(재시도) + revision_requested(대장 #98) +
+   * **정지 상태**(레지스트리 파생, 현재 regenerating 1종).
    * "조치 필요"는 "앱에 버튼이 있다"가 아니라 "사람이 인지해야 한다"는 뜻이다 — regenerating처럼
    * 인앱 액션이 없어도, 강조하지 않으면 아무도 발견하지 못한 채 영구히 묻힌다(그게 더 나쁘다).
    * 보드 하이라이트·"확인 필요" 라벨의 근거.
+   *
+   * 마지막 항목은 표에 하드코딩돼 있지 않다 — `statusBadge()`가 shared `NOT_WIRED`에서 파생하므로
+   * auto_edit이 구현되면 자동으로 8종이 된다(EXEC-DECISIONS #29 ④).
    */
   needsCenterAction?: true;
 }
 
-/** 23종 전수를 컴파일 타임 강제 — 상태 추가 시 tsc가 즉시 잡음. 센터 관점 라벨/톤 */
+/**
+ * 23종 전수를 컴파일 타임 강제 — 상태 추가 시 tsc가 즉시 잡음. 센터 관점 라벨/톤.
+ *
+ * ⚠ 이 표를 **직접 읽지 말고 `statusBadge()`를 쓸 것**. 여기 적힌 `tone`·`needsCenterAction`은
+ * "그 단계의 구동부가 정상 동작할 때"의 얼굴이고, "구동부가 없어 멈춰 있다"는 판정과 그 결과는
+ * `statusBadge()`가 shared `NOT_WIRED` 레지스트리에서 파생한다(EXEC-DECISIONS #29 ④).
+ */
 export const STATUS_BADGE_CENTER = {
   draft: { label: '작성 중(지사)', tone: 'neutral' },
   uploading: { label: '업로드 중', tone: 'progress' },
@@ -33,12 +46,12 @@ export const STATUS_BADGE_CENTER = {
   // needsCenterAction 추가(대장 #98) — 유일한 진행 수단이 센터의 수동 전이라 보드에서 놓치면
   // 콘텐츠가 영구 정지한다(위 헤더 주석).
   revision_requested: { label: '수정 요청됨', tone: 'warning', needsCenterAction: true },
-  // 라벨·톤 정정 + needsCenterAction 추가(대장 #98 보강) — 이 상태를 세팅하는 콘텐츠 도메인 코드가
-  // 없어(auto_edit 미구현) 'progress'(진행 중) 톤은 거짓이었다. 센터의 수동 전이로 처음 도달
-  // 가능해진 상태이고, 앱 내 탈출구가 전혀 없다(shared 전이맵 실측: regenerating→{analyzing,
-  // preview_generating, regeneration_failed}뿐, canceled 없음) — revision_requested보다 더 심한
-  // 정지 상태라 보드 강조가 더더욱 필요하다(위 헤더 주석).
-  regenerating: { label: '재생성 대기 중', tone: 'warning', needsCenterAction: true },
+  // 대장 #98 — auto_edit 미구현이라 이 상태는 지금 멈춘다(앱 내 탈출구도 없다: 전이맵상
+  // regenerating→{analyzing, preview_generating, regeneration_failed}뿐이고 셋 다 미구동).
+  // 그 판정은 여기 하드코딩돼 있지 않다: shared NOT_WIRED가 그 3엣지를 미구현으로 등재하고 있어
+  // statusBadge()가 아래 'progress'를 warning + needsCenterAction으로 덮는다. auto_edit이
+  // 구현되면 덮개가 사라진다(문구는 사람 몫이라 그때 라벨·설명만 손보면 된다).
+  regenerating: { label: '재생성 대기 중', tone: 'progress' },
   regeneration_failed: { label: '재생성 실패', tone: 'danger', needsCenterAction: true },
   reporter_approved: { label: '기자 승인 처리 중', tone: 'progress' },
   awaiting_center_review: { label: '센터 검토 대기', tone: 'warning', needsCenterAction: true },
@@ -80,7 +93,16 @@ export const STATUS_DESCRIPTION_CENTER = {
   archived: '보관 처리되었습니다.',
 } as const satisfies Record<ContentStatus, string>;
 
-export const statusBadge = (s: ContentStatus): StatusBadge => STATUS_BADGE_CENTER[s];
+/**
+ * ★ 배지 조회 — 표(사람이 쓴 문구·톤) 위에 **레지스트리 파생 판정**을 얹는다(EXEC-DECISIONS #29 ④).
+ * 자동 진행하기로 된 단계인데 구동부가 없어 멈춘 상태면 '진행 중' 톤을 쓰지 않고 "조치 필요"로
+ * 강조한다 — 보드에서 놓치면 콘텐츠가 영구히 묻히기 때문이다.
+ * 판정은 shared `isStalledAutomationContentStatus`(= NOT_WIRED 파생) 하나뿐 — 상태 이름 하드코딩 0.
+ */
+export const statusBadge = (s: ContentStatus): StatusBadge =>
+  isStalledAutomationContentStatus(s)
+    ? { ...STATUS_BADGE_CENTER[s], tone: 'warning', needsCenterAction: true }
+    : STATUS_BADGE_CENTER[s];
 
 /** 종결 상태 3종 */
 export const TERMINAL_STATUSES: readonly ContentStatus[] = ['rejected', 'canceled', 'archived'];
@@ -88,19 +110,12 @@ export const TERMINAL_STATUSES: readonly ContentStatus[] = ['rejected', 'cancele
 export const isTerminalStatus = (s: ContentStatus): boolean => TERMINAL_STATUSES.includes(s);
 
 /**
- * 자동 진행 상태 — 상세 화면 15s 폴링 대상 (WS 미도입 MVP의 대안, reporter와 동일 목록).
- * regenerating 제외(대장 #98 보강) — 그 상태를 진행시키는 코드가 없어(auto_edit 미구현)
- * 15s마다 영원히 폴링만 하고 값이 바뀌지 않는다. "자동 진행"이 아니라 "정지" 상태다.
+ * 자동 진행 상태 — 상세 화면 15s 폴링 대상 (WS 미도입 MVP의 대안).
+ * **shared 파생**(`SYSTEM_DRIVEN_CONTENT_STATUSES` 중 NOT_WIRED에 구현된 출구가 남아 있는 것) —
+ * 목록도 제외 규칙도 여기 없다. `regenerating`이 빠지는 이유는 auto_edit 엣지가 미구동으로
+ * 등재돼 있기 때문이고, 구현되는 순간 이 목록에 자동 복귀한다(#29 ④).
+ * 기자 앱과 같은 원천을 쓰므로 두 앱이 어긋날 수 없다("reporter와 동일 목록" 주석 불요).
  */
-export const AUTO_PROGRESS_STATUSES: readonly ContentStatus[] = [
-  'uploading',
-  'uploaded',
-  'processing',
-  'analyzing',
-  'preview_generating',
-  'publishing',
-  'reporter_approved',
-];
+export const AUTO_PROGRESS_STATUSES: readonly ContentStatus[] = AUTO_PROGRESS_CONTENT_STATUSES;
 
-export const isAutoProgressStatus = (s: ContentStatus): boolean =>
-  AUTO_PROGRESS_STATUSES.includes(s);
+export const isAutoProgressStatus = (s: ContentStatus): boolean => isAutoProgressContentStatus(s);
