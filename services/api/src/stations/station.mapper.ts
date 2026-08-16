@@ -12,6 +12,8 @@ export const toStation = (row: StationRow): Station => ({
   region: row.region,
   description: row.description ?? undefined,
   thumbnailUrl: row.thumbnailUrl ?? undefined,
+  supportTel: row.supportTel ?? undefined,
+  youtubeUrl: row.youtubeUrl ?? undefined,
   sortOrder: row.sortOrder,
   foundedAt: row.foundedAt ? row.foundedAt.toISOString().slice(0, 10) : undefined,
   dormantSince: row.dormantSince ? row.dormantSince.toISOString() : undefined,

@@ -111,3 +111,30 @@ describe('ContentsController — 미성년자 동의 확인/철회 위임(T-W2-2
     expect(res).toBe(withdrawn);
   });
 });
+
+describe('ContentsController — 사후 자막 보강 위임 (T-W2-34, 대장 #123)', () => {
+  const setupCaptions = () => {
+    const contents = { updateCaptions: jest.fn() };
+    const controller = new ContentsController(
+      contents as never, // contents
+      {} as never, // workflow
+      {} as never, // producer
+      {} as never, // analysisProducer
+      {} as never, // distributionProducer
+      {} as never, // distribution
+    );
+    return { contents, controller };
+  };
+
+  it('PATCH :id/captions → contents.updateCaptions(user, id, body)로 위임 (바디 그대로)', async () => {
+    const { contents, controller } = setupCaptions();
+    contents.updateCaptions.mockResolvedValue(contentRow({ status: 'uploaded' }));
+    const user = reporterUser();
+    const body = { scenes: [{ order: 0, caption: '자막', startSec: null, endSec: null }] };
+
+    const res = await controller.updateCaptions(user, 'c-1', body as never);
+
+    expect(contents.updateCaptions).toHaveBeenCalledWith(user, 'c-1', body);
+    expect(res.status).toBe('uploaded');
+  });
+});

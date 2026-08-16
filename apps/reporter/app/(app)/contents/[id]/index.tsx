@@ -136,6 +136,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const hasAnyAction =
     actions.canReview ||
     actions.canEdit ||
+    actions.canEditCaptions ||
     actions.canStartMockUpload ||
     actions.canRetryUpload ||
     actions.canCancel;
@@ -213,7 +214,13 @@ export default function ContentDetailScreen(): React.JSX.Element {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>장면 ({content.scenes.length})</Text>
           {content.scenes.length === 0 ? (
-            <Text style={styles.metaText}>장면이 없습니다.</Text>
+            // 자막 0 = 간단 모드(03 §C-4) 또는 주민 제보. "없습니다"로 끝내면 발견돼도 조치로
+            // 이어지지 않는다 — 지금 채울 수 있는지를 그 자리에서 말해 준다(T-W2-34)
+            <Text style={styles.metaText}>
+              {actions.canEditCaptions
+                ? '아직 자막이 없습니다 — 아래 [자막 채우기]로 지금 채울 수 있습니다.'
+                : '자막 없이 송출·종결된 콘텐츠입니다.'}
+            </Text>
           ) : (
             [...content.scenes]
               .sort((a, b) => a.order - b.order)
@@ -278,6 +285,14 @@ export default function ContentDetailScreen(): React.JSX.Element {
             label="초안 수정"
             variant="secondary"
             onPress={() => router.push(`/contents/${contentId}/edit`)}
+          />
+        ) : null}
+        {/* 자막 보강 — 담당 기자가 아니어도 보인다(T-W2-34). 자막 유무로 문구만 갈린다 */}
+        {actions.canEditCaptions ? (
+          <Button
+            label={content.scenes.length === 0 ? '자막 채우기' : '자막 수정'}
+            variant="secondary"
+            onPress={() => router.push(`/contents/${contentId}/captions`)}
           />
         ) : null}
         {actions.canStartMockUpload ? (

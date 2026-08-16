@@ -93,6 +93,11 @@ export const toContentSummary = (row: ContentRowWithNames): ContentSummary => ({
   reporterId: row.reporterId ? toId<UserId>(row.reporterId) : null,
   reporterName: row.reporter?.name ?? null,
   durationSec: row.durationSec,
+  // 미성년자 동의 게이트 (T-W2-27, 대장 #118) — 확인자 id는 상세에만, 목록은 "확인됐는가"만.
+  hasMinorSubject: row.hasMinorSubject,
+  minorConsentConfirmedAt: row.minorConsentConfirmedAt
+    ? row.minorConsentConfirmedAt.toISOString()
+    : null,
   createdAt: row.createdAt.toISOString(),
   publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
 });

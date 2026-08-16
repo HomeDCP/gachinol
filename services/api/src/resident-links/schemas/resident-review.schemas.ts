@@ -33,4 +33,9 @@ export class ResidentReviewQueryDto extends createZodDto(zResidentReviewQuery) {
  * `resident_uploads`에 사유 컬럼이 없고, shared `TransitionEntityType`에도 'resident_upload'가 없어
  * `status_transition_logs`로 우회할 수도 없다(Prisma 스키마·shared 무변경이 이 태스크의 제약).
  * 받아 놓고 버리는 필드는 "배관 공백"(대장 #98~#107)을 다시 만드는 짓이라, 저장할 자리가 생기기 전에는
- * 받지 않는다. 사유 보존은 후속 위임(반려 사유 컬럼 + 업로더 통지 경로)이다. */
+ * 받지 않는다. 사유 보존은 후속 위임(반려 사유 컬럼 + 업로더 통지 경로)이며 대장 #113이 별건으로 잡고 있다.
+ *
+ * T-W2-31 이후에도 이 판단은 그대로다. 반려는 이제 연결된 Content를 종결시키고 그 전이가
+ * `status_transition_logs`(entity_type='content')에 남지만, 거기 실리는 것은 **서버가 조립한 고정 문구**
+ * (검수자 id + uploadId)일 뿐 검수자가 쓴 자유 사유가 아니다 — 자유 입력을 받아 note에 밀어 넣으면
+ * 콘텐츠 감사 로그에 검수자 원문이 섞여 들어가고, 여전히 질의 가능한 구조화 컬럼은 생기지 않는다. */

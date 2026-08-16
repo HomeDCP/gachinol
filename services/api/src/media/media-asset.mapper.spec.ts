@@ -22,6 +22,10 @@ const row = (over: Partial<MediaAssetRow> = {}): MediaAssetRow => ({
   checksumSha256: 'abc',
   createdByJobId: 'preview:c-1:g1',
   createdAt: new Date('2026-07-22T00:00:00.000Z'),
+  // 공개 사본 기록(T-W2-33) — 내부 운영 필드라 wire(MediaAsset)로는 노출되지 않는다
+  publicBucket: null,
+  publicKey: null,
+  publicCopiedAt: null,
   ...over,
 });
 

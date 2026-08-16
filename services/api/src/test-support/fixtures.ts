@@ -88,6 +88,9 @@ export const stationRow = (over: Partial<StationRow> = {}): StationRow => ({
   region: '제주시 애월읍',
   description: null,
   thumbnailUrl: null,
+  // 공개 연락 채널(T-W2-28) — 미설정이 기본. 설정된 지사는 각 테스트가 over로 덮는다
+  supportTel: null,
+  youtubeUrl: null,
   sortOrder: 1,
   foundedAt: null,
   dormantSince: NOW,

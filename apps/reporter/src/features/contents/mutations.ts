@@ -8,6 +8,7 @@ import type {
   CreateContentDraftRequest,
   CreateRevisionRequestBody,
   RejectContentRequest,
+  UpdateContentCaptionsRequest,
   UpdateContentDraftRequest,
 } from '@gachinol/shared';
 import {
@@ -17,6 +18,7 @@ import {
   rejectContent,
   requestRevision,
   retryContent,
+  updateCaptions,
   updateDraft,
 } from '../../api/contents';
 import { useApiClient } from '../../auth/auth-context';
@@ -60,6 +62,22 @@ export function useUpdateDraft(id: ContentId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateContentDraftRequest) => updateDraft(client, id, body),
+    onSuccess: (content) => applyContentResult(queryClient, content),
+    onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/**
+ * 사후 자막 보강 (T-W2-34, 대장 #123) — `useUpdateDraft`와 별도 훅인 이유는 엔드포인트·허용
+ * 상태·액터가 다르기 때문이다(api `ContentsService.updateCaptions` 주석).
+ * 성공 시 `contentKeys.all` invalidate가 자막 대기열 목록(`captions=needed`)까지 함께 갱신한다 —
+ * 자막을 채운 항목이 대기열에서 사라지는 것이 이 경로의 눈에 보이는 결과다.
+ */
+export function useUpdateCaptions(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UpdateContentCaptionsRequest) => updateCaptions(client, id, body),
     onSuccess: (content) => applyContentResult(queryClient, content),
     onError: (err) => handleTransitionError(queryClient, id, err),
   });

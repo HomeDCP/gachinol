@@ -8,6 +8,7 @@ import { useReporter } from '../../../../src/auth/auth-context';
 import { ClassifyFields } from '../../../../src/features/contents/components/classify-fields';
 import { SceneListEditor } from '../../../../src/features/contents/components/scene-list-editor';
 import { toClassifyFormValue, toSceneFormValues } from '../../../../src/features/contents/mappers';
+import { UploadMode } from '../../../../src/features/contents/mode';
 import { useUpdateDraft } from '../../../../src/features/contents/mutations';
 import { useContentDetail } from '../../../../src/features/contents/queries';
 import { validateCreateDraft } from '../../../../src/features/contents/validation';
@@ -93,8 +94,11 @@ export default function EditDraftScreen(): React.JSX.Element {
       : undefined;
 
   const save = (): void => {
-    // 수치 규칙은 생성과 동일 — validateCreateDraft 재사용
-    const result = validateCreateDraft(form.classify, form.scenes);
+    // 수치 규칙은 생성과 동일 — validateCreateDraft 재사용.
+    // 모드는 항상 `precise`다(T-W2-34): 이 화면은 장면 편집기를 **띄워 두고 있으므로** 화면에
+    // 있는 것을 그대로 검증해야 한다(간단 모드로 넘기면 사용자가 입력한 자막이 조용히 버려진다).
+    // 자막을 비운 채로 두려면 이 화면이 아니라 자막 보강 화면(/contents/:id/captions)을 쓴다.
+    const result = validateCreateDraft(form.classify, form.scenes, UploadMode.Precise);
     if (!result.ok) {
       setErrors(result.errors);
       return;

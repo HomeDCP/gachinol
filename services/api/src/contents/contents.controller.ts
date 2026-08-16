@@ -38,6 +38,7 @@ import {
   PageQueryDto,
   RejectContentDto,
   TransitionContentDto,
+  UpdateContentCaptionsDto,
   UpdateContentDraftDto,
 } from './schemas/content.schemas';
 
@@ -66,7 +67,21 @@ export class ContentsController {
 
   @Get()
   @Roles('reporter', 'center_operator')
-  @ApiOperation({ summary: '목록 — reporter는 자기 지사 강제' })
+  @ApiOperation({
+    summary: '목록 — reporter는 자기 지사 강제',
+    description:
+      'minorConsent=pending|confirmed는 미성년자 동의 게이트 필터다(T-W2-27, 대장 #118). 둘 다 ' +
+      'hasMinorSubject=true인 콘텐츠만 남기며, pending은 아직 확인되지 않은 것 = 센터가 확인해야 ' +
+      '승인이 풀리는 대기열이다. status로 대체할 수 없다 — reviewPolicy=reporter_only는 센터 검토를 ' +
+      '거치지 않아 차단된 콘텐츠가 awaiting_reporter_review에 멈추기 때문이다. 사실 필터라 ' +
+      '종결(rejected·canceled) 상태를 따로 제외하지 않는다. 응답 ContentSummary에도 ' +
+      'hasMinorSubject·minorConsentConfirmedAt이 실린다(확인자 id는 상세에만). ' +
+      'captions=needed는 자막 대기열 필터다(T-W2-34, 대장 #123) — 간단 모드·주민 제보로 ' +
+      '자막 없이(scenes=[]) 들어온 콘텐츠 중 **아직 채울 수 있는 것**만 남긴다. ' +
+      'minorConsent와 달리 순수 사실 필터가 아니다: 상태 조건(published 이후·종결 제외)을 ' +
+      '값 자체가 포함하며, 그 판정은 자막 쓰기 게이트(PATCH :id/captions)와 같은 shared ' +
+      '원천에서 파생해 둘이 어긋날 수 없다. status와 함께 보내면 AND로 적용된다.',
+  })
   list(
     @CurrentUser() user: User,
     @Query() query: ContentListQueryDto,
@@ -83,13 +98,41 @@ export class ContentsController {
 
   @Patch(':id')
   @Roles('reporter', 'center_operator')
-  @ApiOperation({ summary: '초안 수정 — draft·revision_requested만. 센터·관리자는 송출처만' })
+  @ApiOperation({
+    summary: '초안 수정 — draft·revision_requested만 + 담당 기자 본인. 센터·관리자는 송출처만',
+    description:
+      '업로드 이후에는 이 경로가 닫힌다. 자막만 사후에 채우려면 PATCH :id/captions를 쓴다 ' +
+      '(더 넓은 상태 범위 + 같은 지사 기자 — T-W2-34).',
+  })
   update(
     @CurrentUser() user: User,
     @Param('id') id: string,
     @Body() body: UpdateContentDraftDto,
   ): Promise<Content> {
     return this.contents.update(user, id, body);
+  }
+
+  @Patch(':id/captions')
+  @Roles('reporter', 'center_operator')
+  @ApiOperation({
+    summary: '사후 자막 보강 — 같은 지사 기자까지 허용, published 전까지 (T-W2-34, 대장 #123)',
+    description:
+      '간단 모드(03 §C-4)는 촬영자에게서 자막 부담을 걷어내고 자막 없이(scenes=[]) 업로드한다. ' +
+      '자막은 나중에 지사 담당자가 이 경로로 채운다. 초안 수정(PATCH /v1/contents/:id)과 ' +
+      '일부러 분리했다 — 그쪽은 draft·revision_requested + 담당 기자 본인이지만, 여기는 ' +
+      'published 직전까지의 모든 상태(shared CAPTION_EDITABLE_CONTENT_STATUSES = 전이맵 파생 ' +
+      '비종결 − published) + 같은 지사 기자다. 넓힌 액터가 제목·분류를 못 고치도록 바디에 ' +
+      'scenes만 둔다. scenes는 전량 치환이며 order 기준으로 기존 SceneId를 보존 병합한다 ' +
+      '(수정 지시 sceneNotes의 참조 유지). 빈 배열은 자막 전량 삭제. ' +
+      '타 지사 기자 403 · 송출(published) 이후·종결 상태 409(details.status). ' +
+      '승인·송출은 자막 유무로 막지 않는다(사용자 결정 2026-08-16 "송출 허용 + 사후 보강").',
+  })
+  updateCaptions(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() body: UpdateContentCaptionsDto,
+  ): Promise<Content> {
+    return this.contents.updateCaptions(user, id, body);
   }
 
   @Post(':id/minor-consent')

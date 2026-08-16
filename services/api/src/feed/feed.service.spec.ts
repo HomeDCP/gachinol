@@ -1,5 +1,6 @@
 import type { Content as ContentRow, MediaAsset as MediaAssetRow } from '@prisma/client';
 import { DomainException } from '../common/errors/domain.exception';
+import { PublicMediaService } from '../media/public-media.service';
 import { encodeFeedCursor } from './feed.cursor';
 import { FeedService } from './feed.service';
 import type { FeedQueryDto } from './schemas/feed.schemas';
@@ -57,6 +58,10 @@ const rendition = (over: Partial<MediaAssetRow> = {}): MediaAssetRow =>
     checksumSha256: null,
     createdByJobId: null,
     createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    // 공개 사본 기록(T-W2-33) — 기본은 "사본 모름" → 서명 URL 폴백
+    publicBucket: null,
+    publicKey: null,
+    publicCopiedAt: null,
     ...over,
   }) as MediaAssetRow;
 
@@ -250,7 +255,7 @@ describe('FeedService — 공개 URL(D-T8) 우선, 서명 URL 폴백', () => {
       station: { findMany: jest.fn() },
     };
     const s3 = { presignGet: jest.fn() };
-    const publicMedia = { resolvePublicUrl: jest.fn() };
+    const publicMedia = { publicUrlForAsset: jest.fn() };
     const service = new FeedService(prisma as never, s3 as never, publicMedia as never);
     return { service, prisma, s3, publicMedia };
   };
@@ -260,11 +265,14 @@ describe('FeedService — 공개 URL(D-T8) 우선, 서명 URL 폴백', () => {
     prisma.content.findUnique.mockResolvedValue(row());
     prisma.mediaAsset.findMany.mockResolvedValue([rendition()]);
     prisma.mediaAsset.findFirst.mockResolvedValue(null);
-    publicMedia.resolvePublicUrl.mockResolvedValue('https://media.example.com/public/k720.mp4');
+    publicMedia.publicUrlForAsset.mockReturnValue('https://media.example.com/public/k720.mp4');
 
     const info = await service.getPlayback('x');
 
-    expect(publicMedia.resolvePublicUrl).toHaveBeenCalledWith('contents/x/g1/rendition_720p.mp4');
+    // storageKey가 아니라 자산 행 전체를 넘긴다(공개 사본 기록이 그 행에 실려 있다 — T-W2-33)
+    expect(publicMedia.publicUrlForAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ storageKey: 'contents/x/g1/rendition_720p.mp4' }),
+    );
     expect(info.hlsUrl).toBe('https://media.example.com/public/k720.mp4');
     expect(s3.presignGet).not.toHaveBeenCalled();
   });
@@ -274,7 +282,7 @@ describe('FeedService — 공개 URL(D-T8) 우선, 서명 URL 폴백', () => {
     prisma.content.findUnique.mockResolvedValue(row());
     prisma.mediaAsset.findMany.mockResolvedValue([rendition()]);
     prisma.mediaAsset.findFirst.mockResolvedValue(null);
-    publicMedia.resolvePublicUrl.mockResolvedValue(null);
+    publicMedia.publicUrlForAsset.mockReturnValue(null);
     s3.presignGet.mockResolvedValue({ url: 'signed-fallback', expiresAt: 'x' });
 
     const info = await service.getPlayback('x');
@@ -283,12 +291,14 @@ describe('FeedService — 공개 URL(D-T8) 우선, 서명 URL 폴백', () => {
     expect(s3.presignGet).toHaveBeenCalledWith('contents/x/g1/rendition_720p.mp4');
   });
 
-  it('getPlayback: 공개 URL 조회 자체가 예외를 던져도 서명 URL로 폴백(throw 없음)', async () => {
+  it('getPlayback: 공개 URL 판정이 예외를 던져도 서명 URL로 폴백(throw 없음)', async () => {
     const { service, prisma, s3, publicMedia } = makeServiceWithPublicMedia();
     prisma.content.findUnique.mockResolvedValue(row());
     prisma.mediaAsset.findMany.mockResolvedValue([rendition()]);
     prisma.mediaAsset.findFirst.mockResolvedValue(null);
-    publicMedia.resolvePublicUrl.mockRejectedValue(new Error('S3 down'));
+    publicMedia.publicUrlForAsset.mockImplementation(() => {
+      throw new Error('boom');
+    });
     s3.presignGet.mockResolvedValue({ url: 'signed-fallback', expiresAt: 'x' });
 
     const info = await service.getPlayback('x');
@@ -302,12 +312,110 @@ describe('FeedService — 공개 URL(D-T8) 우선, 서명 URL 폴백', () => {
       rendition({ kind: 'thumbnail', storageKey: 'thumb-key' }),
     ]);
     prisma.aiAnalysis.findMany.mockResolvedValue([]);
-    publicMedia.resolvePublicUrl.mockResolvedValue('https://media.example.com/public/thumb.jpg');
+    publicMedia.publicUrlForAsset.mockReturnValue('https://media.example.com/public/thumb.jpg');
 
     const page = await service.list(q());
 
     expect(page.items[0]!.thumbnailUrl).toBe('https://media.example.com/public/thumb.jpg');
     expect(s3.presignGet).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 대장 #129 ⓐ 회귀 방어 — **공개 서빙이 켜진 상태에서 피드 목록의 S3 왕복이 0회**임을 실 서비스로 증명한다.
+ * (목이 아니라 진짜 PublicMediaService를 주입해야 의미가 있다 — 목을 쓰면 HEAD 호출을 목이 삼킨다.)
+ * 변경 전 구현은 항목마다 `resolvePublicUrl` → `headObject` 1회였으므로 N건 = HEAD N회였다.
+ */
+describe('FeedService.list — 공개 서빙 ON에서 S3 HEAD 0회(대장 #129 ⓐ)', () => {
+  const N = 20; // 피드 1페이지 기본 크기
+
+  const makeRealPublicMedia = (headObject: jest.Mock) => {
+    const config = {
+      get: (k: string) =>
+        (
+          ({
+            MEDIA_PUBLIC_BUCKET: undefined,
+            MEDIA_PUBLIC_PREFIX: 'public',
+            MEDIA_PUBLIC_BASE_URL: 'https://media.example.com', // ← 공개 서빙 ON
+          }) as Record<string, unknown>
+        )[k],
+    };
+    const s3 = { bucket: 'gachinol-media', headObject };
+    return new PublicMediaService({} as never, s3 as never, {} as never, config as never);
+  };
+
+  it(`published ${N}건(전부 공개 사본 기록 있음) 조회 → headObject 0회 · presignGet 0회 · 전건 공개 URL`, async () => {
+    const headObject = jest.fn().mockResolvedValue({ sizeBytes: 1 });
+    const prisma = {
+      content: { findMany: jest.fn(), findUnique: jest.fn() },
+      mediaAsset: { findMany: jest.fn(), findFirst: jest.fn() },
+      aiAnalysis: { findMany: jest.fn() },
+      station: { findMany: jest.fn() },
+    };
+    const s3 = { presignGet: jest.fn() };
+    const service = new FeedService(prisma as never, s3 as never, makeRealPublicMedia(headObject));
+
+    const contents = Array.from({ length: N }, (_, i) =>
+      row({ id: `01920000-0000-7000-8000-0000000000${String(i).padStart(2, '0')}` }),
+    );
+    prisma.content.findMany.mockResolvedValue(contents);
+    prisma.mediaAsset.findMany.mockResolvedValue(
+      contents.map((c, i) =>
+        rendition({
+          id: `thumb-${i}`,
+          contentId: c.id,
+          kind: 'thumbnail',
+          storageKey: `contents/${c.id}/g1/thumbnail.jpg`,
+          publicBucket: 'gachinol-media',
+          publicKey: `public/contents/${c.id}/g1/thumbnail.jpg`,
+          publicCopiedAt: new Date('2026-07-02T00:00:00.000Z'),
+        }),
+      ),
+    );
+    prisma.aiAnalysis.findMany.mockResolvedValue([]);
+
+    const page = await service.list(q({ limit: N }));
+
+    expect(page.items).toHaveLength(N);
+    // 전건이 공개 URL로 해석됐다 = 변경 전이라면 자산 존재 확인 HEAD가 N회 필요했던 분량
+    expect(page.items.filter((it) => it.thumbnailUrl?.startsWith('https://media.example.com/')))
+      .toHaveLength(N);
+    expect(headObject).toHaveBeenCalledTimes(0); // ★ 변경 전: N(=20)회
+    expect(s3.presignGet).toHaveBeenCalledTimes(0);
+  });
+
+  it(`공개 사본 기록이 없는 ${N}건 → 여전히 headObject 0회, 서명 URL 폴백 ${N}회(폴백 계약 유지)`, async () => {
+    const headObject = jest.fn().mockResolvedValue({ sizeBytes: 1 });
+    const prisma = {
+      content: { findMany: jest.fn(), findUnique: jest.fn() },
+      mediaAsset: { findMany: jest.fn(), findFirst: jest.fn() },
+      aiAnalysis: { findMany: jest.fn() },
+      station: { findMany: jest.fn() },
+    };
+    const s3 = { presignGet: jest.fn().mockResolvedValue({ url: 'signed', expiresAt: 'x' }) };
+    const service = new FeedService(prisma as never, s3 as never, makeRealPublicMedia(headObject));
+
+    const contents = Array.from({ length: N }, (_, i) =>
+      row({ id: `01920000-0000-7000-8000-0000000000${String(i).padStart(2, '0')}` }),
+    );
+    prisma.content.findMany.mockResolvedValue(contents);
+    prisma.mediaAsset.findMany.mockResolvedValue(
+      contents.map((c, i) =>
+        rendition({
+          id: `thumb-${i}`,
+          contentId: c.id,
+          kind: 'thumbnail',
+          storageKey: `contents/${c.id}/g1/thumbnail.jpg`,
+        }),
+      ),
+    );
+    prisma.aiAnalysis.findMany.mockResolvedValue([]);
+
+    const page = await service.list(q({ limit: N }));
+
+    expect(page.items.every((it) => it.thumbnailUrl === 'signed')).toBe(true);
+    expect(headObject).toHaveBeenCalledTimes(0);
+    expect(s3.presignGet).toHaveBeenCalledTimes(N);
   });
 });
 

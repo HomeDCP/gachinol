@@ -1,4 +1,9 @@
-import { ProgramCategory } from '@gachinol/shared';
+import {
+  CAPTION_EDITABLE_CONTENT_STATUSES,
+  ContentStatus,
+  ProgramCategory,
+  isCaptionEditableStatus,
+} from '@gachinol/shared';
 import { v7 as uuidv7 } from 'uuid';
 import { DomainException } from '../common/errors/domain.exception';
 import { REVIEW_POLICY_DEFAULTS } from '../config/review-policy.config';
@@ -611,6 +616,62 @@ describe('ContentsService', () => {
     });
   });
 
+  /**
+   * 대장 #118 — 미성년자 게이트가 막은 콘텐츠의 발견 경로. reviewPolicy='reporter_only'는 센터
+   * 검토를 안 거쳐 status 필터로는 골라낼 수 없다 → 목록 쿼리에 직교 필터가 있어야 한다.
+   */
+  describe('list — 미성년자 동의 게이트 필터 (T-W2-27)', () => {
+    const listWith = async (query: Record<string, unknown>) => {
+      const { prisma, service } = setup();
+      prisma.content.count.mockResolvedValue(0);
+      prisma.content.findMany.mockResolvedValue([]);
+      await service.list(centerOperatorUser(), { page: 1, pageSize: 20, ...query } as never);
+      return prisma.content.findMany.mock.calls[0][0].where;
+    };
+
+    it('pending — hasMinorSubject=true ∧ 확인시각 null (게이트가 막고 있는 것만)', async () => {
+      const where = await listWith({ minorConsent: 'pending' });
+      expect(where.hasMinorSubject).toBe(true);
+      expect(where.minorConsentConfirmedAt).toBeNull();
+    });
+
+    it('confirmed — hasMinorSubject=true ∧ 확인시각 not null', async () => {
+      const where = await listWith({ minorConsent: 'confirmed' });
+      expect(where.hasMinorSubject).toBe(true);
+      expect(where.minorConsentConfirmedAt).toEqual({ not: null });
+    });
+
+    it('미지정이면 게이트 조건을 전혀 걸지 않는다 (기존 목록 무회귀)', async () => {
+      const where = await listWith({});
+      expect(where.hasMinorSubject).toBeUndefined();
+      expect(where.minorConsentConfirmedAt).toBeUndefined();
+    });
+
+    it('status와 직교 — reporter_only가 멈추는 awaiting_reporter_review와 함께 걸린다', async () => {
+      const where = await listWith({
+        minorConsent: 'pending',
+        status: 'awaiting_reporter_review',
+      });
+      expect(where.status).toBe('awaiting_reporter_review');
+      expect(where.hasMinorSubject).toBe(true);
+      expect(where.minorConsentConfirmedAt).toBeNull();
+    });
+
+    it('count와 findMany가 같은 where를 쓴다 (totalCount 어긋남 방지)', async () => {
+      const { prisma, service } = setup();
+      prisma.content.count.mockResolvedValue(0);
+      prisma.content.findMany.mockResolvedValue([]);
+      await service.list(centerOperatorUser(), {
+        page: 1,
+        pageSize: 20,
+        minorConsent: 'pending',
+      } as never);
+      expect(prisma.content.count.mock.calls[0][0].where).toEqual(
+        prisma.content.findMany.mock.calls[0][0].where,
+      );
+    });
+  });
+
   describe('읽기 범위 정합 — 목록(지사)과 상세(지사)는 같은 범위, 쓰기는 담당 기자만', () => {
     it('같은 지사 다른 기자의 콘텐츠 — 상세 조회는 허용(목록과 정합)', async () => {
       const { prisma, service } = setup();
@@ -638,6 +699,201 @@ describe('ContentsService', () => {
       await expect(
         service.update(reporterUser(), 'c-1', { title: '수정' } as never),
       ).rejects.toMatchObject({ code: 'forbidden' });
+    });
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════════
+   * 사후 자막 보강 (T-W2-34 — 대장 #123 · 정본 03 §C-4 간단 모드)
+   * ══════════════════════════════════════════════════════════════════════════ */
+  describe('updateCaptions — 액터(지사 경계)', () => {
+    const scenesDto = { scenes: [{ order: 0, caption: '자막', startSec: null, endSec: null }] };
+
+    it('★ 같은 지사 다른 기자가 자막을 채울 수 있다 — 초안 수정(loadOwned)과 갈리는 지점', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ status: 'uploaded', stationId: 's-aewol', reporterId: 'u-other-reporter' }),
+      );
+      await expect(
+        service.updateCaptions(reporterUser(), 'c-1', scenesDto as never),
+      ).resolves.toBeDefined();
+      expect(prisma.content.update).toHaveBeenCalled();
+    });
+
+    it('★ 타 지사 기자는 403 — 이 판정을 지우면 남의 지사 자막을 고칠 수 있게 된다', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ status: 'uploaded', stationId: 's-jeju', reporterId: 'u-other-reporter' }),
+      );
+      await expect(
+        service.updateCaptions(reporterUser(), 'c-1', scenesDto as never),
+      ).rejects.toMatchObject({ code: 'forbidden' });
+      expect(prisma.content.update).not.toHaveBeenCalled();
+    });
+
+    it('담당 기자가 없는 주민 제보(reporterId=null)도 같은 지사면 채울 수 있다', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({
+          status: 'uploaded',
+          origin: 'resident_link',
+          stationId: 's-aewol',
+          reporterId: null,
+          scenes: [],
+        }),
+      );
+      await expect(
+        service.updateCaptions(reporterUser(), 'c-1', scenesDto as never),
+      ).resolves.toBeDefined();
+    });
+
+    it('미존재는 404', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(null);
+      await expect(
+        service.updateCaptions(reporterUser(), 'c-1', scenesDto as never),
+      ).rejects.toMatchObject({ code: 'not_found' });
+    });
+  });
+
+  describe('updateCaptions — 상태 게이트 (published 전까지)', () => {
+    const scenesDto = { scenes: [{ order: 0, caption: '자막', startSec: null, endSec: null }] };
+    const tryStatus = async (status: string) => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(contentRow({ status, scenes: [] }));
+      return service.updateCaptions(reporterUser(), 'c-1', scenesDto as never).then(
+        () => 'ok' as const,
+        (e) => e as DomainException,
+      );
+    };
+
+    it('전 상태에서 shared 술어와 정확히 일치한다 (사본 금지 — 맵 순회)', async () => {
+      for (const status of Object.values(ContentStatus)) {
+        const result = await tryStatus(status);
+        if (isCaptionEditableStatus(status)) {
+          expect(result).toBe('ok');
+        } else {
+          expect(result).toBeInstanceOf(DomainException);
+          expect((result as DomainException).code).toBe('conflict');
+        }
+      }
+    });
+
+    it('published·종결 3종은 409 + details.status (앱이 이유를 그대로 보여줄 수 있게)', async () => {
+      for (const status of ['published', 'rejected', 'canceled', 'archived'] as const) {
+        const err = (await tryStatus(status)) as DomainException;
+        expect(err.code).toBe('conflict');
+        expect(err.details).toMatchObject({ status });
+      }
+    });
+
+    it('업로드가 끝난 뒤(uploaded·processing 등)에도 열려 있다 — update()가 닫는 구간', async () => {
+      for (const status of ['uploaded', 'processing', 'awaiting_reporter_review'] as const) {
+        expect(await tryStatus(status)).toBe('ok');
+      }
+    });
+  });
+
+  describe('updateCaptions — 필드·SceneId', () => {
+    it('scenes만 쓴다 — 제목·분류를 건드리는 키가 update data에 없다', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ status: 'uploaded', title: '원래 제목', category: 'news', scenes: [] }),
+      );
+      await service.updateCaptions(reporterUser(), 'c-1', {
+        scenes: [{ order: 0, caption: '새 자막', startSec: null, endSec: null }],
+      } as never);
+      expect(Object.keys(prisma.content.update.mock.calls[0][0].data)).toEqual(['scenes']);
+    });
+
+    it('order가 같으면 기존 SceneId 보존 (수정 지시 sceneNotes 참조 유지 — update()와 동일 규약)', async () => {
+      const keepId = uuidv7();
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ status: 'awaiting_reporter_review', scenes: [sceneJson(0, keepId)] }),
+      );
+      await service.updateCaptions(reporterUser(), 'c-1', {
+        scenes: [
+          { order: 0, caption: '고친 자막', startSec: null, endSec: null },
+          { order: 1, caption: '추가 자막', startSec: null, endSec: null },
+        ],
+      } as never);
+      const saved = prisma.content.update.mock.calls[0][0].data.scenes;
+      expect(saved[0].id).toBe(keepId);
+      expect(saved[1].id).not.toBe(keepId);
+    });
+
+    it('빈 배열은 자막 전량 삭제 (간단 모드로 되돌리기)', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ status: 'uploaded', scenes: [sceneJson(0, uuidv7())] }),
+      );
+      await service.updateCaptions(reporterUser(), 'c-1', { scenes: [] } as never);
+      expect(prisma.content.update.mock.calls[0][0].data.scenes).toEqual([]);
+    });
+  });
+
+  /**
+   * 대장 #123 — 자막 없이 올라온 콘텐츠의 **발견 경로**. 편집 화면만 만들고 진입로가 없으면
+   * 대장 #118과 같은 형태의 결함이 된다.
+   */
+  describe('list — 자막 대기열 필터 (T-W2-34)', () => {
+    const listWith = async (query: Record<string, unknown>) => {
+      const { prisma, service } = setup();
+      prisma.content.count.mockResolvedValue(0);
+      prisma.content.findMany.mockResolvedValue([]);
+      await service.list(reporterUser(), { page: 1, pageSize: 20, ...query } as never);
+      return prisma.content.findMany.mock.calls[0][0].where;
+    };
+
+    it('needed — scenes 빈 배열 ∧ 채울 수 있는 상태만', async () => {
+      const where = await listWith({ captions: 'needed' });
+      expect(where.scenes).toEqual({ equals: [] });
+      expect(where.AND).toEqual([{ status: { in: [...CAPTION_EDITABLE_CONTENT_STATUSES] } }]);
+    });
+
+    it('상태 조건이 shared 파생과 정확히 같다 — published·종결은 대기열에 들어오지 않는다', async () => {
+      const where = await listWith({ captions: 'needed' });
+      const allowed: string[] = where.AND[0].status.in;
+      expect(allowed).not.toContain('published');
+      expect(allowed).not.toContain('rejected');
+      expect(allowed).not.toContain('canceled');
+      expect(allowed).not.toContain('archived');
+      expect(allowed).toContain('uploaded');
+      expect(allowed).toEqual(
+        Object.values(ContentStatus).filter((s) => isCaptionEditableStatus(s)),
+      );
+    });
+
+    it('미지정이면 자막 조건을 전혀 걸지 않는다 (기존 목록 무회귀)', async () => {
+      const where = await listWith({});
+      expect(where.scenes).toBeUndefined();
+      expect(where.AND).toBeUndefined();
+    });
+
+    it('status와 함께 보내도 status가 덮이지 않는다 (AND 합성)', async () => {
+      const where = await listWith({ captions: 'needed', status: 'uploaded' });
+      expect(where.status).toBe('uploaded');
+      expect(where.AND).toEqual([{ status: { in: [...CAPTION_EDITABLE_CONTENT_STATUSES] } }]);
+    });
+
+    it('reporter의 지사 강제와 함께 걸린다', async () => {
+      const where = await listWith({ captions: 'needed', stationId: 's-other' });
+      expect(where.stationId).toBe('s-aewol');
+      expect(where.scenes).toEqual({ equals: [] });
+    });
+
+    it('count와 findMany가 같은 where를 쓴다 (totalCount 어긋남 방지)', async () => {
+      const { prisma, service } = setup();
+      prisma.content.count.mockResolvedValue(0);
+      prisma.content.findMany.mockResolvedValue([]);
+      await service.list(reporterUser(), {
+        page: 1,
+        pageSize: 20,
+        captions: 'needed',
+      } as never);
+      expect(prisma.content.count.mock.calls[0][0].where).toEqual(
+        prisma.content.findMany.mock.calls[0][0].where,
+      );
     });
   });
 });

@@ -59,6 +59,11 @@ function LivePlayer({ hlsUrl }: { hlsUrl: string | null }): React.JSX.Element {
   }
 
   if (failed) {
+    // ⚠️ 라이브만 아직 env 폴백이다(T-W2-28 기준). `LiveSessionPublic`에는 stationId·stationName이
+    // 둘 다 없어 어느 지사의 연락 채널인지 특정할 수 없다 — 지사별 값은 이미 계약에 있으므로
+    // (`StationSummary.supportTel`·`youtubeUrl`) 라이브 공개 투영에 지사 참조가 생기는 즉시
+    // 시청 화면(app/watch/[id].tsx)과 동일하게 `resolveStationContact`로 갈아끼우면 된다.
+    // 그 전까지 env는 "지사를 특정할 수 없는 화면의 최후 수단"이라는 원래 역할 그대로다.
     const youtubeUrl = getLiveFallbackYoutubeUrl();
     const supportTelHref = getSupportTelHref();
     const buttons = resolveLiveFallbackButtons({ youtubeUrl, supportTelHref });

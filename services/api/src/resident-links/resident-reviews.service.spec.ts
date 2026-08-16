@@ -1,5 +1,6 @@
 import { adminUser, contentRow, makePrismaMock, reporterUser } from '../test-support/fixtures';
 import { DomainException } from '../common/errors/domain.exception';
+import { ContentWorkflowService } from '../contents/content-workflow.service';
 import { ResidentReviewsService } from './resident-reviews.service';
 import { RESIDENT_UPLOAD_KEY_PREFIX } from './resident-links.constants';
 
@@ -55,14 +56,26 @@ const setup = (opts: { queueEnabled?: boolean; hasOriginal?: boolean } = {}) => 
       .fn()
       .mockResolvedValue(opts.hasOriginal === false ? null : { id: 'ma-1', kind: 'original' }),
   };
+  // ★ 전이 서비스는 목이 아니라 **실물**이다(T-W2-31). 반려 종결(uploaded→canceled)이 실제로
+  // `ContentWorkflowService.applyHop`(전이 단일 관문)을 통과해야 ① CAS·감사 로그 형태를 여기서
+  // 검증할 수 있고 ② 미구동 계약 계측이 그 엣지를 "관측"으로 세어 NOT_WIRED 레지스트리에서 빠진다
+  // (목으로 대체하면 계측이 못 보고 레지스트리가 stale된 채 그린이 된다).
+  const workflow = new ContentWorkflowService(prisma);
   const service = new ResidentReviewsService(
     prisma,
     residentLinks as never,
     producer as never,
     assets as never,
+    workflow,
   );
-  return { prisma, residentLinks, producer, assets, service };
+  return { prisma, residentLinks, producer, assets, workflow, service };
 };
+
+/** 반려 종결 홉의 감사 로그 1건 추출 — 없으면 undefined */
+const cancelLog = (prisma: ReturnType<typeof makePrismaMock>) =>
+  prisma.statusTransitionLog.create.mock.calls
+    .map((c: [{ data: Record<string, unknown> }]) => c[0].data)
+    .find((d: Record<string, unknown>) => d.toStatus === 'canceled');
 
 const rejectsWith = async (p: Promise<unknown>, code: string) => {
   await expect(p).rejects.toBeInstanceOf(DomainException);
@@ -321,5 +334,179 @@ describe('★★ 미승인 상태에서 인큐가 일어나지 않는다 (AC4 �
 
     await rejectsWith(service.approve(reporterUser(), 'ru-1'), 'conflict');
     expect(producer.enqueueTranscode).not.toHaveBeenCalled();
+  });
+});
+
+/* ─────────── AC5. 반려 시 콘텐츠 종결 (T-W2-31 — 대장 #112) ───────────
+ * 반려된 주민 업로드의 Content가 `uploaded`에 영구 잔류하던 결함을 닫는다. 게이트가 파이프라인
+ * 진입을 막아 **안전하긴 했지만** 종결되지 않았고, shared `AUTO_PROGRESS_CONTENT_STATUSES`
+ * (`uploaded` 포함) 파생상 UI에는 "처리 중"으로 보였다.
+ *
+ * 여기서 쓰는 `ContentWorkflowService`는 **실물**이다(setup 주석 참조) — 전이 규칙·CAS·감사 로그가
+ * 실제로 단일 관문을 통과하는지까지 이 스위트가 본다. */
+
+describe('★★ 반려는 연결된 Content를 종결시킨다 (AC5)', () => {
+  it('★ uploaded → canceled 전이를 단일 관문(applyHop)으로 실행한다 — CAS + 감사 로그', async () => {
+    const { prisma, service } = setup();
+
+    await expect(service.reject(reporterUser(), 'ru-1')).resolves.toMatchObject({
+      status: 'rejected',
+    });
+
+    // CAS: from을 where에 실어 "uploaded일 때만" 종결된다
+    expect(prisma.content.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'c-1', status: 'uploaded' },
+        data: expect.objectContaining({ status: 'canceled' }),
+      }),
+    );
+    expect(cancelLog(prisma)).toMatchObject({
+      entityType: 'content',
+      entityId: 'c-1',
+      fromStatus: 'uploaded',
+      toStatus: 'canceled',
+    });
+  });
+
+  it('★ 액터는 system이고 actorUserId는 null이다 — 무주 콘텐츠라 사용자 액터가 될 수 없다', async () => {
+    const { prisma, service } = setup();
+    await service.reject(reporterUser(), 'ru-1');
+
+    const log = cancelLog(prisma);
+    expect(log).toMatchObject({ actorType: 'system', actorUserId: null, jobId: null });
+    // 그래서 검수자·반려 사실의 유일한 흔적은 note다(구조화 컬럼 부재 = 대장 #113 별건)
+    expect(log?.note).toContain('반려');
+    expect(log?.note).toContain('u-reporter'); // 검수자 id
+    expect(log?.note).toContain('ru-1'); // uploadId
+  });
+
+  it('★ 검수 결정과 종결이 같은 트랜잭션이다 — 부분 성공이 없다', async () => {
+    const { prisma, service } = setup();
+    const order: string[] = [];
+    prisma.$transaction.mockImplementation(async (arg: unknown) => {
+      order.push('tx:begin');
+      const out = Array.isArray(arg)
+        ? await Promise.all(arg)
+        : await (arg as (tx: unknown) => Promise<unknown>)(prisma);
+      order.push('tx:commit');
+      return out;
+    });
+    prisma.residentUpload.updateMany.mockImplementation(async () => {
+      order.push('upload:cas');
+      return { count: 1 };
+    });
+    prisma.content.updateMany.mockImplementation(async () => {
+      order.push('content:cas');
+      return { count: 1 };
+    });
+
+    await service.reject(reporterUser(), 'ru-1');
+
+    expect(order).toEqual(['tx:begin', 'upload:cas', 'content:cas', 'tx:commit']);
+  });
+
+  it('★ 종결이 터지면 검수 결정도 함께 롤백된다 — 반려 CAS가 트랜잭션 콜백 안에서 일어난다', async () => {
+    const { prisma, service } = setup();
+    // 목으로 실제 롤백을 재현할 수는 없다. 대신 롤백을 **보장하는 구조**를 본다:
+    // 반려 기록이 트랜잭션 콜백 **안**에서 일어나고 그 콜백이 종결 실패로 throw하면,
+    // 실 Prisma 인터랙티브 트랜잭션의 의미론상 반려 기록도 커밋되지 않는다.
+    let insideTx = false;
+    const where: string[] = [];
+    prisma.$transaction.mockImplementation(async (arg: unknown) => {
+      insideTx = true;
+      try {
+        return await (arg as (tx: unknown) => Promise<unknown>)(prisma);
+      } finally {
+        insideTx = false;
+      }
+    });
+    prisma.residentUpload.updateMany.mockImplementation(async () => {
+      where.push(insideTx ? 'in-tx' : 'outside-tx');
+      return { count: 1 };
+    });
+    prisma.content.updateMany.mockRejectedValue(new Error('DB 장애'));
+
+    await expect(service.reject(reporterUser(), 'ru-1')).rejects.toThrow('DB 장애');
+    expect(where).toEqual(['in-tx']);
+  });
+
+  it('★ 멱등 — 이미 rejected인 건을 다시 반려해도 성공하고, 종결이 유실됐으면 보정한다', async () => {
+    const { prisma, service } = setup();
+    prisma.residentUpload.findUnique.mockResolvedValue(
+      uploadRow({ status: 'rejected', reviewedByUserId: 'u-other', reviewedAt: NOW }),
+    );
+
+    const again = await service.reject(reporterUser(), 'ru-1');
+
+    expect(again.status).toBe('rejected');
+    expect(again.reviewedByUserId).toBe('u-other'); // 최초 검수자·시각 보존
+    expect(prisma.residentUpload.updateMany).not.toHaveBeenCalled(); // 재기록 없음
+    // ★ 종결 연쇄는 건너뛰지 않는다 — 구버전에서 반려됐거나 롤백된 건의 복구 경로
+    expect(prisma.content.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'c-1', status: 'uploaded' } }),
+    );
+  });
+
+  it('★ 두 번 반려해도 두 번째가 깨지지 않는다 — 이미 canceled면 덮어쓰지 않는다', async () => {
+    const { prisma, service } = setup();
+    await service.reject(reporterUser(), 'ru-1');
+    expect(cancelLog(prisma)).toBeDefined();
+
+    // 2회차: 업로드는 rejected, 콘텐츠는 이미 canceled
+    prisma.residentUpload.findUnique.mockResolvedValue(uploadRow({ status: 'rejected' }));
+    prisma.content.findUnique.mockResolvedValue(
+      contentRow({ id: 'c-1', origin: 'resident_link', reporterId: null, status: 'canceled' }),
+    );
+    prisma.content.updateMany.mockClear();
+    prisma.statusTransitionLog.create.mockClear();
+
+    await expect(service.reject(reporterUser(), 'ru-1')).resolves.toMatchObject({
+      status: 'rejected',
+    });
+    expect(prisma.content.updateMany).not.toHaveBeenCalled(); // 재전이 시도 자체가 없다
+    expect(prisma.statusTransitionLog.create).not.toHaveBeenCalled(); // 감사 로그 중복 없음
+  });
+
+  it.each(['processing', 'published', 'rejected'])(
+    '콘텐츠가 이미 uploaded를 떠났으면(%s) 덮어쓰지 않는다 — 반려 자체는 성공',
+    async (status) => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ id: 'c-1', origin: 'resident_link', reporterId: null, status }),
+      );
+
+      await expect(service.reject(reporterUser(), 'ru-1')).resolves.toMatchObject({
+        status: 'rejected',
+      });
+      expect(prisma.residentUpload.updateMany).toHaveBeenCalled(); // 검수 결정은 기록됐다
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it('contentId가 없는 건도 반려는 성공한다 — 종결할 콘텐츠가 없을 뿐(승인과 다른 판단)', async () => {
+    const { prisma, service } = setup();
+    prisma.residentUpload.findUnique.mockResolvedValue(uploadRow({ contentId: null }));
+
+    await expect(service.reject(reporterUser(), 'ru-1')).resolves.toMatchObject({
+      status: 'rejected',
+    });
+    expect(prisma.content.findUnique).not.toHaveBeenCalled(); // 조회조차 하지 않는다
+    expect(prisma.content.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('콘텐츠 행이 사라진 경우에도 반려는 막히지 않는다 (404를 던져 롤백시키지 않는다)', async () => {
+    const { prisma, service } = setup();
+    prisma.content.findUnique.mockResolvedValue(null);
+
+    await expect(service.reject(reporterUser(), 'ru-1')).resolves.toMatchObject({
+      status: 'rejected',
+    });
+    expect(prisma.content.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('승인은 종결하지 않는다 (반대 결정에 종결이 새어 나가지 않음)', async () => {
+    const { prisma, service } = setup();
+    await service.approve(reporterUser(), 'ru-1');
+    expect(cancelLog(prisma)).toBeUndefined();
   });
 });

@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ContentDetail, ContentId, Station, StationId } from '@gachinol/shared';
+import { CaptionFilter } from '@gachinol/shared';
 import { getContentDetail, listContents, listTransitionLogs } from '../../api/contents';
 import { getStation } from '../../api/stations';
 import { useApiClient } from '../../auth/auth-context';
@@ -40,6 +41,24 @@ export function useContentDetail(id: ContentId, opts?: { poll?: boolean }) {
           return status && isAutoProgressStatus(status) ? 15_000 : false;
         }
       : false,
+  });
+}
+
+/**
+ * 자막 대기열 건수 (T-W2-34, 대장 #123) — 목록 화면 상단 진입 카드의 숫자.
+ *
+ * 왜 별도 쿼리인가: 필터를 켜야만 보이는 대기열은 **발견되지 않는다**(자막이 없다는 사실을
+ * 이미 아는 사람만 필터를 켠다 — 대장 #118과 같은 형태의 결함). 항상 보이는 자리에 건수를
+ * 띄워야 "채울 게 있다"가 스스로 드러난다. `pageSize:1`로 `totalCount`만 받는다
+ * (목록 본문은 같은 필터의 칩이 담당하며, 캐시 키가 달라 서로 간섭하지 않는다).
+ */
+export function useCaptionNeededCount() {
+  const client = useApiClient();
+  const filter: ContentListFilter = { captions: CaptionFilter.Needed };
+  return useQuery({
+    queryKey: [...contentKeys.list(filter), 'count'] as const,
+    queryFn: () => listContents(client, { ...filter, page: 1, pageSize: 1 }),
+    select: (page) => page.totalCount,
   });
 }
 

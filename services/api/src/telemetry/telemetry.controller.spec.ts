@@ -6,7 +6,9 @@ import request from 'supertest';
 import { IS_PUBLIC_KEY } from '../common/decorators/public.decorator';
 import { ROLES_KEY } from '../common/decorators/roles.decorator';
 import { AllExceptionsFilter } from '../common/filters/all-exceptions.filter';
-import { TELEMETRY_MAX_BATCH_SIZE, TELEMETRY_MAX_PAYLOAD_BYTES, TelemetryService } from './telemetry.service';
+// 배치·payload 상한은 shared가 단일 원천(T-W2-29) — 클라이언트가 지켜야 하는 값이라 승격됐다
+import { TELEMETRY_MAX_BATCH_SIZE, TELEMETRY_MAX_PAYLOAD_BYTES } from '@gachinol/shared';
+import { TelemetryService } from './telemetry.service';
 import { TELEMETRY_RATE_LIMIT_CAPACITY } from './telemetry-rate-limiter';
 import { TelemetryController } from './telemetry.controller';
 

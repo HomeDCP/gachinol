@@ -50,6 +50,9 @@ export class StationsService {
           region: dto.region,
           description: dto.description ?? null,
           thumbnailUrl: dto.thumbnailUrl ?? null,
+          // 공개 연락 채널(T-W2-28) — 미설정이 정상이므로 부재는 null. 빈 문자열은 zod가 이미 거부
+          supportTel: dto.supportTel ?? null,
+          youtubeUrl: dto.youtubeUrl ?? null,
           sortOrder: dto.sortOrder,
           foundedAt: dto.foundedAt ? new Date(dto.foundedAt) : null,
         },
@@ -75,6 +78,8 @@ export class StationsService {
         ...(dto.region !== undefined ? { region: dto.region } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.thumbnailUrl !== undefined ? { thumbnailUrl: dto.thumbnailUrl } : {}),
+        ...(dto.supportTel !== undefined ? { supportTel: dto.supportTel } : {}),
+        ...(dto.youtubeUrl !== undefined ? { youtubeUrl: dto.youtubeUrl } : {}),
         ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         ...(dto.foundedAt !== undefined ? { foundedAt: new Date(dto.foundedAt) } : {}),
       },

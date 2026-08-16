@@ -114,10 +114,14 @@ export const envSchema = z
     WEB_WATCH_BASE_URL: z.string().optional(), // 구독자 웹(watch.) 베이스 — 리다이렉트 목적지 + 직접 링크 병행 발급(D-T6 조치2). 미설정 시 리다이렉트 없이 안내 렌더 + no-store
     GO_LINK_CACHE_TTL_SEC: z.string().optional(), // OG 페이지 엣지/브라우저 캐시 TTL(§D-T6 "짧은 TTL")
     GO_LINK_STALE_TTL_SEC: z.string().optional(), // stale-if-error 창(api 다운 시 stale 서빙)
-    // 공개 렌디션 캐시 서빙(D-T8, T-W2-10) — published 콘텐츠의 720p 렌디션·썸네일을 공개
-    // 버킷/프리픽스로 복사(멱등)한다. 복사 자체는 S3 오브젝트 연산이라 조건 없이 항상 시도한다
-    // (MinIO에서도 동작 — CF 불요). MEDIA_PUBLIC_BASE_URL 미설정 시에만 "공개 URL 발급"이 비활성화되고
-    // FeedService는 현행 서명 URL(S3Service.presignGet)로 폴백한다(무회귀 기본값).
+    // 공개 렌디션 캐시 서빙(D-T8, T-W2-10 → T-W2-33) — published 콘텐츠의 720p 렌디션·썸네일을
+    // 공개 버킷/프리픽스로 복사(멱등)한다. **MEDIA_PUBLIC_BASE_URL이 공개 서빙 전체의 마스터 스위치다**:
+    // 미설정이면 복사도 하지 않고(아무도 안 읽는 사본이 쌓이는 것을 막는다) 공개 URL도 발급하지 않아
+    // FeedService가 서명 URL(S3Service.presignGet)로 폴백한다(무회귀 기본값). 설정 시에만 복사가
+    // 돌고, 복사에 성공한 위치가 media_assets.public_bucket/public_key에 기록돼 피드가 그 기록만으로
+    // 공개 URL을 판정한다(S3 HEAD 왕복 0회). MinIO에서도 동작 — CF 계정은 캐시 퍼지에만 필요하다.
+    // ⚠️ 공개 버킷은 **버킷 단위로 이미 공개 설정**돼 있어야 한다(R2는 오브젝트 ACL이 없다).
+    //    캐시 TTL 정책과 함께 docs/infrastructure.md §4-C가 원천.
     MEDIA_PUBLIC_BUCKET: z.string().optional(), // 미설정 시 S3_BUCKET 재사용(같은 버킷 내 프리픽스로만 분리)
     MEDIA_PUBLIC_PREFIX: z.string().default('public'), // 공개 복사본 키 접두사
     MEDIA_PUBLIC_BASE_URL: z.string().optional(), // 공개 CDN(Cloudflare 커스텀 도메인) 베이스 URL. 미설정 시 공개 URL 미발급

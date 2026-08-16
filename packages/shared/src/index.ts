@@ -74,6 +74,9 @@ export * from './audit/transition-log';
 // system (운영 상태 — 미디어 처리 게이트)
 export * from './system/processing-state';
 
+// telemetry (계측 이벤트 이름 카탈로그·봉투 상한 — T-W2-29 shared 승격, 대장 #128)
+export * from './telemetry/telemetry-event';
+
 // 합성 DTO
 export * from './control/dto';
 export * from './subscriber/dto';

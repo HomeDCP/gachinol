@@ -1,4 +1,5 @@
 import type {
+  CaptionFilter,
   ContentId,
   ContentStatus,
   ProgramCategory,
@@ -11,6 +12,8 @@ import type {
 export interface ContentListFilter {
   status?: ContentStatus;
   category?: ProgramCategory;
+  /** 자막 대기열 (T-W2-34) — status와 독립 축이라 캐시 키에도 따로 실린다 */
+  captions?: CaptionFilter;
 }
 
 /** undefined 제거 + 고정 순서 정규화 — 같은 필터는 항상 같은 키 */
@@ -18,6 +21,7 @@ function normalizeFilter(filter: ContentListFilter): Record<string, string> {
   const normalized: Record<string, string> = {};
   if (filter.status !== undefined) normalized.status = filter.status;
   if (filter.category !== undefined) normalized.category = filter.category;
+  if (filter.captions !== undefined) normalized.captions = filter.captions;
   return normalized;
 }
 

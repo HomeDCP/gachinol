@@ -9,7 +9,8 @@ import { isApiClientError, userMessageForError } from '../../src/api/errors';
 import { getSupportTelHref } from '../../src/config/env';
 import { selectActiveCue } from '../../src/features/feed/captions';
 import { formatRelativeTime } from '../../src/features/feed/format';
-import { usePlayback } from '../../src/features/feed/queries';
+import { usePlayback, usePublicStations } from '../../src/features/feed/queries';
+import { findStationFor, resolveStationContact } from '../../src/features/stations/contact';
 import { markWatchedOnce } from '../../src/features/home/home-banner';
 import { ErrorView } from '../../src/ui/error-view';
 import { LoadingView } from '../../src/ui/loading-view';
@@ -80,6 +81,9 @@ export default function WatchScreen(): React.JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
   const contentId = toId<ContentId>(id ?? '');
   const playback = usePlayback(contentId);
+  // 재생 실패 폴백의 "전화" 대체 경로를 **지사별로** 채우기 위한 공개 지사 목록(5분 캐시·익명 GET).
+  // 실패했거나 아직 안 왔으면 undefined → env 폴백 → 그것도 없으면 버튼 자체를 숨긴다.
+  const stations = usePublicStations();
   const [playbackFailed, setPlaybackFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
 
@@ -111,7 +115,15 @@ export default function WatchScreen(): React.JSX.Element {
   }
 
   const data = playback.data;
-  const supportTelHref = getSupportTelHref();
+  // 서버(지사별) 값 우선 → 없으면 env 폴백 → 둘 다 없으면 null(그 버튼을 아예 렌더하지 않는다).
+  // PlaybackInfo에는 stationId가 없어 비정규화된 stationName으로 지사를 찾는다(동명 2곳 이상이면
+  // 매칭 포기 = 엉뚱한 지사로 전화 걸리는 것보다 안전) — contact.ts 주석 참조.
+  const { supportTelHref } = resolveStationContact({
+    station: findStationFor(stations.data, { stationName: data.stationName }),
+    envSupportTelHref: getSupportTelHref(),
+    // VOD 폴백에는 유튜브 경로가 없다(03 §A-6: 다시 시도 + 전화) → 해석 불요
+    envYoutubeUrl: null,
+  });
   const fallbackButtons = resolveVodFallbackButtons({ supportTelHref });
   const fallbackActions = fallbackButtons.map((button) =>
     button.key === 'retry'

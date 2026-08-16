@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject, PropsWithChildren } from 'react';
 import type { ContentId } from '@gachinol/shared';
+import { UploadMode } from './mode';
 import { emptyClassifyForm, emptySceneForm } from './validation';
 import type { ClassifyFormValue, SceneFormValue } from './validation';
 
@@ -19,6 +20,12 @@ export interface DraftMedia {
 
 interface DraftContextValue {
   media: DraftMedia | null;
+  /**
+   * 작성 방식 (T-W2-34, 대장 #123) — 자막 단계 **앞**에서 결정된다.
+   * 기본값이 `precise`인 것은 fail-safe다: 어떤 이유로든 모드 화면을 거치지 않고 분류에
+   * 도달하면 기존(자막 필수) 흐름이 그대로 적용되고, 자막 생략은 **명시적 선택으로만** 일어난다.
+   */
+  mode: UploadMode;
   scenes: SceneFormValue[];
   classify: ClassifyFormValue;
   /** classify에서 초안 저장 성공 시 설정 — 이탈 확인 스킵 근거 */
@@ -31,6 +38,7 @@ interface DraftContextValue {
    */
   isDirtyRef: MutableRefObject<boolean>;
   setMedia(media: DraftMedia | null): void;
+  setMode(mode: UploadMode): void;
   setScenes(scenes: SceneFormValue[]): void;
   updateClassify(patch: Partial<ClassifyFormValue>): void;
   markSaved(contentId: ContentId): void;
@@ -40,6 +48,7 @@ const DraftContext = createContext<DraftContextValue | null>(null);
 
 export function DraftProvider({ children }: PropsWithChildren): React.JSX.Element {
   const [media, setMedia] = useState<DraftMedia | null>(null);
+  const [mode, setMode] = useState<UploadMode>(UploadMode.Precise);
   const [scenes, setScenes] = useState<SceneFormValue[]>([emptySceneForm()]);
   const [classify, setClassify] = useState<ClassifyFormValue>(emptyClassifyForm());
   const [savedContentId, setSavedContentId] = useState<ContentId | null>(null);
@@ -80,17 +89,19 @@ export function DraftProvider({ children }: PropsWithChildren): React.JSX.Elemen
   const value = useMemo<DraftContextValue>(
     () => ({
       media,
+      mode,
       scenes,
       classify,
       savedContentId,
       isDirty,
       isDirtyRef,
       setMedia,
+      setMode,
       setScenes,
       updateClassify,
       markSaved,
     }),
-    [media, scenes, classify, savedContentId, isDirty, updateClassify, markSaved],
+    [media, mode, scenes, classify, savedContentId, isDirty, updateClassify, markSaved],
   );
 
   return <DraftContext.Provider value={value}>{children}</DraftContext.Provider>;

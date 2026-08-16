@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { toId } from '@gachinol/shared';
+import { ContentStatus, toId } from '@gachinol/shared';
 import type {
   AiAnalysis,
   ContentId,
@@ -35,7 +35,10 @@ import {
   hasVision,
   isStaleAnalysis,
 } from '../../../src/features/contents/analysis';
-import { centerActionsFor } from '../../../src/features/contents/actions';
+import {
+  centerActionsFor,
+  minorConsentActionsFor,
+} from '../../../src/features/contents/actions';
 import {
   CATEGORY_LABEL,
   CULTURE_TOPIC_LABEL,
@@ -45,6 +48,7 @@ import {
 } from '../../../src/features/contents/labels';
 import {
   useApprove,
+  useConfirmMinorConsent,
   useDistribute,
   useReject,
   useRequestRevision,
@@ -52,6 +56,7 @@ import {
   useRetry,
   useRetryPublication,
   useTransitionContent,
+  useWithdrawMinorConsent,
 } from '../../../src/features/contents/mutations';
 import {
   useContentDetail,
@@ -63,6 +68,7 @@ import {
   STATUS_BADGE_CENTER,
   STATUS_DESCRIPTION_CENTER,
   isTerminalStatus,
+  minorConsentBadge,
   statusBadge,
 } from '../../../src/features/contents/status';
 import {
@@ -81,6 +87,20 @@ import { confirmDialog } from '../../../src/ui/feedback';
 import { showToast } from '../../../src/ui/toast';
 
 const TRANSCRIPT_PREVIEW_COUNT = 8;
+
+/**
+ * 보관 경고 문구 (대장 #124) — "무엇이 지워지는가"를 정확히 적는다.
+ * 근거: `ContentWorkflowService.transition()`의 `to === 'archived'` 커밋 후 훅이
+ * `PublicMediaService.removePublishedCopies()`를 부르고, 그 안에서
+ *  ① 공개 버킷의 재생용 렌디션·썸네일 복사본을 `deleteObject`로 **삭제**하고
+ *  ② 그 공개 URL들을 Cloudflare 캐시에서 **퍼지**한다.
+ * 원본(private 버킷의 original·preview)과 전이 이력·AI 분석은 지워지지 않는다.
+ * 전이맵상 `archived`의 출구는 0개라 상태 자체도 되돌릴 수 없다.
+ */
+const ARCHIVE_WARNING =
+  '보관하면 공개 서버에 복사돼 있던 재생용 영상·썸네일이 삭제되고 CDN 캐시가 즉시 무효화됩니다. ' +
+  '구독자 앱·공개 피드에서 더 이상 재생되지 않습니다. 되돌릴 수 없습니다 — 보관 상태에서 나가는 ' +
+  '전이가 없어 다시 송출하려면 새 콘텐츠로 진행해야 합니다. 원본 영상과 전이 이력·AI 분석은 남습니다.';
 
 function statusLabelOf(status: string): string {
   return status in STATUS_BADGE_CENTER
@@ -361,6 +381,8 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const retryPublication = useRetryPublication(contentId);
   const retractPublication = useRetractPublication(contentId);
   const manualTransition = useTransitionContent(contentId);
+  const confirmConsent = useConfirmMinorConsent(contentId);
+  const withdrawConsent = useWithdrawMinorConsent(contentId);
   const publications = usePublications(contentId, { poll: focused });
 
   const stationId = detail.data?.content.stationId;
@@ -419,8 +441,21 @@ export default function ContentDetailScreen(): React.JSX.Element {
     requestRevision.isPending ||
     reject.isPending ||
     distribute.isPending ||
-    manualTransition.isPending;
+    manualTransition.isPending ||
+    confirmConsent.isPending ||
+    withdrawConsent.isPending;
   const publicationRows = publications.data ?? [];
+
+  /**
+   * 동의 철회 가능 여부는 **전이 이력 실측**으로 판정한다(서버와 같은 원천) — 이력을 끝까지
+   * 읽었는지를 함께 넘겨야 "아직 못 본 페이지에 게이트 전이가 있는" 경우를 미통과로 오판하지 않는다.
+   * 이력 조회는 무한스크롤이라 `hasNextPage`가 false일 때만 완결이다.
+   */
+  const consent = minorConsentActionsFor(content, {
+    logs: logItems,
+    complete: logs.isSuccess && !logs.hasNextPage,
+  });
+  const consentBadge = minorConsentBadge(content);
 
   const onTransitionError = (err: unknown): void => {
     if (isApiClientError(err) && err.status === 409) {
@@ -468,6 +503,70 @@ export default function ContentDetailScreen(): React.JSX.Element {
     if (!ok) return;
     distribute.mutate(undefined, {
       onSuccess: (rows) => showToast(`${rows.length}개 채널로 송출을 시작했습니다`),
+      onError: (err) => {
+        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
+      },
+    });
+  };
+
+  /**
+   * 보관(대장 #124) — 되돌릴 수 없는 조작이라 반드시 확인 다이얼로그를 경유한다.
+   * `confirmDialog`(src/ui/feedback.tsx)를 쓰는 이유: react-native-web의 `Alert.alert`는 **빈 함수**라
+   * 웹에서 다이얼로그가 뜨지도, `onPress` 콜백이 돌지도 않는다(대장 #92 실배포 사고).
+   * 운반은 범용 수동 전이지만 목적지는 `centerActionsFor().canArchive`가 shared 전이맵에서 파생한다.
+   */
+  const confirmArchive = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '보관 처리할까요?',
+      message: ARCHIVE_WARNING,
+      confirmText: '보관',
+      destructive: true,
+    });
+    if (!ok) return;
+    manualTransition.mutate(
+      { toStatus: ContentStatus.Archived },
+      {
+        onSuccess: () => showToast('보관 처리했습니다 — 공개 재생이 중단됩니다'),
+        onError: onTransitionError,
+      },
+    );
+  };
+
+  /**
+   * 미성년자 동의 확인(대장 #130) — 승인성 조작이라 확인 절차를 둔다.
+   * "촬영한 사람과 확인하는 사람을 분리해야 게이트가 실효를 갖는다"(07 §3-3)가 이 버튼이 센터 앱에만
+   * 있는 이유이고, 최초 확인자·시각이 감사 기록으로 남아 덮어써지지 않는다는 사실을 문구로 밝힌다.
+   */
+  const confirmMinorConsentAction = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '법정대리인 동의를 확인했습니까?',
+      message:
+        '동의서를 직접 확인했음을 기록합니다. 확인 즉시 승인 차단이 풀립니다. ' +
+        '확인자와 시각이 감사 기록으로 남으며 최초 확인자는 이후 덮어써지지 않습니다.',
+      confirmText: '확인함',
+    });
+    if (!ok) return;
+    confirmConsent.mutate(undefined, {
+      onSuccess: () => showToast('동의 확인을 기록했습니다 — 승인 차단이 해제됩니다'),
+      onError: (err) => {
+        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
+      },
+    });
+  };
+
+  /** 동의 확인 철회 — 승인이 다시 차단된다. 이미 승인된 콘텐츠는 버튼 자체가 그려지지 않는다 */
+  const confirmWithdrawMinorConsent = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '동의 확인을 철회할까요?',
+      message:
+        '확인 기록이 지워지고 승인이 다시 차단됩니다. 확인자·시각도 함께 지워집니다 — ' +
+        '다시 확인하면 그때의 담당자가 최초 확인자로 기록됩니다.',
+      confirmText: '철회',
+      destructive: true,
+    });
+    if (!ok) return;
+    withdrawConsent.mutate(undefined, {
+      onSuccess: () => showToast('동의 확인을 철회했습니다 — 승인이 다시 차단됩니다'),
       onError: (err) => {
         if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
       },
@@ -627,6 +726,66 @@ export default function ContentDetailScreen(): React.JSX.Element {
           ) : null}
         </View>
 
+        {/* (a-2) 미성년자 동의 게이트 — 상태와 직교한 축이라 별도 카드 (대장 #118·#130).
+            플래그가 꺼진 대다수 콘텐츠에서는 카드 자체가 렌더되지 않는다. */}
+        {consent.applicable ? (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>미성년자 피촬영자 동의</Text>
+            {consentBadge ? (
+              <View style={styles.badgeRow}>
+                <Badge label={consentBadge.label} tone={consentBadge.tone} />
+              </View>
+            ) : null}
+            {content.minorConsentConfirmedAt ? (
+              <Text style={styles.metaText}>
+                확인 완료 {formatDateTime(content.minorConsentConfirmedAt)}
+              </Text>
+            ) : (
+              <Text style={styles.warningText}>
+                법정대리인 동의서가 확인되지 않아 승인이 차단돼 있습니다. 촬영한 기자가 아니라 센터가
+                직접 확인해야 게이트가 실효를 갖습니다.
+              </Text>
+            )}
+            {consent.canConfirm ? (
+              <Button
+                label="동의 확인"
+                onPress={() => void confirmMinorConsentAction()}
+                loading={confirmConsent.isPending}
+                disabled={anyPending}
+              />
+            ) : null}
+            {consent.canWithdraw ? (
+              <Button
+                label="동의 확인 철회"
+                variant="destructive"
+                onPress={() => void confirmWithdrawMinorConsent()}
+                loading={withdrawConsent.isPending}
+                disabled={anyPending}
+              />
+            ) : consent.withdrawBlockedBy === 'gate_passed' ? (
+              // 서버 withdrawMinorConsent()가 409로 거부하는 조건 — 눌러도 거절될 버튼을 그리지 않는다
+              <Text style={styles.metaText}>
+                이미 승인 단계를 통과한 콘텐츠라 확인을 철회할 수 없습니다 (철회해도 송출을 막지
+                못합니다).
+              </Text>
+            ) : consent.withdrawBlockedBy === 'history_incomplete' ? (
+              <>
+                <Text style={styles.metaText}>
+                  철회 가능 여부는 전이 이력으로 판정합니다. 이력을 끝까지 불러온 뒤 표시됩니다.
+                </Text>
+                {logs.hasNextPage ? (
+                  <Button
+                    label="이력 마저 불러오기"
+                    variant="secondary"
+                    loading={logs.isFetchingNextPage}
+                    onPress={() => void logs.fetchNextPage()}
+                  />
+                ) : null}
+              </>
+            ) : null}
+          </View>
+        ) : null}
+
         {/* (b) 기본 정보 */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>{content.title}</Text>
@@ -755,6 +914,19 @@ export default function ContentDetailScreen(): React.JSX.Element {
           />
         ) : actions.canRetry ? (
           <Button label="재시도" onPress={() => void confirmRetry()} loading={retry.isPending} />
+        ) : actions.canArchive ? (
+          // 대장 #124 — 보관은 "임시 조치 탈출구"가 아니라 되돌릴 수 없는 제품 액션이라
+          // 아래 "직접 전이" 시트가 아닌 전용 버튼·전용 경고로 분리한다.
+          <>
+            <Text style={styles.warningText}>{ARCHIVE_WARNING}</Text>
+            <Button
+              label="보관"
+              variant="destructive"
+              onPress={() => void confirmArchive()}
+              loading={manualTransition.isPending}
+              disabled={anyPending}
+            />
+          </>
         ) : actions.manualTransitionTargets.length > 0 ? (
           <Button
             label="직접 전이 (임시 조치)"

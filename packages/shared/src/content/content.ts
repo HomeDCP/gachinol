@@ -110,6 +110,80 @@ export interface ContentSummary {
   thumbnailUrl?: string;
   /** 엔티티(Content.durationSec)와 동일하게 부재를 null로 표현 — wire format 통일 */
   durationSec: number | null;
+  /**
+   * 미성년자(만 14세 미만) 피촬영자 동의 게이트의 목록 투영 (T-W2-27, 대장 #118).
+   *
+   * 왜 축약 DTO에까지 있는가: 게이트를 확인하는 액터는 **센터 전용**인데
+   * `reviewPolicy='reporter_only'`(교양·날씨)는 센터 검토를 아예 거치지 않는다. 플래그가 켜진 채
+   * 미확인이면 기자 승인이 차단되지만, 이 필드가 목록에 없으면 센터는 그런 콘텐츠가 **존재한다는
+   * 사실 자체**를 알 수 없었다(발견 경로가 상세 1건씩 전수 조회뿐 → 교착).
+   *
+   * ⚠ 이 두 필드를 직접 비교하지 말고 `isMinorConsentPending()`으로 판정할 것 — 같은 술어를
+   * api 승인 가드(policyGuard ④)와 관제 보드가 공유한다(사본 금지).
+   */
+  hasMinorSubject: boolean;
+  /** 확인자 id는 상세(`Content`)에만 둔다 — 목록에 필요한 건 "확인됐는가"뿐(노출 최소화) */
+  minorConsentConfirmedAt: ISODateString | null;
   createdAt: ISODateString;
   publishedAt: ISODateString | null;
 }
+
+/**
+ * 미성년자 동의 게이트 판정의 입력 — 확인 시각의 **표현에 중립**이다
+ * (wire의 ISO 문자열 / Prisma row의 `Date`). 표현이 갈린다고 규칙이 복제되면 안 되기 때문에
+ * 한 술어가 양쪽을 다 받는다.
+ */
+export interface MinorConsentFacts {
+  readonly hasMinorSubject: boolean;
+  readonly minorConsentConfirmedAt: ISODateString | Date | null;
+}
+
+/**
+ * ★ "동의 확인 대기" 판정 — 미성년자 게이트가 승인을 막고 있는 상태인가.
+ * 규칙의 **유일 원천**이다: api 승인 가드(`content-workflow.service.ts` policyGuard ④)와
+ * 관제 보드의 발견 수단(필터·배지)이 둘 다 여기서 파생한다.
+ *
+ * `approvedAt`은 판정에 쓰지 않는다 — `approve()`가 모든 reviewPolicy의 **기자 승인 hop**에서도
+ * 채우므로 "게이트를 통과했다"의 프록시가 아니다(T-W2-23 D5 정정). 이미 승인이 났는지를 알아야
+ * 하는 곳(동의 철회 가능 여부)은 `status_transition_logs` 실측을 쓴다 —
+ * `contents.service.ts` `withdrawMinorConsent()` 참조. 이 술어는 그것과 다른 질문
+ * ("확인이 아직 안 됐는가")에 답하며, 원천은 `minor_consent_confirmed_at` 컬럼 하나다.
+ */
+export const isMinorConsentPending = (c: MinorConsentFacts): boolean =>
+  c.hasMinorSubject && c.minorConsentConfirmedAt === null;
+
+/**
+ * `GET /v1/contents`의 미성년자 동의 게이트 필터 값 (T-W2-27, 대장 #118).
+ * 두 값 모두 `hasMinorSubject=true`인 콘텐츠만 남긴다(플래그가 꺼진 대다수는 이 축과 무관).
+ * **사실 필터다** — 종결(rejected·canceled) 상태를 제외하지 않는다. "조치가 필요한가"는
+ * 상태와 함께 보는 소비자 판단이라 서버가 상태 목록을 사본으로 갖지 않는다.
+ */
+export const MinorConsentFilter = {
+  /** 미확인 — 센터가 확인해야 승인이 풀리는 대기열 */
+  Pending: 'pending',
+  /** 확인 완료 — 감사·역추적용 */
+  Confirmed: 'confirmed',
+} as const;
+export type MinorConsentFilter = (typeof MinorConsentFilter)[keyof typeof MinorConsentFilter];
+
+/**
+ * `GET /v1/contents`의 자막 대기열 필터 (T-W2-34, 대장 #123).
+ *
+ * 간단 모드(03 §C-4)로 올린 콘텐츠와 주민 제보(`origin='resident_link'`)는 `scenes`가 빈 배열로
+ * 저장된다 — 자막은 지사 담당자가 **사후에** 채운다. 이 필터가 그 대기열의 **유일한 발견 경로**다
+ * (없으면 자막 미완 콘텐츠는 상세를 1건씩 전수 조회해야만 찾을 수 있어, 편집 화면만 만들고
+ * 진입로가 없던 대장 #118과 같은 형태의 결함이 된다).
+ *
+ * ⚠ `MinorConsentFilter`와 달리 **순수 사실 필터가 아니다**. `needed`는 "자막이 없다"에
+ * "**지금 채울 수 있다**"(`isCaptionEditableStatus`)를 곱한 값이다 — 이미 송출됐거나 종결된
+ * 콘텐츠는 자막을 채워도 반영할 곳이 없어(쓰기 경로가 409로 거부한다) 대기열에 남겨 두면
+ * 영원히 줄지 않는 유령 항목이 된다. 두 판정 모두 shared `CAPTION_EDITABLE_CONTENT_STATUSES`
+ * 하나에서 파생하므로 필터와 쓰기 게이트가 어긋날 수 없다.
+ *
+ * 값이 하나뿐인 것은 의도다 — "자막이 있는 것"을 골라내야 하는 소비자가 아직 없다.
+ */
+export const CaptionFilter = {
+  /** 자막 0건 ∧ 아직 채울 수 있는 상태 — 지사 담당자의 작업 대기열 */
+  Needed: 'needed',
+} as const;
+export type CaptionFilter = (typeof CaptionFilter)[keyof typeof CaptionFilter];
