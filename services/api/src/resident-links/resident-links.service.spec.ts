@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { adminUser, contentRow, makePrismaMock, reporterUser } from '../test-support/fixtures';
 import { DomainException } from '../common/errors/domain.exception';
 import { generateResidentLinkToken, hashResidentLinkToken } from './resident-link-token';
@@ -445,5 +447,31 @@ describe('★★ assertPipelineEntryAllowed — 검수 승인 전 processing 진
     const { prisma, service } = setup();
     prisma.content.findUnique.mockResolvedValue(null);
     await rejectsWith(service.assertPipelineEntryAllowed('c-none'), 'not_found');
+  });
+});
+
+/* ─────────── ⑥ 무인증 표면의 큐 무의존 (T-W2-24 보강 — 게이트② 지적) ───────────
+ * T-W2-08은 "ResidentLinksModule이 QueueModule을 모른다"를 검수 게이트의 1차 강제로 삼았다.
+ * T-W2-24가 승인 시 인큐를 붙이며 그 보증은 **DI 경계에서 파일 규율로 낮아졌다** — 큐를 아는 것은
+ * 인증 전용 ResidentReviewsService 하나뿐이고, 무인증 3종을 소유한 이 서비스는 여전히 큐를 모른다.
+ * 규율은 테스트가 없으면 규율이 아니다: 아래는 이 파일에 큐 의존이 **추가되는 순간 레드**가 된다.
+ *
+ * ── 위 "생성자 3개" 테스트와의 관계 (중복이 아닌 이유) ─────────────────────────
+ * T-W2-08이 이미 `ResidentLinksService.length === 3`을 고정했지만 그것은 **생성자 인자만** 본다.
+ * Nest는 프로퍼티 주입(`@Inject(MEDIA_QUEUE) private queue: Queue`)도 지원하고, 협력자 없이 모듈
+ * 스코프에서 큐를 직접 만들 수도 있다 — 둘 다 arity 3을 유지한 채 통과한다. 아래는 **실행 코드의
+ * 심볼**을 보므로 그 경로까지 막는다(생성자 의존을 추가하면 두 테스트가 함께 레드가 된다 — 고의 파손으로 확인).
+ * (엣지 측 최후 방어선은 content-workflow.service.spec.ts의 "검수 게이트 관문"이 따로 고정한다.) */
+describe('★★ 무인증 표면은 인큐 수단을 갖지 않는다 (ResidentLinksService 큐 무의존)', () => {
+  it('큐 심볼을 코드에서 참조하지 않는다 — 어떤 형태의 의존이든 붙으면 레드가 된다', () => {
+    // 주석이 아닌 **실행 코드**만 남긴다: 이 파일의 한국어 주석은 "인큐하지 않는다"처럼 큐를 언급하되
+    // ASCII 심볼은 쓰지 않지만, 주석을 벗겨야 규칙이 문구 변화에 흔들리지 않는다.
+    const code = readFileSync(join(__dirname, 'resident-links.service.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+    for (const symbol of ['QueueProducerService', 'MEDIA_QUEUE', 'bullmq', 'enqueue', 'Queue']) {
+      expect(code).not.toContain(symbol);
+    }
   });
 });

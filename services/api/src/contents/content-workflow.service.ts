@@ -12,6 +12,10 @@ import type { Content as ContentRow, Prisma } from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 import { DomainException } from '../common/errors/domain.exception';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  assertResidentReviewApproved,
+  isPipelineEntryEdge,
+} from '../resident-links/resident-review.gate';
 import type { CreateRevisionRequestDto } from './schemas/content.schemas';
 import { recordContentTransition } from './transition-probe';
 
@@ -437,6 +441,15 @@ export class ContentWorkflowService {
     opts: HopOpts,
     idempotent = false,
   ): Promise<boolean> {
+    // ★ 주민 업로드 검수 게이트 (03 §C-5 · 대장 #86) — 여기가 배선 지점인 이유:
+    // applyHop은 콘텐츠 전이의 **단일 관문**이라, 이 한 줄이 파이프라인 시스템 전이·범용 수동 전이·
+    // 재시도·앞으로 생길 모든 경로를 동시에 덮는다(호출부마다 가드를 심는 방식은 새 호출부가 생길 때
+    // 조용히 뚫린다). 대상 엣지가 아니거나 origin이 주민 유래가 아니면 DB를 치지 않는다 = 기존 경로 무영향.
+    // 판정·예외는 resident-links가 소유한다(사본 0) — 여기는 "언제 묻는가"만 결정한다.
+    if (isPipelineEntryEdge(from, to)) {
+      await assertResidentReviewApproved(tx, { id: content.id, origin: content.origin });
+    }
+
     const now = new Date();
     const data: Prisma.ContentUncheckedUpdateManyInput = { status: to, ...(opts.mutate ?? {}) };
     // 상태별 효과 (shared 규약)

@@ -244,6 +244,46 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     );
   });
 
+  /* ★ 대장 #97 — 프리뷰 완료 목적지의 origin 분기.
+   * 舊 코드는 awaiting_reporter_review 하드코딩이라 담당 기자가 없는 유래(live_vod·resident_link)가
+   * 프리뷰까지 와서 policyGuard의 invalid_transition에 막혔다(도달 즉시 교착). */
+  it.each([
+    ['live_vod', 'awaiting_center_review'],
+    ['resident_link', 'awaiting_center_review'],
+    ['reporter_upload', 'awaiting_reporter_review'],
+  ])('preview completed: origin=%s → %s (#97)', async (origin, expected) => {
+    const { queue, workflow, service } = setup({ content: contentRow({ origin }) });
+    queue.getJob.mockResolvedValue(
+      makeJob({
+        data: { type: 'preview', payload: { contentId: 'c-1' }, generation: 1 },
+        returnvalue: { asset: asset('preview') },
+      }),
+    );
+    await (service as any).onCompleted(queue, 'preview:c-1:g1');
+
+    expect(workflow.applySystemTransition).toHaveBeenCalledWith(
+      'c-1',
+      'preview_generating',
+      expected,
+      'preview:c-1:g1',
+    );
+  });
+
+  it('preview completed: 콘텐츠가 사라졌으면 자산만 반영하고 전이하지 않는다', async () => {
+    const { queue, workflow, assets, prisma, service } = setup();
+    prisma.content.findUnique.mockResolvedValue(null);
+    queue.getJob.mockResolvedValue(
+      makeJob({
+        data: { type: 'preview', payload: { contentId: 'c-1' }, generation: 1 },
+        returnvalue: { asset: asset('preview') },
+      }),
+    );
+    await (service as any).onCompleted(queue, 'preview:c-1:g1');
+
+    expect(assets.upsertOutput).toHaveBeenCalled();
+    expect(workflow.applySystemTransition).not.toHaveBeenCalled();
+  });
+
   it('thumbnail completed: 자산만 upsert, 전이 없음', async () => {
     const { queue, workflow, assets, service } = setup();
     queue.getJob.mockResolvedValue(
