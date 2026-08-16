@@ -1,0 +1,399 @@
+name: Deploy Web
+
+# 웹앱 3종(구독자·기자·관제)의 배포 워크플로 (T-W1-11c, Wave 8c).
+# 정본: docs/plan/02-web-architecture.md §B(`infra`·CI 산출물 행) 원문 4스텝
+#   ① 웹 export 빌드 → ② 번들 예산 게이트 → ③ 정적 산출물 배포 → ④ D-T5 4항 Cloudflare 캐시 퍼지
+# `ci.yml`(lint·typecheck·test)·`build-images.yml`(api·media-worker·ai-worker)과 **별개 파일**이다.
+#
+# ── ①이 왜 `docker build`인가 (대장 #82 해소) ────────────────────────────────────
+# T-W0-03이 `infra/docker/Dockerfile.web`을 멀티스테이지로 설계하며 "이 Dockerfile을 빌드해 나오는
+# 이미지 자체가 배포 단위"라고 명시했다(그 파일 헤더 주석). 즉 이 리포에서 "정적 산출물 배포"와
+# "web 이미지 빌드"는 대립하지 않는다 — 정적 산출물은 nginx 이미지 안에 COPY되어 배포된다.
+# 그래서 여기서는 러너에 별도 Expo 툴체인을 세우지 않고 그 Dockerfile을 빌드한 뒤, 완성 이미지에서
+# 정적 산출물을 꺼내(`docker cp`) 예산을 잰다 — 빌드 정의가 한 곳(Dockerfile.web)뿐이라 CI와 제온이
+# 어긋날 수 없다.
+# **대장 #82**("CI가 web 이미지를 빌드하지 않아 #81 계열(웹 빌드 컨텍스트 결함)을 구조적으로 검출할 수
+# 없다")를 본 워크플로가 닫는다: `pull_request` 트리거가 푸시 없이 이 이미지를 빌드하므로, `packages/ui`
+# 누락 같은 빌드 컨텍스트 결함이 실배포 전에 PR에서 red가 된다.
+# 재현: `grep -c "Dockerfile.web" .github/workflows/*.yml` → ≥1.
+#
+# ── ③④는 지금 실행되지 않는다 (의도된 비활성) ──────────────────────────────────
+# T-NC-02 ②(제온 외부 노출 방식)·G9 ①(도메인)이 미확정이라 배포 대상 호스트도 CF 존도 존재하지 않는다.
+# 두 잡은 `preflight`가 계산한 출력에 걸려 있고, 그 계산은 **레포지토리 변수·시크릿이 실제로 설정돼
+# 있는지**만 본다 — 코드를 고치지 않고 설정만 하면 켜진다(절차는 아래 `preflight` 잡 주석 참조).
+# 현재 상태(2026-08-17 실측): `gh variable list`·`gh secret list` 모두 0건 → 두 잡은 스킵된다.
+# ①②는 이 게이트와 무관하게 항상 돈다(비차단 — T-W0-03 N-1 문안 준용).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # 웹 이미지 빌드를 깨뜨릴 수 있는 입력만. Dockerfile.web이 COPY하는 것과 일치시킨다
+    # (매니페스트만 복사되는 services/* 는 `--frozen-lockfile` 정합에 영향을 주므로 package.json만).
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'services/*/package.json'
+      - 'infra/docker/Dockerfile.web'
+      - 'infra/docker/nginx.conf'
+      - 'infra/scripts/bundle-budget.mjs'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - 'tsconfig.base.json'
+      - '.dockerignore'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: '③정적 산출물 배포 + ④CF 캐시 퍼지까지 수행(기본 false = 빌드·예산 게이트만)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-web-${{ github.ref }}
+  # PR은 최신 커밋만 의미가 있으니 취소하되, main 배포는 중간에 끊으면 제온이 반쯤 갱신된 상태로 남는다.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/gachinol-web
+  # 이미지에서 꺼낸 정적 산출물이 놓일 러너 로컬 경로. 하위 디렉터리 이름은 nginx 이미지의
+  # /usr/share/nginx/html/{watch,reporter,center} 구조를 그대로 따른다(Dockerfile.web COPY 대상).
+  STATIC_DIR: web-static
+  # NOTE: `ci.yml`의 REDISMS_DISABLE_POSTINSTALL(EXEC-DECISIONS #11)은 여기 불필요하다 —
+  # 이 워크플로는 러너에서 `pnpm install`을 하지 않고, Dockerfile.web이 `--ignore-scripts`로 설치한다.
+
+jobs:
+  # ── ①웹 export 빌드 + ②번들 예산 게이트 ────────────────────────────────────────
+  build:
+    name: build web (export + 번들 예산 게이트)
+    runs-on: ubuntu-latest
+    outputs:
+      # 배포 잡이 당길 이미지 참조. metadata-action의 `type=sha`(7자 축약)에 의존하지 않고
+      # **전체 커밋 SHA 태그**를 따로 붙여 참조한다 — 축약 규칙이 바뀌어도 어긋나지 않는다.
+      image: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.sha }}
+
+      # ① 웹 export 빌드. Dockerfile.web의 build 스테이지가 3앱 `expo export --platform web`을 수행하고
+      #    runner 스테이지(nginx)가 그 산출물을 담는다.
+      #    **여기서는 푸시하지 않는다**(load만) — 번들 예산 게이트를 통과하지 못한 이미지가 GHCR에
+      #    올라가는 것을 막기 위해 발행은 게이트 뒤(아래 Publish 스텝)로 미룬다. PR에서는 이 빌드
+      #    자체가 #82의 검출 지점이다(빌드 컨텍스트 결함이면 여기서 red).
+      - name: Build web image (expo export --platform web ×3)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.web
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # EXPO_PUBLIC_*는 빌드 시점에 번들로 인라인된다(런타임 env 아님) — 도메인 미확정(G9 ①)이라
+          # 변수가 설정된 경우에만 넘기고, 아니면 Dockerfile.web의 기본값을 그대로 쓴다(값 중복 정의 금지).
+          # ⚠️ 이 값이 바뀌면 번들 바이트 수도 몇 십 바이트 단위로 움직인다(문자열이 번들에 박히므로).
+          build-args: ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      # 완성 이미지에서 정적 산출물을 꺼낸다. 별도 export 스테이지를 만들지 않는 이유:
+      # infra/docker/** 를 건드리지 않고도 "배포되는 바로 그 파일"을 재는 방법이기 때문이다.
+      - name: Extract static output from image
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "추출 대상 이미지: $IMAGE_REF"
+          cid="$(docker create "$IMAGE_REF")"
+          mkdir -p "$STATIC_DIR"
+          docker cp "$cid:/usr/share/nginx/html/." "$STATIC_DIR/"
+          docker rm -v "$cid" >/dev/null
+          echo "── 추출 결과 ──"
+          du -sh "$STATIC_DIR"/* || true
+
+      # ② 번들 예산 게이트. 예산 수치의 단일 원천은 스크립트 안의 BUDGETS 상수다(여기에 숫자를 적지 않는다).
+      #    로컬 재현(같은 명령·같은 값): `node infra/scripts/bundle-budget.mjs`
+      #    (리포에 apps/*/dist 가 있을 때. 없으면 `pnpm --filter @gachinol/subscriber exec expo export
+      #     --platform web --output-dir dist` 후 실행)
+      - name: 번들 예산 — 적용 중인 예산 출력
+        run: node infra/scripts/bundle-budget.mjs --print-budget
+
+      - name: 번들 예산 게이트 (구독자=차단 / 기자·관제=참고 측정)
+        # continue-on-error 없음 = 초과 시 워크플로 red. 정본 02 §C "CI 게이트 실패 = 병합 자동 차단".
+        run: |
+          node infra/scripts/bundle-budget.mjs \
+            --dist subscriber="$STATIC_DIR/watch" \
+            --dist reporter="$STATIC_DIR/reporter" \
+            --dist control-center="$STATIC_DIR/center"
+
+      # ④(퍼지)가 소비할 산출물. 배포 잡이 스킵돼도 이 아티팩트는 남아 W1 DoD 실측(T-NC-05·06)에서
+      # 정적 산출물을 손으로 올려 볼 수 있다.
+      - name: Upload static output
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-static
+          path: ${{ env.STATIC_DIR }}
+          retention-days: 7
+          if-no-files-found: error
+
+      # 발행(GHCR)은 **예산 게이트 통과 뒤에만**. 캐시 히트라 재빌드가 아니라 푸시만 일어난다.
+      # PR에서는 로그인도 푸시도 하지 않는다(build-images.yml과 동일 관례).
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish web image to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.web
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  # ── ③④ 활성 여부 판정 ─────────────────────────────────────────────────────────
+  # 잡 수준 `if:`에서는 `secrets` 컨텍스트를 읽을 수 없다(GitHub 제약) — 그래서 시크릿 존재 여부를
+  # 이 잡의 스텝에서 읽어 출력으로 내보내고, 아래 두 잡이 그 출력에 건다.
+  #
+  # ▶ 실배포를 켜는 절차("설정하면 켜진다"):
+  #    1) gh variable set WEB_DEPLOY_ENABLED --body true          # 명시 스위치(이게 없으면 무조건 꺼짐)
+  #    2) gh variable set WEB_DOMAIN --body <확정 도메인>          # G9 ① 확정 후
+  #    3) gh variable set WEB_DEPLOY_COMPOSE_DIR --body <제온의 compose 디렉터리 절대경로>
+  #    4) gh secret set WEB_DEPLOY_SSH_HOST / WEB_DEPLOY_SSH_USER / WEB_DEPLOY_SSH_KEY
+  #       / WEB_DEPLOY_SSH_KNOWN_HOSTS                            # T-NC-02 ② 확정 후
+  #    5) (④만 추가로) gh secret set CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID
+  #    6) main 푸시 또는 `gh workflow run deploy-web.yml -f deploy=true`
+  #    → 1~4 중 하나라도 비면 ③이 스킵되고, 5가 비면 ④만 따로 스킵된다(사유가 잡 요약에 찍힌다).
+  preflight:
+    name: preflight (실배포 게이트 판정)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+      purge: ${{ steps.gate.outputs.purge }}
+    steps:
+      - name: 게이트 판정
+        id: gate
+        env:
+          # vars는 잡 `if:`에서도 읽을 수 있으나, 사유 문자열을 한곳에서 만들기 위해 여기서 함께 본다.
+          ENABLED: ${{ vars.WEB_DEPLOY_ENABLED }}
+          DOMAIN: ${{ vars.WEB_DOMAIN }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_KEY: ${{ secrets.WEB_DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.WEB_DEPLOY_SSH_KNOWN_HOSTS }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          REQUESTED: ${{ github.event_name == 'push' || inputs.deploy }}
+        run: |
+          set -euo pipefail
+          missing=""
+          # 시크릿 "값"은 절대 출력하지 않는다 — 비어 있는지만 본다.
+          [ "$ENABLED" = "true" ]     || missing="$missing vars.WEB_DEPLOY_ENABLED(!=true)"
+          [ -n "$DOMAIN" ]            || missing="$missing vars.WEB_DOMAIN"
+          [ -n "$COMPOSE_DIR" ]       || missing="$missing vars.WEB_DEPLOY_COMPOSE_DIR"
+          [ -n "$SSH_HOST" ]          || missing="$missing secrets.WEB_DEPLOY_SSH_HOST"
+          [ -n "$SSH_USER" ]          || missing="$missing secrets.WEB_DEPLOY_SSH_USER"
+          [ -n "$SSH_KEY" ]           || missing="$missing secrets.WEB_DEPLOY_SSH_KEY"
+          [ -n "$SSH_KNOWN_HOSTS" ]   || missing="$missing secrets.WEB_DEPLOY_SSH_KNOWN_HOSTS"
+
+          cf_missing=""
+          [ -n "$CF_TOKEN" ]          || cf_missing="$cf_missing secrets.CLOUDFLARE_API_TOKEN"
+          [ -n "$CF_ZONE" ]           || cf_missing="$cf_missing secrets.CLOUDFLARE_ZONE_ID"
+
+          deploy=false
+          if [ "$REQUESTED" != "true" ]; then
+            reason="배포가 요청되지 않음(workflow_dispatch의 deploy 입력이 false)"
+          elif [ -n "$missing" ]; then
+            reason="미설정 항목:$missing"
+          else
+            deploy=true
+            reason="설정 완료 — 배포 수행"
+          fi
+
+          purge=false
+          if [ "$deploy" = "true" ] && [ -z "$cf_missing" ]; then
+            purge=true
+          fi
+
+          {
+            echo "### 실배포 게이트"
+            echo ""
+            echo "- ③ 정적 산출물 배포: **$deploy** — $reason"
+            if [ "$deploy" = "true" ] && [ -n "$cf_missing" ]; then
+              echo "- ④ CF 캐시 퍼지: **false** — 미설정 항목:$cf_missing"
+            else
+              echo "- ④ CF 캐시 퍼지: **$purge**"
+            fi
+            echo ""
+            echo "켜는 절차는 \`.github/workflows/deploy-web.yml\`의 \`preflight\` 잡 주석 참조."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+          echo "purge=$purge" >> "$GITHUB_OUTPUT"
+          echo "③배포=$deploy ($reason) / ④퍼지=$purge"
+
+  # ── ③ 정적 산출물 배포 ────────────────────────────────────────────────────────
+  deploy:
+    name: deploy (정적 산출물 → 제온 web 컨테이너)
+    runs-on: ubuntu-latest
+    needs: [build, preflight]
+    if: needs.preflight.outputs.deploy == 'true'
+    steps:
+      - name: Deploy over SSH (docker compose pull + up)
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          SSH_KEY: ${{ secrets.WEB_DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.WEB_DEPLOY_SSH_KNOWN_HOSTS }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          WEB_IMAGE: ${{ needs.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # known_hosts를 시크릿으로 요구한다 — StrictHostKeyChecking=no(MITM 무방비)를 쓰지 않기 위해서다.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          # ⚠️ 선행 조건(범위 밖, 보고 대상): 현재 `infra/docker/docker-compose.xeon.yml`의 `web` 서비스는
+          #    `build:`만 있고 `image:` 키가 없다 — 그 상태에서는 `compose pull web`이 "빌드 대상"이라며
+          #    건너뛰고 `up`이 제온에서 재빌드를 시도한다(DCP와 CPU를 공유하는 호스트에서 금지 사항).
+          #    그 파일에 `image: ${WEB_IMAGE:-gachinol-web:local}` 1줄이 추가돼야 아래가 의도대로 동작한다.
+          #    이 태스크는 infra/docker/** 를 소유하지 않으므로 고치지 않고 여기에 기록만 남긴다.
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             export WEB_IMAGE='$WEB_IMAGE'; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml pull web; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build web; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps web"
+
+  # ── ④ D-T5 4항 Cloudflare 캐시 퍼지 ───────────────────────────────────────────
+  # 정본 02 §D-T5 4항: "엔트리 HTML · 매니페스트 · /sw.js" 최소 대상.
+  # `/sw.js`가 반드시 들어가야 하는 이유(대장 #140 ⓑ, 정본 정정분): 서비스워커는 자기 스코프 위쪽을
+  # 제어할 수 없어 **루트 고정 이름**이어야 하고, 그래서 1항(해시 캐시버스팅)의 보호를 받지 못하는
+  # 유일한 자산이다 — 이 퍼지가 유일한 방어선이다.
+  purge:
+    name: purge (Cloudflare 엣지 캐시)
+    runs-on: ubuntu-latest
+    needs: [build, preflight, deploy]
+    if: needs.preflight.outputs.purge == 'true'
+    steps:
+      - name: Download static output
+        uses: actions/download-artifact@v4
+        with:
+          name: web-static
+          path: ${{ env.STATIC_DIR }}
+
+      - name: Purge Cloudflare cache
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          DOMAIN: ${{ vars.WEB_DOMAIN }}
+        run: |
+          set -euo pipefail
+
+          # 앱 → nginx.conf vhost 서브도메인 매핑(infra/docker/nginx.conf와 1:1).
+          # `go.`는 api가 서빙하는 리다이렉트 라우트라 웹 배포로 내용이 바뀌지 않는다 → 대상 아님.
+          urls=()
+          # `set -u`에서 빈 배열의 ${#a[@]} 는 bash 4.4 미만에서 unbound로 죽는다 → 개수는 따로 센다.
+          count=0
+          add() {
+            urls+=("$1")
+            count=$((count + 1))
+          }
+
+          for pair in "watch:watch" "reporter:reporter" "center:center"; do
+            dir="${pair%%:*}"; sub="${pair##*:}"
+            root="$STATIC_DIR/$dir"
+            [ -d "$root" ] || { echo "· $sub: 산출물 없음 — 건너뜀"; continue; }
+            host="https://$sub.$DOMAIN"
+
+            # (가) 엔트리 HTML — expo-router 정적 출력은 라우트마다 <route>.html을 낸다.
+            #      nginx의 try_files가 확장자 없는 클린 URL도 같은 파일로 서빙하므로 두 형태 모두
+            #      별개의 엣지 캐시 키다 → 둘 다 퍼지한다.
+            #      `(그룹)`·`[id]` 가 들어간 경로는 그 리터럴 URL로 요청되는 일이 없어 제외한다.
+            while IFS= read -r f; do
+              rel="${f#"$root"}"
+              case "$rel" in *'('*|*'['*) continue;; esac
+              case "$rel" in
+                /index.html)
+                  add "$host/"
+                  add "$host/index.html"
+                  ;;
+                */index.html)
+                  # 하위 디렉터리 index — nginx try_files의 `$uri/` 후보로 도달하므로
+                  # `/a/b`·`/a/b/`도 각각 별개의 엣지 캐시 키다.
+                  dirpath="${rel%/index.html}"
+                  add "$host$rel"
+                  add "$host$dirpath"
+                  add "$host$dirpath/"
+                  ;;
+                *)
+                  add "$host$rel"
+                  add "$host${rel%.html}"
+                  ;;
+              esac
+            done < <(find "$root" -type f -name '*.html' | sort)
+
+            # (나) 매니페스트 · (다) /sw.js — D-T5 4항이 이름으로 지정한 나머지 두 종류.
+            #      해시 캐시버스팅의 보호를 받지 못하는 고정 이름 자산이라 존재하면 무조건 넣는다.
+            #      (매니페스트는 T-W3-02 산출물이라 아직 없을 수 있다 — 생기면 자동 편입된다.)
+            for fixed in /sw.js /manifest.json /manifest.webmanifest; do
+              if [ -f "$root$fixed" ]; then add "$host$fixed"; fi
+            done
+          done
+
+          if [ "$count" -eq 0 ]; then
+            echo "퍼지 대상 0건 — 산출물이 비었다."; exit 1
+          fi
+
+          echo "── 퍼지 대상 ${count}건 ──"
+          printf '%s\n' "${urls[@]}"
+
+          # Cloudflare purge_cache는 요청당 URL 30건 상한(Free/Pro/Business) → 30건씩 나눠 보낸다.
+          i=0
+          while [ "$i" -lt "$count" ]; do
+            batch=("${urls[@]:$i:30}")
+            body="$(printf '%s\n' "${batch[@]}" | jq -R . | jq -sc '{files: .}')"
+            echo "· 배치 $((i / 30 + 1)): ${#batch[@]}건"
+            resp="$(curl -sS -X POST \
+              "https://api.cloudflare.com/client/v4/zones/$CF_ZONE/purge_cache" \
+              -H "Authorization: Bearer $CF_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "$body")"
+            if [ "$(printf '%s' "$resp" | jq -r '.success')" != "true" ]; then
+              echo "퍼지 실패: $(printf '%s' "$resp" | jq -c '.errors')"
+              exit 1
+            fi
+            i=$((i + 30))
+          done
+          echo "✓ Cloudflare 캐시 퍼지 완료 (${count}건)"
