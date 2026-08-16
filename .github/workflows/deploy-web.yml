@@ -109,7 +109,16 @@ jobs:
           # EXPO_PUBLIC_*는 빌드 시점에 번들로 인라인된다(런타임 env 아님) — 도메인 미확정(G9 ①)이라
           # 변수가 설정된 경우에만 넘기고, 아니면 Dockerfile.web의 기본값을 그대로 쓴다(값 중복 정의 금지).
           # ⚠️ 이 값이 바뀌면 번들 바이트 수도 몇 십 바이트 단위로 움직인다(문자열이 번들에 박히므로).
-          build-args: ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
+          # ⚠️ 여기 없는 EXPO_PUBLIC_* 키는 번들에 값이 들어가지 않는다(대장 #146) — Dockerfile.web의
+          # ARG/ENV와 **짝**이어야 하고, 한쪽만 추가하면 조용히 빈 값이 박힌다. 빈 줄은 무시된다.
+          build-args: |
+            ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_TEL && format('EXPO_PUBLIC_SUPPORT_TEL={0}', vars.WEB_EXPO_PUBLIC_SUPPORT_TEL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_LIVE_YOUTUBE_URL && format('EXPO_PUBLIC_LIVE_YOUTUBE_URL={0}', vars.WEB_EXPO_PUBLIC_LIVE_YOUTUBE_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_KAKAO_CHANNEL_URL && format('EXPO_PUBLIC_KAKAO_CHANNEL_URL={0}', vars.WEB_EXPO_PUBLIC_KAKAO_CHANNEL_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_EMAIL && format('EXPO_PUBLIC_SUPPORT_EMAIL={0}', vars.WEB_EXPO_PUBLIC_SUPPORT_EMAIL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL && format('EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE && format('EXPO_PUBLIC_SCHEDULE_LIVE_TITLE={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE) || '' }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
@@ -172,7 +181,16 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
+          # ⚠️ 여기 없는 EXPO_PUBLIC_* 키는 번들에 값이 들어가지 않는다(대장 #146) — Dockerfile.web의
+          # ARG/ENV와 **짝**이어야 하고, 한쪽만 추가하면 조용히 빈 값이 박힌다. 빈 줄은 무시된다.
+          build-args: |
+            ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_TEL && format('EXPO_PUBLIC_SUPPORT_TEL={0}', vars.WEB_EXPO_PUBLIC_SUPPORT_TEL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_LIVE_YOUTUBE_URL && format('EXPO_PUBLIC_LIVE_YOUTUBE_URL={0}', vars.WEB_EXPO_PUBLIC_LIVE_YOUTUBE_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_KAKAO_CHANNEL_URL && format('EXPO_PUBLIC_KAKAO_CHANNEL_URL={0}', vars.WEB_EXPO_PUBLIC_KAKAO_CHANNEL_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_EMAIL && format('EXPO_PUBLIC_SUPPORT_EMAIL={0}', vars.WEB_EXPO_PUBLIC_SUPPORT_EMAIL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL && format('EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL) || '' }}
+            ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE && format('EXPO_PUBLIC_SCHEDULE_LIVE_TITLE={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE) || '' }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
