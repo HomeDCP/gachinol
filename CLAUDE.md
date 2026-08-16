@@ -199,7 +199,7 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
   독립 루브릭 평가 19라운드(11개 영역 전부 9.5/10+, [docs/plan/reviews/](docs/plan/reviews/))를 통과하고 **사용자 승인** 완료.
   다음 실행 = [docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md)의 **W0(기반)→W1(구독자 웹)→W2(기자·관제 웹)→W3(쉘·PWA)→W4(정리)**.
   네이티브 트랙은 승인 즉시 **동결**(버그픽스도 웹에서만). 착수 게이트: 05 §G 운전자금 확인 + 도메인·제온 노출 방식(사용자 결정).
-  테스트 실측 최신치(**2026-08-15**, `pnpm --filter <app> test` 재현): **api 667 · control-center 179 · reporter 143 · subscriber 48 · media-worker 24** — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
+  테스트 실측 최신치(**2026-08-16**, Wave 8a3 종료, `pnpm --filter <app> test` 재현): **api 907(+e2e 81) · control-center 307 · reporter 265 · subscriber 109 · media-worker 24** (ai-worker는 이번 회차 미실측 — 직전 기록 pytest 11) — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
 - **✅ 영상 파이프라인 실증 완료 (2026-08-15)**: 실기 촬영본(iPhone 1080p HEVC 가로 63초·세로 `rotation=-90` 117초)으로
   **촬영본→업로드→트랜스코딩→AI분석→프리뷰→기자승인→(센터승인)→송출→시청** 한 바퀴를 제온 실배포에서 완주했다.
   3건 `published` + 카카오 목 송출 전건 성공 + 구독자 공개 피드 노출·재생(`206 video/mp4`). 회전 처리 정확(세로 406×720)·faststart 확인.
