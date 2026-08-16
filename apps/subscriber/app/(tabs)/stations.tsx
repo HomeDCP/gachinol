@@ -1,5 +1,6 @@
 import { FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
+import Head from 'expo-router/head';
 import type { StationStatus, StationSummary } from '@gachinol/shared';
 import type { BadgeToneName } from '@gachinol/ui';
 import { colors, radii, spacing, typo } from '@gachinol/ui';
@@ -19,6 +20,22 @@ const STATION_STATUS: Record<StationStatus, { label: string; tone: BadgeToneName
   planned: { label: '설립 예정', tone: 'info' },
 };
 
+const STATIONS_TITLE = '지사 목록 — 가치놀';
+const STATIONS_DESCRIPTION = '제주 마을방송국 지사 목록을 확인하고, 원하는 지사의 소식만 골라 보세요.';
+
+/** 지사 목록 라우트 고정(정적) OG 메타 — 홈과 동일 원칙(index.tsx의 HomeHead 주석 참조) */
+function StationsHead(): React.JSX.Element {
+  return (
+    <Head>
+      <title>{STATIONS_TITLE}</title>
+      <meta name="description" content={STATIONS_DESCRIPTION} />
+      <meta property="og:type" content="website" />
+      <meta property="og:title" content={STATIONS_TITLE} />
+      <meta property="og:description" content={STATIONS_DESCRIPTION} />
+    </Head>
+  );
+}
+
 /** 공개 지사 탐색 — 마을방송국(지사)만. 탭하면 해당 지사로 피드 필터 후 피드 탭 이동 */
 export default function StationsScreen(): React.JSX.Element {
   const stations = usePublicStations();
@@ -32,6 +49,7 @@ export default function StationsScreen(): React.JSX.Element {
   if (stations.isPending) {
     return (
       <Screen>
+        <StationsHead />
         <LoadingView />
       </Screen>
     );
@@ -39,6 +57,7 @@ export default function StationsScreen(): React.JSX.Element {
   if (stations.isError) {
     return (
       <Screen>
+        <StationsHead />
         <ErrorView
           message={userMessageForError(stations.error)}
           onRetry={() => void stations.refetch()}
@@ -74,6 +93,7 @@ export default function StationsScreen(): React.JSX.Element {
 
   return (
     <Screen>
+      <StationsHead />
       <FlatList
         data={stations.data}
         keyExtractor={(item) => item.id}

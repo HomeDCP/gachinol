@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Image,
+  Linking,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,17 +12,105 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import Head from 'expo-router/head';
 import type { FeedItem, ProgramCategory } from '@gachinol/shared';
-import { colors, radii, spacing, typo } from '@gachinol/ui';
+import { colors, radii, spacing, touchTarget, typo } from '@gachinol/ui';
 import { userMessageForError } from '../../src/api/errors';
 import { useFeedFilter } from '../../src/feed-filter-context';
 import { formatDuration, formatRelativeTime } from '../../src/features/feed/format';
 import { CATEGORY_LABEL } from '../../src/features/feed/labels';
 import { useFeedInfinite, usePublicStations } from '../../src/features/feed/queries';
+import {
+  buildKakaoExternalOpenUrl,
+  evaluateAndRecordHomeBanner,
+  type HomeAddPlatformHint,
+  type HomeBannerVariant,
+} from '../../src/features/home/home-banner';
 import type { FeedFilter } from '../../src/query/keys';
 import { EmptyState } from '../../src/ui/empty-state';
 import { ErrorView } from '../../src/ui/error-view';
 import { Screen } from '../../src/ui/screen';
+
+const HOME_TITLE = '가치놀 — 제주 마을방송';
+const HOME_DESCRIPTION = '제주 각 마을방송국 소식을 카카오톡 없이 한 곳에서 무료로 시청하세요.';
+
+/**
+ * 홈 라우트 고정(정적) OG 메타 — 이 태스크(T-W1-03)가 채우는 것은 홈·지사 목록 같은 "고정 페이지"
+ * 뿐이다. 콘텐츠별 동적 OG(썸네일·제목)는 `go.` 링크(T-W1-05, api 경량 SSR)가 이미 소유한다 —
+ * 여기서 SSR을 흉내 내지 않는다(`expo export --platform web`은 SSR이 아니라 라우트별 정적
+ * 프리렌더라 `Head`가 실제 정적 HTML에 반영된다 — 완료 보고의 검증 절 참조).
+ */
+function HomeHead(): React.JSX.Element {
+  return (
+    <Head>
+      <title>{HOME_TITLE}</title>
+      <meta name="description" content={HOME_DESCRIPTION} />
+      <meta property="og:type" content="website" />
+      <meta property="og:title" content={HOME_TITLE} />
+      <meta property="og:description" content={HOME_DESCRIPTION} />
+    </Head>
+  );
+}
+
+/**
+ * 홈화면 추가(PWA) 안내 배너(03 §A-5) — 판정+기록 로직은 전부 `src/features/home/home-banner.ts`의
+ * `evaluateAndRecordHomeBanner`(목 스토리지로 단위 테스트 대상, 보강 3)가 책임진다. 이 훅은 그
+ * 함수를 부르는 것 외에 아무 로직도 갖지 않는다 — 네이티브(쉘) 빌드에는 A2HS 개념이 없으므로
+ * web에서만 동작한다.
+ */
+function useHomeBanner(): {
+  variant: HomeBannerVariant;
+  platformHint: HomeAddPlatformHint;
+  dismiss: () => void;
+} {
+  const [variant, setVariant] = useState<HomeBannerVariant>('hidden');
+  const [platformHint, setPlatformHint] = useState<HomeAddPlatformHint>('other');
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const result = evaluateAndRecordHomeBanner(window.localStorage, window.navigator.userAgent ?? '', true);
+    setVariant(result.variant);
+    setPlatformHint(result.platformHint);
+  }, []);
+
+  return { variant, platformHint, dismiss: () => setVariant('hidden') };
+}
+
+function HomeAddBanner(): React.JSX.Element | null {
+  const { variant, platformHint, dismiss } = useHomeBanner();
+
+  if (variant === 'hidden') return null;
+
+  const openInExternalBrowser = (): void => {
+    if (typeof window === 'undefined') return;
+    void Linking.openURL(buildKakaoExternalOpenUrl(window.location.href));
+  };
+
+  const addToHomeInstruction =
+    platformHint === 'ios'
+      ? "화면 아래 [공유] 버튼을 누르고 '홈 화면에 추가'를 선택하시면"
+      : "화면 우측 상단 점 3개 메뉴에서 '홈 화면에 추가'를 선택하시면";
+
+  return (
+    <View style={styles.banner}>
+      <Text style={styles.bannerText}>
+        {variant === 'open_in_browser'
+          ? '카카오톡 안에서는 홈 화면에 추가할 수 없어요. 아래 버튼으로 다른 브라우저에서 열어주세요.'
+          : `다음에도 카카오톡 없이 바로 보고 싶으세요? ${addToHomeInstruction}, 우리 마을방송 아이콘이 휴대폰 화면에 생깁니다.`}
+      </Text>
+      <View style={styles.bannerActions}>
+        {variant === 'open_in_browser' ? (
+          <Pressable style={styles.bannerCta} onPress={openInExternalBrowser}>
+            <Text style={styles.bannerCtaText}>다른 브라우저로 열기</Text>
+          </Pressable>
+        ) : null}
+        <Pressable style={styles.bannerClose} onPress={dismiss} hitSlop={spacing.sm}>
+          <Text style={styles.bannerCloseText}>닫기</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
 
 const CATEGORY_FILTERS: readonly ProgramCategory[] = [
   'news',
@@ -89,6 +179,7 @@ export default function FeedScreen(): React.JSX.Element {
 
   return (
     <Screen>
+      <HomeHead />
       {/* 지사 칩 (크로스탭 딥링크 공유) */}
       <ScrollView
         horizontal
@@ -172,6 +263,7 @@ export default function FeedScreen(): React.JSX.Element {
           ListEmptyComponent={<EmptyState message="아직 콘텐츠가 없습니다" />}
         />
       )}
+      <HomeAddBanner />
     </Screen>
   );
 }
@@ -221,4 +313,31 @@ const styles = StyleSheet.create({
   },
   skeletonLine: { height: 16, borderRadius: radii.sm, backgroundColor: colors.border },
   skeletonShort: { width: '55%' },
+  // 홈화면 추가 배너(03 §A-5) — flexGrow:0 기본값 그대로 자연 높이, FlatList가 남는 공간만 차지한다
+  // (위 chipScroll 주석과 동일 원리, 여기서는 명시적 override가 필요 없다).
+  banner: {
+    backgroundColor: colors.card,
+    borderTopWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  bannerText: { fontSize: typo.caption, color: colors.text, lineHeight: typo.body },
+  bannerActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.md },
+  bannerCta: {
+    minHeight: touchTarget.min,
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: colors.primary,
+  },
+  bannerCtaText: { color: '#FFFFFF', fontSize: typo.caption, fontWeight: '700' },
+  bannerClose: {
+    minHeight: touchTarget.min,
+    minWidth: touchTarget.min,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+  },
+  bannerCloseText: { color: colors.textMuted, fontSize: typo.caption, fontWeight: '600' },
 });
