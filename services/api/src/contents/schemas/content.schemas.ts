@@ -62,6 +62,8 @@ export const zCreateContentDraft = z
     category: zEnum(ProgramCategory),
     cultureTopics: z.array(zEnum(CultureTopic)).optional(),
     scenes: z.array(zSceneInput).max(200),
+    /** 피촬영자 중 만 14세 미만 존재 여부 — 미전송 시 false (T-W2-23) */
+    hasMinorSubject: z.boolean().optional(),
     /** 반려/취소 콘텐츠 재작업 원본 — 실재·상태·지사 검증은 서비스 계층(contents.service.ts) */
     remakeOfContentId: zId<ContentId>().optional(),
   })
@@ -91,6 +93,8 @@ export const zUpdateContentDraft = z
     category: zEnum(ProgramCategory).optional(),
     cultureTopics: z.array(zEnum(CultureTopic)).optional(),
     scenes: z.array(zSceneInput).max(200).optional(),
+    /** 피촬영자 중 만 14세 미만 존재 여부 — true→false 시 서버가 확인 기록도 함께 지운다(T-W2-23) */
+    hasMinorSubject: z.boolean().optional(),
     targetChannelAccountIds: z.array(zId<ChannelAccountId>()).max(50).optional(),
   })
   .superRefine((v, ctx) => {

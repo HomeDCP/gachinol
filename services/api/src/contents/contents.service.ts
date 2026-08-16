@@ -83,6 +83,8 @@ export class ContentsService {
         targetChannelAccountIds: [],
         tags: [],
         remakeOfContentId: dto.remakeOfContentId ?? null,
+        // 미성년자 동의 게이트 (T-W2-23) — 미전송 시 false (DB 기본값과 동형, 명시)
+        hasMinorSubject: dto.hasMinorSubject ?? false,
       },
     });
     return toContent(row);
@@ -189,7 +191,8 @@ export class ContentsService {
         dto.description !== undefined ||
         dto.category !== undefined ||
         dto.cultureTopics !== undefined ||
-        dto.scenes !== undefined;
+        dto.scenes !== undefined ||
+        dto.hasMinorSubject !== undefined;
       if (touchesDraftFields) {
         throw new DomainException(
           'forbidden',
@@ -215,12 +218,15 @@ export class ContentsService {
       throw new DomainException('validation_failed', 'culture 외 분류는 cultureTopics 금지');
     }
 
-    const data: Prisma.ContentUpdateInput = {
+    // Unchecked 사용 이유: minorConsentConfirmedByUserId가 관계(minorConsentConfirmedBy)로 매핑돼
+    // 체크형 ContentUpdateInput에는 스칼라로 없다 — D3 fail-closed 지움에 스칼라 null 대입이 필요하다.
+    const data: Prisma.ContentUncheckedUpdateInput = {
       ...(dto.title !== undefined ? { title: dto.title } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
       ...(dto.category !== undefined || dto.cultureTopics !== undefined
         ? { category, cultureTopics: [...(cultureTopics ?? [])] } // 검증한 병합값 그대로 저장
         : {}),
+      ...(dto.hasMinorSubject !== undefined ? { hasMinorSubject: dto.hasMinorSubject } : {}),
       ...(dto.targetChannelAccountIds !== undefined
         ? { targetChannelAccountIds: [...dto.targetChannelAccountIds] }
         : {}),
@@ -228,8 +234,90 @@ export class ContentsService {
     if (dto.scenes !== undefined) {
       data.scenes = this.mergeScenes(row, dto.scenes) as unknown as Prisma.InputJsonValue;
     }
+    // D3 fail-closed 불변식 (T-W2-23): true→false로 내리면 확인 기록도 같은 update에서 함께 지운다 —
+    // 켬→센터 확인→끔→다시 켬으로 동의 게이트를 우회하는 경로를 막는다.
+    if (dto.hasMinorSubject === false && row.hasMinorSubject) {
+      data.minorConsentConfirmedByUserId = null;
+      data.minorConsentConfirmedAt = null;
+    }
 
     const updated = await this.prisma.content.update({ where: { id }, data });
+    return toContent(updated);
+  }
+
+  /**
+   * 미성년자 동의 확인 — 센터 전용 (07 §3-3·02 §E-20, T-W2-23). "촬영한 사람과 확인하는 사람을
+   * 분리해야 게이트가 실효를 갖는다" — reviewPolicy='reporter_only' 경로도 이 확인을 거쳐야
+   * policyGuard ④(content-workflow.service.ts)를 통과할 수 있다(이 메서드는 그 게이트 자체가 아니라
+   * 게이트가 요구하는 사실을 기록하는 쓰기 경로다).
+   * hasMinorSubject=false인 콘텐츠는 거부 — 미리 확인해 두고 나중에 플래그를 켜는 우회를 막는다.
+   * 이미 확인된 콘텐츠는 멱등 200이며 기존 확인자·시각을 유지한다(최초 확인자가 감사 기록의 원천).
+   */
+  async confirmMinorConsent(user: User, id: string): Promise<Content> {
+    this.requireCenterActor(user);
+    const row = await this.loadOwned(user, id);
+    if (!row.hasMinorSubject) {
+      throw new DomainException(
+        'validation_failed',
+        'hasMinorSubject가 꺼져 있는 콘텐츠는 동의를 확인할 수 없습니다',
+      );
+    }
+    if (row.minorConsentConfirmedAt) {
+      return toContent(row); // 멱등 — 기존 확인자·시각을 덮어쓰지 않는다
+    }
+    const updated = await this.prisma.content.update({
+      where: { id },
+      data: { minorConsentConfirmedByUserId: user.id, minorConsentConfirmedAt: new Date() },
+    });
+    return toContent(updated);
+  }
+
+  /**
+   * 동의 확인 철회 — 센터 전용. 미확인 상태면 409(철회할 대상이 없다).
+   *
+   * 게이트 통과 판정은 `approvedAt`이 아니라 `status_transition_logs` 실측이다(D5 정정, T-W2-23) —
+   * `approvedAt`은 `reporter_then_center`의 **기자 승인 hop에서도** 기록되므로(`content-workflow.service.ts`
+   * `approve()` 2지점: 센터 승인 시 + 모든 reviewPolicy의 기자 승인 hop) 게이트 통과의 프록시가 아니다.
+   * reporter_then_center 콘텐츠가 기자 승인만 받고 아직 센터 검토 전(`awaiting_center_review`)이어도
+   * `approvedAt`은 이미 채워져 있어, 그 필드만 보면 아직 미성년자 게이트를 통과하지 않았는데도
+   * 철회를 거부하는 오판이 난다. 대신 policyGuard ④가 실제로 지키는 전이(reviewPolicy별로 다름)가
+   * `status_transition_logs`에 기록됐는지를 직접 조회한다 — 모든 콘텐츠 전이는 `applyHop` 단일 관문을
+   * 거치며 거기서 로그를 남기므로, 상태 목록을 사본으로 하드코딩하지 않고 실제 발생한 전이에서
+   * 판정이 파생된다. 행이 있으면 게이트를 이미 통과했으므로 철회해도 송출을 막지 못해 409로 거부한다
+   * ("철회했는데 왜 송출되지?"라는 거짓 안심을 만들지 않는다). 사유 바디는 받지 않는다
+   * (저장할 컬럼이 없다 — T-W2-24 주민 검수 반려 API 선례).
+   */
+  async withdrawMinorConsent(user: User, id: string): Promise<Content> {
+    this.requireCenterActor(user);
+    const row = await this.loadOwned(user, id);
+    if (!row.minorConsentConfirmedAt) {
+      throw new DomainException('conflict', '아직 확인되지 않은 동의는 철회할 수 없습니다');
+    }
+    // reviewPolicy별로 정책 가드 ④가 실제로 지키는 전이가 다르다(content-workflow.service.ts policyGuard 주석 ④ 참조):
+    // reporter_only는 기자 종단 승인(awaiting_reporter_review→reporter_approved)이 곧 "승인"이고,
+    // 그 외(reporter_then_center)는 센터 승인(awaiting_center_review→center_approved)이 "승인"이다.
+    const gateEdge =
+      row.reviewPolicy === 'reporter_only'
+        ? { fromStatus: 'awaiting_reporter_review', toStatus: 'reporter_approved' }
+        : { fromStatus: 'awaiting_center_review', toStatus: 'center_approved' };
+    const gatePassed = await this.prisma.statusTransitionLog.findFirst({
+      where: {
+        entityType: 'content',
+        entityId: id,
+        fromStatus: gateEdge.fromStatus,
+        toStatus: gateEdge.toStatus,
+      },
+    });
+    if (gatePassed) {
+      throw new DomainException(
+        'conflict',
+        '이미 승인된 콘텐츠는 동의 확인을 철회할 수 없습니다',
+      );
+    }
+    const updated = await this.prisma.content.update({
+      where: { id },
+      data: { minorConsentConfirmedByUserId: null, minorConsentConfirmedAt: null },
+    });
     return toContent(updated);
   }
 
@@ -272,6 +360,17 @@ export class ContentsService {
       throw new DomainException('forbidden', '자기 지사 콘텐츠만 조회할 수 있습니다');
     }
     return row;
+  }
+
+  /**
+   * 센터 전용 액션 방어(defense-in-depth) — 컨트롤러 `@Roles('center_operator','admin')`가 이미
+   * 막지만, 다른 서비스 파일(content-workflow.service.ts·distribution-orchestrator.service.ts)의
+   * 동명 private 헬퍼와 같은 이유로 서비스 계층에도 명시한다.
+   */
+  private requireCenterActor(user: User): void {
+    if (user.role !== 'center_operator' && user.role !== 'admin') {
+      throw new DomainException('forbidden', '센터 운영자 또는 관리자만 수행할 수 있습니다');
+    }
   }
 
   /**

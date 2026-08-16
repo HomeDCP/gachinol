@@ -66,6 +66,14 @@ export interface Content extends Timestamps {
   /** 승인자 — "누가 승인했나" */
   approvedByUserId: UserId | null;
   approvedAt: ISODateString | null;
+  /**
+   * 미성년자(만 14세 미만) 피촬영자 동의 게이트 (07 §3-3·02 §E-20, T-W2-13/T-W2-23) — 개인정보 최소수집:
+   * 아동 식별정보 컬럼 없음, 14세 미만 등장 여부 불린 + 확인자·확인시각만 다룬다.
+   */
+  hasMinorSubject: boolean;
+  /** 법정대리인 동의서 확인자(센터) — fail-closed 판정 근거: null=미확인 */
+  minorConsentConfirmedByUserId: UserId | null;
+  minorConsentConfirmedAt: ISODateString | null;
   /** 비정규화: 최초 송출 완료 시각 — "지사별 최신 콘텐츠" 정렬 키. 인덱스 (station_id, status, published_at DESC) */
   publishedAt: ISODateString | null;
 }
