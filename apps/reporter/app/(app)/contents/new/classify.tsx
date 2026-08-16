@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text } from 'react-native';
 import { router } from 'expo-router';
 import { userMessageForError } from '../../../../src/api/errors';
@@ -6,6 +6,7 @@ import { ClassifyFields } from '../../../../src/features/contents/components/cla
 import { useDraft } from '../../../../src/features/contents/draft-context';
 import { useCreateDraft } from '../../../../src/features/contents/mutations';
 import { validateCreateDraft } from '../../../../src/features/contents/validation';
+import { useUploadFunnelEvents } from '../../../../src/telemetry/use-upload-funnel-events';
 import { Button } from '../../../../src/ui/button';
 import { Screen } from '../../../../src/ui/screen';
 import { colors, spacing, typo } from '../../../../src/ui/theme';
@@ -16,6 +17,19 @@ export default function ClassifyScreen(): React.JSX.Element {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const createDraft = useCreateDraft();
+  const funnelEvents = useUploadFunnelEvents();
+
+  // 위저드 단계 진입/이탈(02§E-16 업로드퍼널 트랙) — mount 시점 contentId를 캡처하되, exit은
+  // 최신 저장 결과를 담도록 ref로 갱신한다(마운트 이후 initial 클로저는 stale일 수 있다).
+  const contentIdRef = useRef<string | undefined>(savedContentId ?? undefined);
+  useEffect(() => {
+    contentIdRef.current = savedContentId ?? undefined;
+  }, [savedContentId]);
+  useEffect(() => {
+    funnelEvents.wizardStepEnter('classify', contentIdRef.current);
+    return () => funnelEvents.wizardStepExit('classify', contentIdRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 마운트당 1회만(진입/이탈), funnelEvents는 client 불변 시 안정
+  }, []);
 
   const save = (): void => {
     if (savedContentId) {

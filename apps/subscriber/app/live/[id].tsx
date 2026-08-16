@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -10,11 +11,12 @@ import {
   View,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useVideoPlayer, VideoView } from 'expo-video';
 import { toId } from '@gachinol/shared';
 import type { ChatMessage, LiveSessionId } from '@gachinol/shared';
 import { colors, radii, spacing, typo } from '@gachinol/ui';
 import { isApiClientError, userMessageForError } from '../../src/api/errors';
+import { getLiveFallbackYoutubeUrl, getSupportTelHref } from '../../src/config/env';
+import { HlsVideo } from '../../src/live/hls-video';
 import {
   formatChatTime,
   formatViewerCount,
@@ -26,10 +28,28 @@ import { useLiveChat } from '../../src/live/use-live-chat';
 import { isValidNickname, NICKNAME_MAX_LEN, sanitizeNickname } from '../../src/live/nickname';
 import { ErrorView } from '../../src/ui/error-view';
 import { LoadingView } from '../../src/ui/loading-view';
+import {
+  PlaybackFallback,
+  resolveLiveFallbackButtons,
+  resolvePlaybackFallbackMessage,
+} from '../../src/ui/playback-fallback';
 import { Screen } from '../../src/ui/screen';
 
-/** 재생 영역 — hlsUrl 있으면 재생, 없으면 정직하게 "준비중"(목 스트림 금지) */
+/**
+ * 재생 영역 — hlsUrl 없으면 정직하게 "준비중"(목 스트림 금지, 기존 원칙 유지). hlsUrl이 생기면
+ * hls.js 어댑터(`HlsVideo` — 웹은 hls.js, 네이티브는 expo-video, 플랫폼별 파일 분기)로 재생하고,
+ * 치명적 재생 실패 시 라이브 폴백 UI(03 §A-6)로 전환한다. **보강 1**: "다시 시도"를 env 설정과
+ * 무관하게 항상 포함해(`resolveLiveFallbackButtons`) 기본 배포(유튜브·전화 미설정)에서도 최소
+ * 1개는 항상 눌린다 — 舊 버전은 두 버튼이 전부 `disabled`인 죽은 화면이었다.
+ */
 function LivePlayer({ hlsUrl }: { hlsUrl: string | null }): React.JSX.Element {
+  const [failed, setFailed] = useState(false);
+  const [retryToken, setRetryToken] = useState(0);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [hlsUrl]);
+
   if (!hlsUrl) {
     return (
       <View style={[styles.playerWrap, styles.playerPlaceholder]}>
@@ -37,18 +57,35 @@ function LivePlayer({ hlsUrl }: { hlsUrl: string | null }): React.JSX.Element {
       </View>
     );
   }
-  return <PlayingView sourceUrl={hlsUrl} />;
-}
 
-function PlayingView({ sourceUrl }: { sourceUrl: string }): React.JSX.Element {
-  const player = useVideoPlayer(sourceUrl, (p) => {
-    p.play();
-  });
-  return (
-    <View style={styles.playerWrap}>
-      <VideoView player={player} style={styles.player} nativeControls />
-    </View>
-  );
+  if (failed) {
+    const youtubeUrl = getLiveFallbackYoutubeUrl();
+    const supportTelHref = getSupportTelHref();
+    const buttons = resolveLiveFallbackButtons({ youtubeUrl, supportTelHref });
+    const actions = buttons.map((button) => {
+      if (button.key === 'retry') {
+        return {
+          label: button.label,
+          onPress: () => {
+            setFailed(false);
+            setRetryToken((n) => n + 1);
+          },
+        };
+      }
+      if (button.key === 'youtube') {
+        return { label: button.label, onPress: () => void Linking.openURL(youtubeUrl as string) };
+      }
+      return { label: button.label, onPress: () => void Linking.openURL(supportTelHref as string) };
+    });
+    return (
+      <PlaybackFallback
+        message={resolvePlaybackFallbackMessage(actions.length)}
+        actions={actions}
+      />
+    );
+  }
+
+  return <HlsVideo key={retryToken} sourceUrl={hlsUrl} onFatalError={() => setFailed(true)} />;
 }
 
 /** 채팅 한 줄 */
@@ -234,7 +271,6 @@ export default function LiveDetailScreen(): React.JSX.Element {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   playerWrap: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#000000' },
-  player: { width: '100%', height: '100%' },
   playerPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   placeholderText: { color: '#FFFFFF', fontSize: typo.caption },
   header: { padding: spacing.lg, gap: spacing.sm, borderBottomWidth: 1, borderColor: colors.border },

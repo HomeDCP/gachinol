@@ -98,6 +98,98 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
     });
   });
 
+  describe('공개 렌디션 캐시 서빙 훅 (D-T8, T-W2-10) — 범용 transition 경로', () => {
+    const setupWithPublicMedia = (row: ReturnType<typeof contentRow>) => {
+      const prisma = makePrismaMock();
+      prisma.content.findUnique.mockResolvedValue(row);
+      const publicMedia = {
+        syncPublishedCopies: jest.fn().mockResolvedValue(undefined),
+        removePublishedCopies: jest.fn().mockResolvedValue(undefined),
+      };
+      const service = new ContentWorkflowService(prisma, publicMedia as never);
+      return { prisma, publicMedia, service };
+    };
+
+    it('→published: syncPublishedCopies(contentId, generation) 호출 + DB 트랜잭션 커밋 후 순서로 호출', async () => {
+      const row = contentRow({ status: 'publishing', publishedAt: null, generation: 2 });
+      const { prisma, publicMedia, service } = setupWithPublicMedia(row);
+
+      // 순서 검증 — "커밋 후" 주장을 실제로 가른다. $transaction 목은 콜백을 즉시 await하므로
+      // 시간 지연으로는 순서를 구분할 수 없다 — 호출 시퀀스 배열로 "DB 쓰기가 먼저, 훅이 나중"을 증명한다.
+      const callOrder: string[] = [];
+      prisma.content.updateMany.mockImplementation(async () => {
+        callOrder.push('db:updateMany');
+        return { count: 1 };
+      });
+      publicMedia.syncPublishedCopies.mockImplementation(async () => {
+        callOrder.push('hook:syncPublishedCopies');
+      });
+
+      await service.transition(row.id, 'published', adminUser());
+
+      expect(publicMedia.syncPublishedCopies).toHaveBeenCalledWith(row.id, 2);
+      expect(publicMedia.removePublishedCopies).not.toHaveBeenCalled();
+      expect(callOrder).toEqual(['db:updateMany', 'hook:syncPublishedCopies']);
+    });
+
+    it('그 외 전이(예: draft→uploading)는 두 훅 모두 호출하지 않는다', async () => {
+      const row = contentRow({ status: 'draft' });
+      const { publicMedia, service } = setupWithPublicMedia(row);
+
+      await service.transition(row.id, 'uploading', adminUser());
+
+      expect(publicMedia.syncPublishedCopies).not.toHaveBeenCalled();
+      expect(publicMedia.removePublishedCopies).not.toHaveBeenCalled();
+    });
+
+    /**
+     * archived 경로는 **의도적으로** `service.transition(id, 'archived', ...)`를 통해 실제
+     * published→archived CAS를 밟지 않는다 — 그러면 `ContentWorkflowService.applyHop`의
+     * 계측(recordContentTransition)이 그 엣지를 "관측됨"으로 만들어, `packages/shared/src/content/
+     * not-wired.ts`의 `published→archived` 등재("보관 구동부가 없다")와 불일치를 일으킨다
+     * (테스트 실행 중 wiring global-teardown이 레드가 된다). shared 정정은 이번 웨이브 G3
+     * 단독 슬롯이라 이 태스크(T-W2-10, services/api 전용) 소유 밖 — [판정 요청]으로 별도 보고.
+     * 대신 `transition()`이 커밋 후 호출하는 private 훅 메서드 자체를 직접 호출해 동일한 로직
+     * (파라미터 전달·미주입 가드·예외 흡수)을 검증한다 — applyHop을 거치지 않으므로 전이맵
+     * 관측에 영향이 없다.
+     */
+    describe('archived 훅 로직(private 메서드 직접 호출 — 전이맵 관측 영향 없음)', () => {
+      const invokeRemoveHook = (
+        service: ContentWorkflowService,
+        contentId: string,
+        generation: number,
+      ): Promise<void> =>
+        (
+          service as unknown as {
+            removePublicMediaAfterArchive: (id: string, gen: number) => Promise<void>;
+          }
+        ).removePublicMediaAfterArchive(contentId, generation);
+
+      it('PublicMediaService.removePublishedCopies(contentId, generation) 호출(필수 대칭)', async () => {
+        const publicMedia = { removePublishedCopies: jest.fn().mockResolvedValue(undefined) };
+        const service = new ContentWorkflowService(makePrismaMock(), publicMedia as never);
+
+        await invokeRemoveHook(service, 'c-1', 3);
+
+        expect(publicMedia.removePublishedCopies).toHaveBeenCalledWith('c-1', 3);
+      });
+
+      it('PublicMediaService 미주입(undefined) — 기존 호출부 하위호환, throw 없이 정상 완료', async () => {
+        const service = new ContentWorkflowService(makePrismaMock()); // 2번째 인자 생략(기존 시그니처)
+        await expect(invokeRemoveHook(service, 'c-1', 1)).resolves.toBeUndefined();
+      });
+
+      it('훅이 던져도(예외) 호출부로 재throw하지 않는다(이미 커밋된 전이를 되돌리지 않기 위함)', async () => {
+        const publicMedia = {
+          removePublishedCopies: jest.fn().mockRejectedValue(new Error('S3 down')),
+        };
+        const service = new ContentWorkflowService(makePrismaMock(), publicMedia as never);
+
+        await expect(invokeRemoveHook(service, 'c-1', 1)).resolves.toBeUndefined();
+      });
+    });
+  });
+
   describe('origin 정책 가드 (§11-4)', () => {
     it('reporter_upload는 preview_generating→awaiting_center_review 직행 불가', async () => {
       const { service } = setup(

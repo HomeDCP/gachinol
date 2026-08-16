@@ -93,6 +93,58 @@ describe('ContentWorkflowService — system·upload 전이 (media-worker 연동)
       expect(data.status).toBe('processing_failed');
       expect(data.lastError).toMatchObject({ message: 'ffmpeg 실패' });
     });
+
+    describe('공개 렌디션 캐시 서빙 훅 (D-T8, T-W2-10) — PipelineService.onPublishCompleted 정상계', () => {
+      const setupWithPublicMedia = (row: ReturnType<typeof contentRow>) => {
+        const prisma = makePrismaMock();
+        prisma.content.findUnique.mockResolvedValue(row);
+        const publicMedia = { syncPublishedCopies: jest.fn().mockResolvedValue(undefined) };
+        const service = new ContentWorkflowService(prisma, publicMedia as never);
+        return { prisma, publicMedia, service };
+      };
+
+      it('publishing→published 성공(applied=true) → syncPublishedCopies(contentId, generation) 호출, DB 커밋 후 순서', async () => {
+        const row = contentRow({ status: 'publishing', publishedAt: null, generation: 4 });
+        const { prisma, publicMedia, service } = setupWithPublicMedia(row);
+
+        // 순서 검증(보강4 ②) — $transaction 목이 콜백을 즉시 await하므로 시간차로는 "커밋 후"를
+        // 구분할 수 없다. 호출 시퀀스로 "DB 쓰기(applyHop 내부)가 먼저, 훅이 나중"을 직접 증명한다.
+        const callOrder: string[] = [];
+        prisma.content.updateMany.mockImplementation(async () => {
+          callOrder.push('db:updateMany');
+          return { count: 1 };
+        });
+        publicMedia.syncPublishedCopies.mockImplementation(async () => {
+          callOrder.push('hook:syncPublishedCopies');
+        });
+
+        const res = await service.applySystemTransition('c-1', 'publishing', 'published', 'job-x');
+
+        expect(res.applied).toBe(true);
+        expect(publicMedia.syncPublishedCopies).toHaveBeenCalledWith('c-1', 4);
+        expect(callOrder).toEqual(['db:updateMany', 'hook:syncPublishedCopies']);
+      });
+
+      it('재전송 멱등(applied=false)이면 재복사하지 않는다(불필요 I/O 방지)', async () => {
+        // 이미 published인 상태에서 재수신(reconcileDistributionPending 재시도 등)
+        const row = contentRow({ status: 'published', generation: 4 });
+        const { publicMedia, service } = setupWithPublicMedia(row);
+
+        const res = await service.applySystemTransition('c-1', 'publishing', 'published', 'job-x');
+
+        expect(res.applied).toBe(false);
+        expect(publicMedia.syncPublishedCopies).not.toHaveBeenCalled();
+      });
+
+      it('published가 아닌 다른 to는 훅을 호출하지 않는다(예: uploaded→processing)', async () => {
+        const row = contentRow({ status: 'uploaded' });
+        const { publicMedia, service } = setupWithPublicMedia(row);
+
+        await service.applySystemTransition('c-1', 'uploaded', 'processing', 'job-x');
+
+        expect(publicMedia.syncPublishedCopies).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('beginUpload / completeUpload / failUpload — user 액터, 소유 기자', () => {

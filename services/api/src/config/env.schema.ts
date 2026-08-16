@@ -114,6 +114,18 @@ export const envSchema = z
     WEB_WATCH_BASE_URL: z.string().optional(), // 구독자 웹(watch.) 베이스 — 리다이렉트 목적지 + 직접 링크 병행 발급(D-T6 조치2). 미설정 시 리다이렉트 없이 안내 렌더 + no-store
     GO_LINK_CACHE_TTL_SEC: z.string().optional(), // OG 페이지 엣지/브라우저 캐시 TTL(§D-T6 "짧은 TTL")
     GO_LINK_STALE_TTL_SEC: z.string().optional(), // stale-if-error 창(api 다운 시 stale 서빙)
+    // 공개 렌디션 캐시 서빙(D-T8, T-W2-10) — published 콘텐츠의 720p 렌디션·썸네일을 공개
+    // 버킷/프리픽스로 복사(멱등)한다. 복사 자체는 S3 오브젝트 연산이라 조건 없이 항상 시도한다
+    // (MinIO에서도 동작 — CF 불요). MEDIA_PUBLIC_BASE_URL 미설정 시에만 "공개 URL 발급"이 비활성화되고
+    // FeedService는 현행 서명 URL(S3Service.presignGet)로 폴백한다(무회귀 기본값).
+    MEDIA_PUBLIC_BUCKET: z.string().optional(), // 미설정 시 S3_BUCKET 재사용(같은 버킷 내 프리픽스로만 분리)
+    MEDIA_PUBLIC_PREFIX: z.string().default('public'), // 공개 복사본 키 접두사
+    MEDIA_PUBLIC_BASE_URL: z.string().optional(), // 공개 CDN(Cloudflare 커스텀 도메인) 베이스 URL. 미설정 시 공개 URL 미발급
+    // Cloudflare 캐시 퍼지(D-T8 필수 대칭) — CF_ZONE_ID·CF_API_TOKEN 둘 다 설정 시에만 실 호출.
+    // 미설정 시 no-op(그 사실을 로그로 남긴다 — 조용한 성공 위장 금지). CF_API_TOKEN은 시크릿, 값은 .env로만.
+    CF_ZONE_ID: z.string().optional(),
+    CF_API_TOKEN: z.string().optional(),
+    CF_PURGE_TIMEOUT_MS: z.coerce.number().int().default(5000),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',

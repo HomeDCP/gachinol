@@ -9,6 +9,7 @@ import type {
 import type { MediaAsset as MediaAssetRow, Prisma } from '@prisma/client';
 import { DomainException } from '../common/errors/domain.exception';
 import { PrismaService } from '../prisma/prisma.service';
+import { PublicMediaService } from '../media/public-media.service';
 import { S3Service } from '../media/s3.service';
 import { zScene } from '../contents/schemas/content.schemas';
 import { decodeFeedCursor, encodeFeedCursor, type FeedCursor } from './feed.cursor';
@@ -24,10 +25,20 @@ const genKey = (contentId: string, generation: number): string => `${contentId}:
  */
 @Injectable()
 export class FeedService {
+  // publicMedia는 선택 의존(테스트 하위호환 — 기존 `new FeedService(prisma, s3)` 호출부가 있다).
+  // 실 앱에서는 FeedModule이 MediaModule을 import하므로 Nest가 항상 주입한다.
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
+    private readonly publicMedia?: PublicMediaService,
   ) {}
+
+  /** 공개 URL(D-T8) 우선, 없으면(미설정·미복사·헤드 실패) 서명 URL로 폴백 — 절대 throw하지 않는다 */
+  private async resolvePlaybackUrl(storageKey: string): Promise<string> {
+    const publicUrl = await this.publicMedia?.resolvePublicUrl(storageKey).catch(() => null);
+    if (publicUrl) return publicUrl;
+    return (await this.s3.presignGet(storageKey)).url;
+  }
 
   /** GET /v1/feed — published 커서 목록. 썸네일 서명은 best-effort(피드 절대 500 금지). */
   async list(query: FeedQueryDto): Promise<CursorPage<FeedItem>> {
@@ -95,7 +106,8 @@ export class FeedService {
       let thumbnailUrl: string | undefined;
       if (thumb) {
         try {
-          thumbnailUrl = (await this.s3.presignGet(thumb.storageKey)).url;
+          // 공개 URL(D-T8) 우선 — 없으면 서명 URL로 폴백
+          thumbnailUrl = await this.resolvePlaybackUrl(thumb.storageKey);
         } catch {
           // S3 자격 미설정 등 — 피드는 절대 500 금지, thumbnailUrl 생략
           thumbnailUrl = undefined;
@@ -129,7 +141,8 @@ export class FeedService {
     });
     const rendition = renditions.find((r) => r.renditionLabel === '720p') ?? renditions[0];
     if (!rendition) throw new DomainException('not_found', '재생 가능한 렌디션이 없습니다');
-    const hlsUrl = (await this.s3.presignGet(rendition.storageKey)).url;
+    // 공개 URL(D-T8) 우선 — 없으면 서명 URL(hlsUrl은 required라 이 단계 실패 시 500 그대로 유지)
+    const hlsUrl = await this.resolvePlaybackUrl(rendition.storageKey);
 
     // 포스터(썸네일) — best-effort, optional
     let posterUrl: string | undefined;
@@ -139,7 +152,7 @@ export class FeedService {
     });
     if (thumb) {
       try {
-        posterUrl = (await this.s3.presignGet(thumb.storageKey)).url;
+        posterUrl = await this.resolvePlaybackUrl(thumb.storageKey);
       } catch {
         posterUrl = undefined;
       }
