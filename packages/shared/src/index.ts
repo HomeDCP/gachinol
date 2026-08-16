@@ -26,6 +26,8 @@ export * from './user/community-figure';
 // content
 export * from './content/category';
 export * from './content/workflow';
+// 미구동 계약 레지스트리 — workflow(합법성) 바로 옆에 둔다(EXEC-DECISIONS #29 1계층)
+export * from './content/not-wired';
 export * from './content/content';
 export * from './content/revision-request';
 export * from './content/dto';
