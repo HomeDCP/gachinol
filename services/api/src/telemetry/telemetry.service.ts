@@ -340,8 +340,10 @@ export class TelemetryRollup {
         return 'known';
       }
 
-      // ⚠️ 발신은 대장 #123으로 프로덕션에서 제거됐다(존재하지 않는 "간단 모드"를 계측하면 채택률
-      // KPI가 무의미해진다). 수신·집계 경로는 과거 수집분 호환을 위해 남긴다 — 재도입 금지.
+      // 발신은 대장 #123으로 한때 제거됐다가(간단 모드가 정밀 모드와 항등이라 채택률 KPI가
+      // 무의미했다) **T-W2-34가 간단 모드를 실제로 구현하며 재도입**했다(2026-08-16). 이제 유효한 지표다.
+      // ⚠️ 아래 'simple'|'precise' 리터럴은 앱(reporter `features/contents/mode.ts`)과 짝을 이루는데
+      // shared에 payload 계약이 없어 **타입으로 묶여 있지 않다** — 한쪽만 바꾸면 조용히 집계가 0이 된다.
       case TelemetryEventName.ModeSelected: {
         const mode = event.payload?.mode;
         if (mode === 'simple') this.simpleCount += 1;

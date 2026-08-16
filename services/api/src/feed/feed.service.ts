@@ -33,11 +33,25 @@ export class FeedService {
     private readonly publicMedia?: PublicMediaService,
   ) {}
 
-  /** 공개 URL(D-T8) 우선, 없으면(미설정·미복사·헤드 실패) 서명 URL로 폴백 — 절대 throw하지 않는다 */
-  private async resolvePlaybackUrl(storageKey: string): Promise<string> {
-    const publicUrl = await this.publicMedia?.resolvePublicUrl(storageKey).catch(() => null);
+  /**
+   * 공개 URL(D-T8) 우선, 없으면(미설정·미복사) 서명 URL로 폴백 — 절대 throw하지 않는다.
+   *
+   * **자산 행을 통째로 받는다**(T-W2-33, 대장 #129 ⓐ): 공개 사본 존재 판정이 S3 HEAD가 아니라
+   * 행에 이미 실려 있는 `publicBucket`/`publicKey` 기록이라 이 경로는 **S3 왕복이 0회**다.
+   * (이전에는 항목마다 HEAD 1회 → 1페이지 20건이면 오리진 왕복 20회 — CDN 서빙의 목적과 상충했다.)
+   * 폴백 계약은 그대로다 — 기록이 없으면 서명 URL, 즉 공개 URL을 필수로 취급하지 않는다.
+   */
+  private async resolvePlaybackUrl(
+    asset: Pick<MediaAssetRow, 'storageKey' | 'publicBucket' | 'publicKey'>,
+  ): Promise<string> {
+    let publicUrl: string | null = null;
+    try {
+      publicUrl = this.publicMedia?.publicUrlForAsset(asset) ?? null;
+    } catch {
+      publicUrl = null; // 순수 계산이라 사실상 도달 불가 — "피드 절대 500 금지" 방어선만 유지
+    }
     if (publicUrl) return publicUrl;
-    return (await this.s3.presignGet(storageKey)).url;
+    return (await this.s3.presignGet(asset.storageKey)).url;
   }
 
   /** GET /v1/feed — published 커서 목록. 썸네일 서명은 best-effort(피드 절대 500 금지). */
@@ -106,8 +120,8 @@ export class FeedService {
       let thumbnailUrl: string | undefined;
       if (thumb) {
         try {
-          // 공개 URL(D-T8) 우선 — 없으면 서명 URL로 폴백
-          thumbnailUrl = await this.resolvePlaybackUrl(thumb.storageKey);
+          // 공개 URL(D-T8) 우선 — 없으면 서명 URL로 폴백. 공개 URL 판정은 S3 왕복 0회(T-W2-33).
+          thumbnailUrl = await this.resolvePlaybackUrl(thumb);
         } catch {
           // S3 자격 미설정 등 — 피드는 절대 500 금지, thumbnailUrl 생략
           thumbnailUrl = undefined;
@@ -142,7 +156,7 @@ export class FeedService {
     const rendition = renditions.find((r) => r.renditionLabel === '720p') ?? renditions[0];
     if (!rendition) throw new DomainException('not_found', '재생 가능한 렌디션이 없습니다');
     // 공개 URL(D-T8) 우선 — 없으면 서명 URL(hlsUrl은 required라 이 단계 실패 시 500 그대로 유지)
-    const hlsUrl = await this.resolvePlaybackUrl(rendition.storageKey);
+    const hlsUrl = await this.resolvePlaybackUrl(rendition);
 
     // 포스터(썸네일) — best-effort, optional
     let posterUrl: string | undefined;
@@ -152,7 +166,7 @@ export class FeedService {
     });
     if (thumb) {
       try {
-        posterUrl = await this.resolvePlaybackUrl(thumb.storageKey);
+        posterUrl = await this.resolvePlaybackUrl(thumb);
       } catch {
         posterUrl = undefined;
       }

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type {
   Content,
   ContentDetail,
+  ContentStatus,
   ContentSummary,
   Paginated,
   Scene,
@@ -9,7 +10,14 @@ import type {
   StatusTransitionLog,
   User,
 } from '@gachinol/shared';
-import { MinorConsentFilter, isReporterUser, requiresCultureTopic } from '@gachinol/shared';
+import {
+  CAPTION_EDITABLE_CONTENT_STATUSES,
+  CaptionFilter,
+  MinorConsentFilter,
+  isCaptionEditableStatus,
+  isReporterUser,
+  requiresCultureTopic,
+} from '@gachinol/shared';
 import type { Content as ContentRow } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { DomainException } from '../common/errors/domain.exception';
@@ -34,6 +42,7 @@ import { zScene } from './schemas/content.schemas';
 import type {
   ContentListQueryDto,
   CreateContentDraftDto,
+  UpdateContentCaptionsDto,
   UpdateContentDraftDto,
 } from './schemas/content.schemas';
 
@@ -140,6 +149,10 @@ export class ContentsService {
    * `hasMinorSubject=true`를 전제로 하며, 판정의 원천은 `minorConsentConfirmedAt`(=shared
    * `isMinorConsentPending`이 보는 컬럼) 하나다 — `approvedAt`은 기자 승인 hop에서도 채워져 게이트
    * 통과의 프록시가 아니다.
+   *
+   * `captions` 필터(T-W2-34, 대장 #123): 간단 모드(03 §C-4)·주민 제보로 **자막 없이** 들어온
+   * 콘텐츠를 지사 담당자가 발견하는 경로. `minorConsent`와 달리 순수 사실 필터가 아니라
+   * "지금 채울 수 있는가"까지 포함한다 — 근거는 shared `CaptionFilter` 주석.
    */
   async list(user: User, query: ContentListQueryDto): Promise<Paginated<ContentSummary>> {
     // reporter는 쿼리 stationId를 서버가 자기 소속으로 덮어씀
@@ -153,6 +166,17 @@ export class ContentsService {
             hasMinorSubject: true,
             minorConsentConfirmedAt:
               query.minorConsent === MinorConsentFilter.Pending ? null : { not: null },
+          }
+        : {}),
+      // 자막 대기열 (T-W2-34, 대장 #123) — "자막 0건 ∧ 지금 채울 수 있는 상태".
+      // 상태 조건은 shared 파생 집합을 그대로 쓴다(쓰기 게이트 updateCaptions와 같은 원천 —
+      // 어긋나면 "자막 필요"로 떠 있는 항목이 편집에서 409로 거부되는 교착이 된다).
+      // `AND`로 감싸는 이유: 위 status 필터와 같은 키를 스프레드로 덮어쓰면 둘 중 하나가 조용히
+      // 사라진다(status=uploaded&captions=needed 같은 조합이 잘못된 결과를 낸다).
+      ...(query.captions === CaptionFilter.Needed
+        ? {
+            scenes: { equals: [] },
+            AND: [{ status: { in: [...CAPTION_EDITABLE_CONTENT_STATUSES] } }],
           }
         : {}),
     };
@@ -263,6 +287,56 @@ export class ContentsService {
     return toContent(updated);
   }
 
+  /* ══════════════════════════════════════════════════════════════════════════
+   * 사후 자막 보강 (T-W2-34 — 대장 #123 · 03 §C-4 간단 모드)
+   *
+   * 왜 `update()`를 넓히지 않고 별도 경로인가: `update()`는 **초안 작성자의 수정**이라
+   * ⓐ 상태가 `draft`·`revision_requested`뿐이고 ⓑ 액터가 담당 기자 본인(`loadOwned`)이다.
+   * 자막 보강은 둘 다 달라야 한다 — 간단 모드는 "촬영자는 자막을 안 쓴다"가 목적이라 액터를
+   * 소유 기자로 좁히면 목적 자체가 무너지고, 업로드가 끝난 뒤에 채우는 것이라 상태도 초안
+   * 범위를 벗어나 있다. 같은 메서드에 조건을 겹치면 "누가 무엇을 언제 고칠 수 있는가"가
+   * 한 함수 안에서 네 갈래로 갈려 읽을 수 없게 된다.
+   *
+   * 안전장치 3겹(전부 다른 축):
+   *  ① **필드** — DTO에 `scenes`밖에 없다. 넓힌 액터가 제목·분류를 건드릴 방법이 타입에 없다.
+   *  ② **지사 경계** — `loadReadable`(기자=자기 지사 강제)을 **재사용**한다. 판정 사본 0.
+   *  ③ **상태** — shared `isCaptionEditableStatus`(전이맵 파생 + published 제외). 목록 필터
+   *     `captions=needed`와 **같은 원천**이라 발견 수단과 쓰기 게이트가 어긋날 수 없다.
+   *
+   * 승인 홉에는 자막 가드를 걸지 않는다(사용자 결정 2026-08-16 "송출 허용 + 사후 보강") —
+   * 자막이 비어 있어도 승인·송출은 진행되고, 자막은 published 전까지 언제든 채운다.
+   * ══════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * 자막(scenes) 전량 치환. `SceneId`는 `mergeScenes`가 order 기준으로 보존한다
+   * (수정 지시 `RevisionRequest.sceneNotes`의 참조가 유령이 되지 않게 — `update()`와 동일 규약).
+   *
+   * 실패 코드: 미존재 404 · 타 지사 기자 403(`loadReadable`) · 송출·종결 이후 409.
+   * 409에 현재 상태를 실어 앱이 "왜 못 고치는지"를 그대로 보여줄 수 있게 한다.
+   */
+  async updateCaptions(user: User, id: string, dto: UpdateContentCaptionsDto): Promise<Content> {
+    // ② 지사 경계 — 소유 기자 전용(loadOwned)이 아니라 "같은 지사 기자"(loadReadable).
+    //    주민 업로드 검수(ResidentReviewsService.loadForReview)가 지사 담당자를 판정하는 것과
+    //    같은 규칙이며, 그쪽 주석이 밝히듯 그 규칙의 원천이 이 loadReadable이다.
+    const row = await this.loadReadable(user, id);
+
+    // ③ 상태 — 규칙은 shared가 소유한다(여기에 상태 이름을 적지 않는다)
+    if (!isCaptionEditableStatus(row.status as ContentStatus)) {
+      throw new DomainException(
+        'conflict',
+        '이미 송출됐거나 종결된 콘텐츠의 자막은 수정할 수 없습니다',
+        { status: row.status },
+      );
+    }
+
+    const scenes = this.mergeScenes(row, dto.scenes);
+    const updated = await this.prisma.content.update({
+      where: { id },
+      data: { scenes: scenes as unknown as Prisma.InputJsonValue },
+    });
+    return toContent(updated);
+  }
+
   /**
    * 미성년자 동의 확인 — 센터 전용 (07 §3-3·02 §E-20, T-W2-23). "촬영한 사람과 확인하는 사람을
    * 분리해야 게이트가 실효를 갖는다" — reviewPolicy='reporter_only' 경로도 이 확인을 거쳐야
@@ -368,8 +442,14 @@ export class ContentsService {
   }
 
   /**
-   * 존재 확인 + 읽기 범위 (기자=소속 지사 전체 — list()와 동일 범위, center_operator·admin 전체).
-   * 목록에 보이는 항목은 상세·이력도 열려야 한다 (읽기 계약 정합). 쓰기·전이는 loadOwned 유지.
+   * 존재 확인 + **지사 범위** (기자=소속 지사 전체 — list()와 동일 범위, center_operator·admin 전체).
+   * 목록에 보이는 항목은 상세·이력도 열려야 한다 (읽기 계약 정합).
+   *
+   * ⚠ 이름이 `loadReadable`이지만 읽기 전용 판정이 아니다 — **지사 경계 판정**이며 쓰기도 하나
+   * 쓴다: 사후 자막 보강(`updateCaptions`, T-W2-34). 정본 03 §C-4가 자막을 채우는 주체를
+   * "지사 담당자"로 두었기 때문이며, 그 액터 범위가 정확히 이 판정과 같다(주민 업로드 검수의
+   * `ResidentReviewsService.loadForReview`도 같은 규칙을 자기 테이블에 적용하며 이쪽을 원천으로
+   * 인용한다). 그 외 모든 쓰기·전이는 여전히 `loadOwned`(소유 기자)다 — 넓히지 말 것.
    */
   private async loadReadable(user: User, id: string): Promise<ContentRow> {
     const row = await this.prisma.content.findUnique({ where: { id } });

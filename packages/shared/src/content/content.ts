@@ -165,3 +165,25 @@ export const MinorConsentFilter = {
   Confirmed: 'confirmed',
 } as const;
 export type MinorConsentFilter = (typeof MinorConsentFilter)[keyof typeof MinorConsentFilter];
+
+/**
+ * `GET /v1/contents`의 자막 대기열 필터 (T-W2-34, 대장 #123).
+ *
+ * 간단 모드(03 §C-4)로 올린 콘텐츠와 주민 제보(`origin='resident_link'`)는 `scenes`가 빈 배열로
+ * 저장된다 — 자막은 지사 담당자가 **사후에** 채운다. 이 필터가 그 대기열의 **유일한 발견 경로**다
+ * (없으면 자막 미완 콘텐츠는 상세를 1건씩 전수 조회해야만 찾을 수 있어, 편집 화면만 만들고
+ * 진입로가 없던 대장 #118과 같은 형태의 결함이 된다).
+ *
+ * ⚠ `MinorConsentFilter`와 달리 **순수 사실 필터가 아니다**. `needed`는 "자막이 없다"에
+ * "**지금 채울 수 있다**"(`isCaptionEditableStatus`)를 곱한 값이다 — 이미 송출됐거나 종결된
+ * 콘텐츠는 자막을 채워도 반영할 곳이 없어(쓰기 경로가 409로 거부한다) 대기열에 남겨 두면
+ * 영원히 줄지 않는 유령 항목이 된다. 두 판정 모두 shared `CAPTION_EDITABLE_CONTENT_STATUSES`
+ * 하나에서 파생하므로 필터와 쓰기 게이트가 어긋날 수 없다.
+ *
+ * 값이 하나뿐인 것은 의도다 — "자막이 있는 것"을 골라내야 하는 소비자가 아직 없다.
+ */
+export const CaptionFilter = {
+  /** 자막 0건 ∧ 아직 채울 수 있는 상태 — 지사 담당자의 작업 대기열 */
+  Needed: 'needed',
+} as const;
+export type CaptionFilter = (typeof CaptionFilter)[keyof typeof CaptionFilter];

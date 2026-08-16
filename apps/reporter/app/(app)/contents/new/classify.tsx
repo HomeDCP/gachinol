@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { userMessageForError } from '../../../../src/api/errors';
 import { ClassifyFields } from '../../../../src/features/contents/components/classify-fields';
 import { useDraft } from '../../../../src/features/contents/draft-context';
+import { UploadMode } from '../../../../src/features/contents/mode';
 import { useCreateDraft } from '../../../../src/features/contents/mutations';
 import { validateCreateDraft } from '../../../../src/features/contents/validation';
 import { useUploadFunnelEvents } from '../../../../src/telemetry/use-upload-funnel-events';
@@ -11,9 +12,13 @@ import { Button } from '../../../../src/ui/button';
 import { Screen } from '../../../../src/ui/screen';
 import { colors, spacing, typo } from '../../../../src/ui/theme';
 
-/** ③-3 분류·제목 → 초안 저장 (실 API) */
+/**
+ * ③-4 분류·제목 → 초안 저장 (실 API).
+ * 간단 모드는 자막 화면을 거치지 않고 여기로 바로 들어온다 — 저장 시 `scenes: []`
+ * (분기의 원천은 `validateCreateDraft`, T-W2-34).
+ */
 export default function ClassifyScreen(): React.JSX.Element {
-  const { media, scenes, classify, updateClassify, markSaved, savedContentId } = useDraft();
+  const { media, mode, scenes, classify, updateClassify, markSaved, savedContentId } = useDraft();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const createDraft = useCreateDraft();
@@ -41,7 +46,7 @@ export default function ClassifyScreen(): React.JSX.Element {
       }
       return;
     }
-    const result = validateCreateDraft(classify, scenes);
+    const result = validateCreateDraft(classify, scenes, mode);
     if (!result.ok) {
       setErrors(result.errors);
       return;
@@ -65,6 +70,12 @@ export default function ClassifyScreen(): React.JSX.Element {
     <Screen>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <ClassifyFields value={classify} onChange={updateClassify} errors={errors} />
+        {mode === UploadMode.Simple ? (
+          <Text style={styles.modeNotice}>
+            간단 모드로 저장합니다 — 자막 없이 올라가고, 목록의 &quot;자막 필요&quot;에서 지사
+            담당자가 나중에 채웁니다.
+          </Text>
+        ) : null}
         {serverError ? <Text style={styles.serverError}>{serverError}</Text> : null}
         <Button label="초안 저장" onPress={save} loading={createDraft.isPending} />
       </ScrollView>
@@ -74,6 +85,12 @@ export default function ClassifyScreen(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   container: { padding: spacing.lg, paddingBottom: spacing.xl * 2 },
+  modeNotice: {
+    fontSize: typo.caption,
+    color: colors.textMuted,
+    lineHeight: 18,
+    marginBottom: spacing.md,
+  },
   serverError: {
     color: colors.danger,
     fontSize: typo.caption,

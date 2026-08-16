@@ -122,19 +122,37 @@ export class S3Service {
   /**
    * 서버측 오브젝트 복사(멱등 — 같은 목적지 키로 재호출해도 덮어쓸 뿐 안전).
    * 공개 렌디션 복사(D-T8) 전용 — api는 그 외에는 바이트를 옮기지 않는다.
+   *
+   * **`cacheControl`/`contentType`을 주면 `MetadataDirective: 'REPLACE'`로 전환된다**(대장 #129 ⓑ).
+   * S3/R2의 CopyObject는 기본(`COPY`)에서 **요청에 실린 시스템 메타데이터를 무시**하고 원본 것을
+   * 그대로 승계하므로 `CacheControl`만 얹어서는 목적지에 반영되지 않는다. 반대로 `REPLACE`는
+   * **원본 메타데이터를 전부 버리므로 `ContentType`을 함께 주지 않으면 `binary/octet-stream`으로
+   * 떨어져 브라우저 재생이 깨진다** — 그래서 두 값은 호출부에서 항상 짝으로 넘긴다.
+   *
+   * ⚠️ 공개 읽기 권한(ACL)은 여기서 설정하지 않는다 — **Cloudflare R2에는 오브젝트 ACL이 없고**
+   * 공개 여부는 버킷 단위 설정(커스텀 도메인 바인딩 / r2.dev 공개)으로만 정해진다. 즉 공개 서빙은
+   * "공개 버킷이 이미 공개로 준비돼 있다"를 전제하며, 그 전제는 docs/infrastructure.md §4-C에 있다.
    */
   async copyObject(params: {
     sourceBucket: string;
     sourceKey: string;
     destBucket: string;
     destKey: string;
+    /** 목적지 Cache-Control. 지정 시 MetadataDirective=REPLACE (contentType 동반 필수) */
+    cacheControl?: string;
+    /** 목적지 Content-Type. REPLACE로 원본 메타데이터가 버려지므로 반드시 명시 */
+    contentType?: string;
   }): Promise<void> {
     const copySource = `${params.sourceBucket}/${encodeS3KeyForCopySource(params.sourceKey)}`;
+    const replaceMetadata = Boolean(params.cacheControl ?? params.contentType);
     await this.getClient().send(
       new CopyObjectCommand({
         Bucket: params.destBucket,
         Key: params.destKey,
         CopySource: copySource,
+        ...(replaceMetadata ? { MetadataDirective: 'REPLACE' as const } : {}),
+        ...(params.cacheControl ? { CacheControl: params.cacheControl } : {}),
+        ...(params.contentType ? { ContentType: params.contentType } : {}),
       }),
     );
   }

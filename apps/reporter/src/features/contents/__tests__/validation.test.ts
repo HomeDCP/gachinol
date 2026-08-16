@@ -1,4 +1,5 @@
 import { CultureTopic, ProgramCategory } from '@gachinol/shared';
+import { UploadMode } from '../mode';
 import {
   emptyClassifyForm,
   emptySceneForm,
@@ -122,6 +123,7 @@ describe('validateCreateDraft — 정상 입력 → CreateContentDraftRequest �
         cultureTopics: [CultureTopic.Farmer, CultureTopic.Producer],
       },
       [scene({ caption: '인트로', startSec: '0', endSec: '12' }), scene({ caption: '인터뷰' })],
+      UploadMode.Precise,
     );
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -138,12 +140,64 @@ describe('validateCreateDraft — 정상 입력 → CreateContentDraftRequest �
     }
   });
   test('분류·장면 에러 병합', () => {
-    const r = validateCreateDraft({ ...emptyClassifyForm() }, []);
+    const r = validateCreateDraft({ ...emptyClassifyForm() }, [], UploadMode.Precise);
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.errors.title).toBeDefined();
       expect(r.errors.category).toBeDefined();
       expect(r.errors.scenes).toBeDefined();
+    }
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ★ 간단 모드가 정밀 모드와 **실제로 다르다** (T-W2-34, 대장 #123).
+ *
+ * T-W1-07b는 이 지점에서 "간단 모드가 항등함수"라는 판정을 받았다 — 모드 선택이 자막 단계 뒤에
+ * 있어서 어느 모드를 골라도 결과가 같았다. 아래 단정들이 그 회귀를 고정한다: **같은 입력**에
+ * 모드만 바꿔 넣었을 때 결과가 달라야 한다.
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe('validateCreateDraft — 모드 분기', () => {
+  const classify = {
+    title: '애월 해녀 물질',
+    description: '',
+    category: ProgramCategory.News,
+    cultureTopics: [],
+  };
+
+  test('간단 모드는 자막 없이도 통과하고 scenes를 빈 배열로 저장한다', () => {
+    // 자막 화면을 거치지 않은 상태 그대로 = 빈 카드 1장(위저드 초기값)
+    const r = validateCreateDraft(classify, [emptySceneForm()], UploadMode.Simple);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.scenes).toEqual([]);
+  });
+
+  test('정밀 모드는 같은 입력을 거부한다 — 두 모드가 같은 함수가 아니라는 증거', () => {
+    const r = validateCreateDraft(classify, [emptySceneForm()], UploadMode.Precise);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors['scenes.0.caption']).toBe('자막을 입력해 주세요');
+  });
+
+  test('간단 모드는 입력된 자막까지 버린다 — 자막 단계를 아예 거치지 않았다는 뜻', () => {
+    const filled = [scene({ caption: '버려질 자막' })];
+    const simple = validateCreateDraft(classify, filled, UploadMode.Simple);
+    const precise = validateCreateDraft(classify, filled, UploadMode.Precise);
+    expect(simple.ok && precise.ok).toBe(true);
+    if (simple.ok && precise.ok) {
+      expect(simple.value.scenes).toEqual([]);
+      expect(precise.value.scenes).toHaveLength(1);
+      // 항등함수였다면 이 둘이 같아야 한다
+      expect(simple.value).not.toEqual(precise.value);
+    }
+  });
+
+  test('간단 모드여도 분류 검증은 그대로다 — 생략되는 것은 자막뿐', () => {
+    const r = validateCreateDraft(emptyClassifyForm(), [], UploadMode.Simple);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.title).toBeDefined();
+      expect(r.errors.category).toBeDefined();
+      expect(r.errors.scenes).toBeUndefined(); // 자막 오류는 나오지 않는다
     }
   });
 });

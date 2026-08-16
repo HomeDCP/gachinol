@@ -5,7 +5,7 @@ import type { AiAnalysis } from '../analysis/ai-analysis';
 import type { Publication } from '../distribution/publication';
 import type { MediaAsset } from '../media/media-asset';
 import type { CultureTopic, ProgramCategory } from './category';
-import type { Content, MinorConsentFilter } from './content';
+import type { CaptionFilter, Content, MinorConsentFilter } from './content';
 import type { RevisionRequest } from './revision-request';
 import type { ContentStatus } from './workflow';
 
@@ -21,6 +21,12 @@ export interface ContentListQuery extends PageQuery {
    * 차단된 콘텐츠가 `awaiting_reporter_review`에 멈춰 있으므로 상태 필터로는 골라낼 수 없다.
    */
   minorConsent?: MinorConsentFilter;
+  /**
+   * 자막 대기열 필터 (T-W2-34, 대장 #123) — 간단 모드·주민 제보로 자막 없이 들어온 콘텐츠를
+   * 지사 담당자가 발견하는 경로. status와 **직교**하지 않는다(값 자체가 상태 조건을 포함한다 —
+   * `CaptionFilter` 주석 참조). status와 함께 보내면 둘 다 AND로 적용된다.
+   */
+  captions?: CaptionFilter;
 }
 
 export interface SceneInput {
@@ -60,6 +66,25 @@ export interface UpdateContentDraftRequest {
    */
   hasMinorSubject?: boolean;
   targetChannelAccountIds?: readonly ChannelAccountId[];
+}
+
+/**
+ * 사후 자막 보강 — `PATCH /v1/contents/:id/captions` (T-W2-34, 대장 #123 · 03 §C-4).
+ *
+ * `UpdateContentDraftRequest`와 **일부러 분리한** 별도 계약이다:
+ *  · **상태 범위가 다르다** — 초안 수정은 `draft`·`revision_requested`뿐이지만, 자막 보강은
+ *    `published` 전까지 열려 있다(`CAPTION_EDITABLE_CONTENT_STATUSES`).
+ *  · **액터 범위가 다르다** — 초안 수정은 담당 기자 본인만, 자막 보강은 **같은 지사 기자**까지다
+ *    (정본이 말하는 "지사 담당자". 촬영자에게서 자막 부담을 걷어내는 것이 간단 모드의 목적이라
+ *    소유 기자 전용으로 좁히면 그 목적이 무너진다).
+ *  · 그래서 **필드가 이것 하나뿐이다** — 넓힌 액터가 제목·분류까지 고칠 수 있으면 안 되므로
+ *    타입 수준에서 자막 외 필드를 실을 수 없게 한다.
+ *
+ * `scenes`는 전량 치환이며 서버가 `order` 기준으로 기존 `SceneId`를 보존 병합한다
+ * (`RevisionRequest.sceneNotes`의 참조가 유령이 되지 않게 — `UpdateContentDraftRequest`와 동일 규약).
+ */
+export interface UpdateContentCaptionsRequest {
+  scenes: readonly SceneInput[];
 }
 
 export interface IssueUploadUrlRequest {

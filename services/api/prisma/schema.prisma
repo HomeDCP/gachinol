@@ -215,6 +215,17 @@ model MediaAsset {
   createdByJobId String?  @map("created_by_job_id") // BullMQ jobId (jobs 테이블 없음)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  // 공개 사본 위치(D-T8 / T-W2-33, 대장 #129 ⓐ) — "공개 버킷에 이 자산의 사본이 있다"의 유일 기록처.
+  // T-W2-10은 사본 존재를 S3 HEAD로 그때그때 확인했는데, 그러면 피드 1페이지(20건)당 최대 20회
+  // 오리진 왕복이 발생해 CDN 서빙의 목적과 정면으로 상충한다 → 기록으로 대체(FeedService는 HEAD 0회).
+  // 파생 키가 아니라 **실제로 쓴 위치를 그대로** 적는다: MEDIA_PUBLIC_PREFIX/BUCKET이 바뀌어도
+  // 이전 사본을 정확히 서빙·삭제할 수 있다(파생만 하면 옛 사본이 고아가 된다).
+  // 3개 컬럼은 항상 함께 세팅/함께 NULL이며, **NULL = "사본을 모른다"**(보수적 기본값) —
+  // 이 상태에서 FeedService는 서명 URL로 폴백하므로 마이그레이션 직후 기존 행(전부 NULL)도 무회귀다.
+  publicBucket   String?   @map("public_bucket") // 사본이 놓인 버킷(= 기록 시점의 MEDIA_PUBLIC_BUCKET ?? S3_BUCKET)
+  publicKey      String?   @map("public_key") // 사본 키(= 기록 시점의 '{MEDIA_PUBLIC_PREFIX}/{storage_key}')
+  publicCopiedAt DateTime? @map("public_copied_at") @db.Timestamptz(3) // 복사 성공을 확인한 시각(관측용)
+
   content Content? @relation(fields: [contentId], references: [id], onDelete: Cascade)
 
   @@unique([bucket, storageKey]) // ★ 멱등 생성 가드 + upsert 키 (QueueEvents 다중 수신에도 1행)

@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { AppState, Platform } from 'react-native';
 import type { ApiClient } from '../api/client';
 import { useApiClient } from '../auth/auth-context';
+import type { UploadMode } from '../features/contents/mode';
 import { createTelemetryBatchQueue, type TelemetryBatchQueue } from './telemetry-batch';
 
 /**
@@ -21,10 +22,18 @@ import { createTelemetryBatchQueue, type TelemetryBatchQueue } from './telemetry
  * (apps/subscriber)가 소유한다** — 02 §E-16 원문이 "큰 자막 모드 토글"을 업로드퍼널 트랙 열거에
  * 함께 적었으나, 이 리포의 DD1(docs/plan/exec/E2-work-breakdown.md 113~114행)이 "큰 자막 모드
  * 토글은 T-W1-07a에" 귀속을 명시적으로 확정했다. 이 모듈은 그 이벤트를 발신하지 않는다(자막 토글
- * UI 자체가 기자 웹 업로드 위저드에 없다). 카탈로그 ③ 모드선택 트랙(`TelemetryEventName.ModeSelected`)도
- * 발신하지 않는다 — 대장 #123으로 프로덕션에서 제거했다(존재하지 않는 "간단 모드"의 선택지를
- * 계측하면 채택률 KPI가 무의미해진다). **재도입 금지**(이름 리터럴조차 이 파일에 남기지 않는다 —
- * 기자 앱 프로덕션 코드에 그 문자열이 0건임을 grep으로 고정하는 수용 기준이 있다).
+ * UI 자체가 기자 웹 업로드 위저드에 없다).
+ *
+ * ★ 카탈로그 ③ 모드선택 트랙(`TelemetryEventName.ModeSelected`)은 **T-W2-34에서 재도입했다**.
+ *   T-W1-07b가 제거한 이유는 "간단 모드가 존재하지 않아서"였다 — 모드 선택 UI가 자막 단계
+ *   **뒤**에 있어 동작이 정밀 모드와 완전히 같은 항등함수였고(대장 #123), 있지도 않은 기능의
+ *   선택지를 계측하면 채택률 KPI(`simpleAdoptionRate`)가 무의미한 수치를 쌓는다.
+ *   T-W2-34가 모드 선택을 자막 단계 **앞**으로 옮겨 간단 모드가 실제로 자막을 생략하게 만들었으므로
+ *   (`features/contents/mode.ts`), 이제 이 이벤트는 **실재하는 선택**을 측정한다. 제거를 고정하던
+ *   부정 단언(`expect(names).not.toContain('mode_selected')`)도 같은 태스크에서 걷어냈다.
+ *   ⚠ shared `telemetry/telemetry-event.ts`와 api `telemetry/telemetry.service.ts`에 남아 있는
+ *   "재도입 금지" 주석은 T-W2-34의 소유 범위 밖이라 손대지 못했다 — **그 두 문구는 이 시점부터
+ *   stale**이며 정정은 별건이다(보고서 등재).
  *
  * 업로드 실패는 fire-and-forget으로 삼킨다(설계 제약) — 계측 실패가 업로드·저장 흐름을 절대
  * 막지 않는다. 호출부는 반환값을 기다릴 필요가 없다(전부 void 반환).
@@ -36,6 +45,11 @@ export type UploadFunnelStep = 'classify' | 'upload';
 export interface UploadFunnelEvents {
   wizardStepEnter(step: UploadFunnelStep, contentId?: string): void;
   wizardStepExit(step: UploadFunnelStep, contentId?: string): void;
+  /**
+   * 작성 방식 선택 (T-W2-34) — 위저드에서 자막 단계 **앞**의 모드 화면이 발신한다.
+   * payload 값(`'simple'`/`'precise'`)의 출처는 `features/contents/mode.ts`(서버 롤업 분기와 동일).
+   */
+  modeSelected(mode: UploadMode): void;
   uploadStart(contentId: string): void;
   /** 업로드 실패/중단 후 재시도 — 03 §C-3 "다시 시도" 버튼의 발신처 (upload.tsx) */
   uploadResume(contentId: string): void;
@@ -150,6 +164,9 @@ export function createUploadFunnelEvents(client: ApiClient): UploadFunnelEvents 
     },
     wizardStepExit(step, contentId) {
       emit(TelemetryEventName.WizardStepExit, { sessionId, contentId, payload: { step } });
+    },
+    modeSelected(mode) {
+      emit(TelemetryEventName.ModeSelected, { sessionId, payload: { mode } });
     },
     uploadStart(contentId) {
       emit(TelemetryEventName.UploadStart, { sessionId, contentId });

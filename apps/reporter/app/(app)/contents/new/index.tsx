@@ -140,10 +140,11 @@ export default function CaptureScreen(): React.JSX.Element {
             variant="secondary"
             onPress={() => void pickFromLibrary()}
           />
+          {/* 다음 단계는 자막이 아니라 **작성 방식 선택**이다 (T-W2-34, 대장 #123) */}
           <Button
-            label={media ? '다음 — 장면 기입' : '영상 없이 계속'}
+            label={media ? '다음 — 작성 방식 선택' : '영상 없이 계속'}
             variant={media ? 'primary' : 'secondary'}
-            onPress={() => router.push('/contents/new/scenes')}
+            onPress={() => router.push('/contents/new/mode')}
           />
         </View>
       </ScrollView>

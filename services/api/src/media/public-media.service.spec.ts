@@ -1,5 +1,5 @@
 import type { MediaAsset as MediaAssetRow } from '@prisma/client';
-import { PublicMediaService } from './public-media.service';
+import { PUBLIC_MEDIA_CACHE_CONTROL, PublicMediaService } from './public-media.service';
 
 const asset = (over: Partial<MediaAssetRow> = {}): MediaAssetRow =>
   ({
@@ -23,6 +23,10 @@ const asset = (over: Partial<MediaAssetRow> = {}): MediaAssetRow =>
     checksumSha256: null,
     createdByJobId: null,
     createdAt: new Date('2026-07-01T00:00:00.000Z'),
+    // 공개 사본 기록(T-W2-33) — 기본은 "사본 모름"(마이그레이션 직후 기존 행과 동일)
+    publicBucket: null,
+    publicKey: null,
+    publicCopiedAt: null,
     ...over,
   }) as MediaAssetRow;
 
@@ -37,7 +41,13 @@ const makeConfig = (over: Record<string, unknown> = {}) => {
 };
 
 const makeSetup = (configOver: Record<string, unknown> = {}) => {
-  const prisma = { mediaAsset: { findMany: jest.fn().mockResolvedValue([]) } };
+  const prisma = {
+    mediaAsset: {
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn().mockResolvedValue(undefined),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+  };
   const s3 = {
     bucket: 'gachinol-media',
     copyObject: jest.fn().mockResolvedValue(undefined),
@@ -74,7 +84,12 @@ describe('PublicMediaService', () => {
     it('720p 렌디션 + 썸네일을 공개 버킷(기본=S3_BUCKET)·프리픽스로 복사한다', async () => {
       const { prisma, s3, service } = makeSetupPublicEnabled();
       prisma.mediaAsset.findMany.mockResolvedValue([
-        asset({ id: 'thumb-1', kind: 'thumbnail', storageKey: 'contents/c-1/g1/thumbnail.jpg' }),
+        asset({
+          id: 'thumb-1',
+          kind: 'thumbnail',
+          storageKey: 'contents/c-1/g1/thumbnail.jpg',
+          mimeType: 'image/jpeg',
+        }),
         asset({ id: 'r-720', renditionLabel: '720p', storageKey: 'contents/c-1/g1/rendition/720p.mp4' }),
       ]);
 
@@ -85,12 +100,16 @@ describe('PublicMediaService', () => {
         sourceKey: 'contents/c-1/g1/rendition/720p.mp4',
         destBucket: 'gachinol-media',
         destKey: 'public/contents/c-1/g1/rendition/720p.mp4',
+        cacheControl: PUBLIC_MEDIA_CACHE_CONTROL,
+        contentType: 'video/mp4',
       });
       expect(s3.copyObject).toHaveBeenCalledWith({
         sourceBucket: 'gachinol-media',
         sourceKey: 'contents/c-1/g1/thumbnail.jpg',
         destBucket: 'gachinol-media',
         destKey: 'public/contents/c-1/g1/thumbnail.jpg',
+        cacheControl: PUBLIC_MEDIA_CACHE_CONTROL,
+        contentType: 'image/jpeg',
       });
       expect(s3.copyObject).toHaveBeenCalledTimes(2);
     });
@@ -161,6 +180,65 @@ describe('PublicMediaService', () => {
       expect(prisma.mediaAsset.findMany).toHaveBeenCalledTimes(1);
       expect(s3.copyObject).not.toHaveBeenCalled();
     });
+
+    // ── T-W2-33: 공개 사본 위치를 DB에 기록(피드의 HEAD 판정 대체) ──────────────────────
+    it('복사 성공 → 그 자산 행에 공개 사본 위치(bucket/key/copiedAt)를 기록한다', async () => {
+      const { prisma, s3, service } = makeSetupPublicEnabled({
+        MEDIA_PUBLIC_BUCKET: 'gachinol-media-public',
+      });
+      prisma.mediaAsset.findMany.mockResolvedValue([asset({ id: 'r-720' })]);
+
+      await service.syncPublishedCopies('c-1', 1);
+
+      expect(s3.copyObject).toHaveBeenCalledTimes(1);
+      expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
+      const arg = prisma.mediaAsset.update.mock.calls[0]![0] as {
+        where: { id: string };
+        data: { publicBucket: string; publicKey: string; publicCopiedAt: Date };
+      };
+      expect(arg.where).toEqual({ id: 'r-720' });
+      expect(arg.data.publicBucket).toBe('gachinol-media-public');
+      expect(arg.data.publicKey).toBe('public/contents/c-1/g1/rendition/720p.mp4');
+      expect(arg.data.publicCopiedAt).toBeInstanceOf(Date);
+    });
+
+    it('복사 실패한 자산은 기록하지 않는다(부분 실패 = 자산 단위) — 성공한 자산만 기록', async () => {
+      const { prisma, s3, service } = makeSetupPublicEnabled();
+      prisma.mediaAsset.findMany.mockResolvedValue([
+        asset({ id: 'thumb-1', kind: 'thumbnail', storageKey: 'contents/c-1/g1/thumbnail.jpg' }),
+        asset({ id: 'r-720' }),
+      ]);
+      // selectPublicAssets는 [렌디션, 썸네일] 순으로 돌려주므로 첫 복사=r-720(실패), 둘째=thumb-1(성공)
+      s3.copyObject.mockRejectedValueOnce(new Error('S3 down')).mockResolvedValueOnce(undefined);
+
+      await service.syncPublishedCopies('c-1', 1);
+
+      expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
+      expect(prisma.mediaAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'thumb-1' } }),
+      );
+      // "없다"로 남아야 서명 URL 폴백이 걸린다 — 실패한 자산을 기록하면 404 URL을 내주게 된다
+      expect(prisma.mediaAsset.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'r-720' } }),
+      );
+    });
+
+    it('기록 쓰기 자체가 실패해도 throw하지 않는다(사본은 있고 폴백만 걸린다)', async () => {
+      const { prisma, service } = makeSetupPublicEnabled();
+      prisma.mediaAsset.findMany.mockResolvedValue([asset()]);
+      prisma.mediaAsset.update.mockRejectedValue(new Error('DB down'));
+
+      await expect(service.syncPublishedCopies('c-1', 1)).resolves.toBeUndefined();
+    });
+
+    it('공개 서빙이 꺼져 있으면 기록도 만들지 않는다(복사 자체를 안 하므로)', async () => {
+      const { prisma, service } = makeSetup(); // MEDIA_PUBLIC_BASE_URL 미설정
+      prisma.mediaAsset.findMany.mockResolvedValue([asset()]);
+
+      await service.syncPublishedCopies('c-1', 1);
+
+      expect(prisma.mediaAsset.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('removePublishedCopies — 삭제·비공개 전환 시 필수 대칭(D-T8)', () => {
@@ -200,34 +278,143 @@ describe('PublicMediaService', () => {
       await expect(service.removePublishedCopies('c-1', 1)).resolves.toBeUndefined();
       expect(cfCache.purge).toHaveBeenCalledTimes(1);
     });
+
+    // ── T-W2-33: 기록 해제(만들기·지우기 대칭). 이게 빠지면 DB가 "사본 있음"이라고 거짓말한다 ──
+    it('공개 사본 기록을 비운다 — 그것도 오브젝트를 지우기 "전에"(중간 사망 시 보수적으로 남도록)', async () => {
+      const { prisma, s3, service } = makeSetup({
+        MEDIA_PUBLIC_BASE_URL: 'https://media.example.com',
+      });
+      const order: string[] = [];
+      prisma.mediaAsset.findMany.mockResolvedValue([
+        asset({
+          id: 'r-720',
+          publicBucket: 'gachinol-media',
+          publicKey: 'public/contents/c-1/g1/rendition/720p.mp4',
+          publicCopiedAt: new Date('2026-07-02T00:00:00.000Z'),
+        }),
+      ]);
+      prisma.mediaAsset.updateMany.mockImplementation(async () => {
+        order.push('db:clear');
+        return { count: 1 };
+      });
+      s3.deleteObject.mockImplementation(async () => {
+        order.push('s3:delete');
+      });
+
+      await service.removePublishedCopies('c-1', 1);
+
+      expect(prisma.mediaAsset.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['r-720'] } },
+        data: { publicBucket: null, publicKey: null, publicCopiedAt: null },
+      });
+      expect(order).toEqual(['db:clear', 's3:delete']);
+    });
+
+    it('기록된 실제 위치를 지운다 — 현행 설정으로 파생한 키가 아니라(프리픽스가 바뀌어도 고아 안 남김)', async () => {
+      const { prisma, s3, cfCache, service } = makeSetup({
+        MEDIA_PUBLIC_BASE_URL: 'https://media.example.com',
+        MEDIA_PUBLIC_PREFIX: 'public-v2', // 사본을 만든 뒤 프리픽스가 바뀐 상황
+      });
+      prisma.mediaAsset.findMany.mockResolvedValue([
+        asset({
+          publicBucket: 'legacy-public-bucket',
+          publicKey: 'public-v1/contents/c-1/g1/rendition/720p.mp4',
+        }),
+      ]);
+
+      await service.removePublishedCopies('c-1', 1);
+
+      expect(s3.deleteObject).toHaveBeenCalledWith(
+        'public-v1/contents/c-1/g1/rendition/720p.mp4',
+        { bucket: 'legacy-public-bucket' },
+      );
+      expect(cfCache.purge).toHaveBeenCalledWith([
+        'https://media.example.com/public-v1/contents/c-1/g1/rendition/720p.mp4',
+      ]);
+    });
+
+    it('기록이 없으면(마이그레이션 이전 사본) 현행 설정 파생 키로 폴백해 정리한다', async () => {
+      const { prisma, s3, service } = makeSetup({
+        MEDIA_PUBLIC_BASE_URL: 'https://media.example.com',
+      });
+      prisma.mediaAsset.findMany.mockResolvedValue([asset()]); // publicKey=null
+
+      await service.removePublishedCopies('c-1', 1);
+
+      expect(s3.deleteObject).toHaveBeenCalledWith('public/contents/c-1/g1/rendition/720p.mp4', {
+        bucket: 'gachinol-media',
+      });
+    });
+
+    it('기록 해제 실패해도 삭제·퍼지는 계속한다(비공개 전환은 규제 요구라 우선)', async () => {
+      const { prisma, s3, cfCache, service } = makeSetup({
+        MEDIA_PUBLIC_BASE_URL: 'https://media.example.com',
+      });
+      prisma.mediaAsset.findMany.mockResolvedValue([asset()]);
+      prisma.mediaAsset.updateMany.mockRejectedValue(new Error('DB down'));
+
+      await expect(service.removePublishedCopies('c-1', 1)).resolves.toBeUndefined();
+      expect(s3.deleteObject).toHaveBeenCalledTimes(1);
+      expect(cfCache.purge).toHaveBeenCalledTimes(1);
+    });
+
+    it('대상 자산 0건이면 기록 해제도 하지 않고 빈 퍼지만 호출한다', async () => {
+      const { prisma, s3, cfCache, service } = makeSetup();
+      prisma.mediaAsset.findMany.mockResolvedValue([]);
+
+      await service.removePublishedCopies('c-1', 1);
+
+      expect(prisma.mediaAsset.updateMany).not.toHaveBeenCalled();
+      expect(s3.deleteObject).not.toHaveBeenCalled();
+      expect(cfCache.purge).toHaveBeenCalledWith([]);
+    });
   });
 
-  describe('resolvePublicUrl — FeedService 소비용', () => {
-    it('MEDIA_PUBLIC_BASE_URL 미설정 → HEAD 없이 즉시 null', async () => {
+  describe('publicUrlForAsset — FeedService 소비용(DB 기록만 본다, S3 왕복 0회)', () => {
+    const copied = (over: Partial<MediaAssetRow> = {}) =>
+      asset({
+        publicBucket: 'gachinol-media',
+        publicKey: 'public/contents/c-1/g1/rendition/720p.mp4',
+        publicCopiedAt: new Date('2026-07-02T00:00:00.000Z'),
+        ...over,
+      });
+
+    it('MEDIA_PUBLIC_BASE_URL 미설정 → null (기록이 있어도)', () => {
       const { s3, service } = makeSetup();
-      const url = await service.resolvePublicUrl('contents/c-1/g1/rendition/720p.mp4');
-      expect(url).toBeNull();
+      expect(service.publicUrlForAsset(copied())).toBeNull();
       expect(s3.headObject).not.toHaveBeenCalled();
     });
 
-    it('설정 + HEAD 성공 → 공개 URL 반환', async () => {
+    it('설정 + 기록 있음 → 공개 URL 반환. **headObject를 호출하지 않는다**(대장 #129 ⓐ 해소)', () => {
       const { s3, service } = makeSetup({ MEDIA_PUBLIC_BASE_URL: 'https://media.example.com/' });
-      s3.headObject.mockResolvedValue({ sizeBytes: 123 });
 
-      const url = await service.resolvePublicUrl('contents/c-1/g1/rendition/720p.mp4');
+      const url = service.publicUrlForAsset(copied());
 
-      expect(s3.headObject).toHaveBeenCalledWith('public/contents/c-1/g1/rendition/720p.mp4', {
-        bucket: 'gachinol-media',
-      });
       expect(url).toBe('https://media.example.com/public/contents/c-1/g1/rendition/720p.mp4');
+      expect(s3.headObject).not.toHaveBeenCalled(); // 변경 전에는 자산당 1회씩 호출됐다
     });
 
-    it('설정됐지만 HEAD 부재(아직 미복사·복사 실패) → null(호출부는 서명 URL로 폴백해야 함)', async () => {
-      const { s3, service } = makeSetup({ MEDIA_PUBLIC_BASE_URL: 'https://media.example.com' });
-      s3.headObject.mockResolvedValue(null);
+    it('기록 없음(아직 미복사·복사 실패·마이그레이션 이전) → null(호출부는 서명 URL로 폴백해야 함)', () => {
+      const { service } = makeSetup({ MEDIA_PUBLIC_BASE_URL: 'https://media.example.com' });
+      expect(service.publicUrlForAsset(asset())).toBeNull(); // publicKey=null
+    });
 
-      const url = await service.resolvePublicUrl('contents/c-1/g1/rendition/720p.mp4');
-      expect(url).toBeNull();
+    it('기록된 버킷 ≠ 현행 공개 버킷 → null (베이스 URL은 지금의 공개 버킷만 가리키므로 404 방지)', () => {
+      const { service } = makeSetup({
+        MEDIA_PUBLIC_BASE_URL: 'https://media.example.com',
+        MEDIA_PUBLIC_BUCKET: 'gachinol-media-public',
+      });
+      expect(service.publicUrlForAsset(copied({ publicBucket: 'legacy-bucket' }))).toBeNull();
+    });
+
+    it('기록된 키를 그대로 쓴다 — 현행 프리픽스로 다시 파생하지 않는다', () => {
+      const { service } = makeSetup({
+        MEDIA_PUBLIC_BASE_URL: 'https://media.example.com',
+        MEDIA_PUBLIC_PREFIX: 'public-v2',
+      });
+      expect(service.publicUrlForAsset(copied({ publicKey: 'public-v1/a.mp4' }))).toBe(
+        'https://media.example.com/public-v1/a.mp4',
+      );
     });
   });
 });

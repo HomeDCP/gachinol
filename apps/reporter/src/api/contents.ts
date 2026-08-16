@@ -11,17 +11,28 @@ import type {
   Paginated,
   RejectContentRequest,
   StatusTransitionLog,
+  UpdateContentCaptionsRequest,
   UpdateContentDraftRequest,
 } from '@gachinol/shared';
 import type { ApiClient } from './client';
 
-/** GET /v1/contents — reporter는 서버가 자기 지사 강제 (stationId 전송 안 함) */
+/**
+ * GET /v1/contents — reporter는 서버가 자기 지사 강제 (stationId 전송 안 함).
+ * `captions=needed`는 자막 대기열 필터(T-W2-34, 대장 #123) — 간단 모드·주민 제보로 자막 없이
+ * 들어온 콘텐츠 중 **아직 채울 수 있는 것**만 온다(판정 원천은 shared `CaptionFilter`).
+ */
 export const listContents = (
   c: ApiClient,
   q: ContentListQuery,
 ): Promise<Paginated<ContentSummary>> =>
   c.request<Paginated<ContentSummary>>('GET', '/contents', {
-    query: { page: q.page, pageSize: q.pageSize, status: q.status, category: q.category },
+    query: {
+      page: q.page,
+      pageSize: q.pageSize,
+      status: q.status,
+      category: q.category,
+      captions: q.captions,
+    },
   });
 
 /** GET /v1/contents/:id — phase-1은 assets·analysis·publications 항상 빈 값 */
@@ -38,6 +49,17 @@ export const updateDraft = (
   id: ContentId,
   body: UpdateContentDraftRequest,
 ): Promise<Content> => c.request<Content>('PATCH', `/contents/${id}`, { body });
+
+/**
+ * PATCH /v1/contents/:id/captions — 사후 자막 보강 (T-W2-34, 대장 #123).
+ * `updateDraft`와 달리 **같은 지사 기자면 담당이 아니어도** 되고 `published` 직전까지 열려 있다.
+ * 대신 자막(scenes)만 보낼 수 있다. 타 지사 403 · 송출·종결 이후 409.
+ */
+export const updateCaptions = (
+  c: ApiClient,
+  id: ContentId,
+  body: UpdateContentCaptionsRequest,
+): Promise<Content> => c.request<Content>('PATCH', `/contents/${id}/captions`, { body });
 
 /** POST /v1/contents/:id/approve — 응답은 자동 연쇄 후 최종 상태(publishing 또는 awaiting_center_review) */
 export const approveContent = (c: ApiClient, id: ContentId): Promise<Content> =>

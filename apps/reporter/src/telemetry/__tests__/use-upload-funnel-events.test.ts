@@ -8,6 +8,7 @@ jest.mock('expo-router', () => ({ router: { replace: jest.fn() } }));
 
 import { TELEMETRY_MAX_BATCH_SIZE, TelemetryEventName } from '@gachinol/shared';
 import type { ApiClient } from '../../api/client';
+import { UploadMode } from '../../features/contents/mode';
 import { TELEMETRY_FLUSH_INTERVAL_MS } from '../telemetry-batch';
 import {
   __resetUploadFunnelTelemetryForTest,
@@ -123,7 +124,7 @@ describe('createUploadFunnelEvents — 발신 배선 (AC: 훅 호출이 실제 �
     ]);
   });
 
-  it('large_caption_mode_toggle·mode_selected는 발신하지 않는다 — T-W1-07a(subscriber) 귀속 / 대장 #123 제거분', () => {
+  it('large_caption_mode_toggle은 발신하지 않는다 — T-W1-07a(subscriber) 귀속', () => {
     const { client, request } = makeClient();
     const events = createUploadFunnelEvents(client);
 
@@ -135,7 +136,45 @@ describe('createUploadFunnelEvents — 발신 배선 (AC: 훅 호출이 실제 �
 
     const names = request.mock.calls.flatMap((_, i) => bodyOf(request, i).map((e) => e.name));
     expect(names).not.toContain('large_caption_mode_toggle');
-    expect(names).not.toContain('mode_selected');
+  });
+
+  /**
+   * ★ `mode_selected` 재도입 (T-W2-34, 대장 #123).
+   * 여기 있던 부정 단언(`expect(names).not.toContain('mode_selected')`)은 T-W1-07b가 "간단 모드가
+   * 존재하지 않는다"를 근거로 세운 고정이라, 간단 모드가 실제로 자막을 생략하게 된 지금은 **틀린
+   * 고정**이다. 같은 자리를 긍정 단언으로 바꾼다 — 발신이 다시 사라지면 채택률 KPI가 조용히
+   * 비어 버리므로 그쪽을 고정하는 편이 옳다.
+   */
+  it('modeSelected — 카탈로그 이름 + mode payload로 발신한다 (채택률 KPI의 유일 입력)', () => {
+    const { client, request } = makeClient();
+    const events = createUploadFunnelEvents(client);
+
+    events.modeSelected(UploadMode.Simple);
+    events.modeSelected(UploadMode.Precise);
+    jest.advanceTimersByTime(TELEMETRY_FLUSH_INTERVAL_MS);
+
+    // 배치 큐를 그대로 탄다 — 계측 전용 우회 경로를 만들지 않았다는 확인(대장 #128 ⓑ)
+    expect(request).toHaveBeenCalledTimes(1);
+    const body = bodyOf(request);
+    expect(body).toHaveLength(2);
+    expect(body[0]).toMatchObject({
+      name: TelemetryEventName.ModeSelected,
+      payload: { mode: 'simple' },
+    });
+    expect(body[1]).toMatchObject({
+      name: TelemetryEventName.ModeSelected,
+      payload: { mode: 'precise' },
+    });
+    // sessionId가 붙어야 퍼널 이벤트와 같은 세션으로 상관된다
+    expect(body[0]).toHaveProperty('sessionId');
+  });
+
+  it('modeSelected의 payload 값은 서버 롤업 분기와 같은 문자열이다', () => {
+    // 서버(telemetry.service.ts)는 mode==='simple'/'precise'만 센다 — 어긋나면 조용히 어느 쪽으로도
+    // 세지지 않는다(400도 아니라 실패가 보이지 않는다). shared에 payload 계약이 없어 이 단정이
+    // 유일한 방어다.
+    expect(UploadMode.Simple).toBe('simple');
+    expect(UploadMode.Precise).toBe('precise');
   });
 });
 

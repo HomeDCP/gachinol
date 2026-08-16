@@ -27,10 +27,11 @@
  * ⚠️ 카탈로그에 있다고 해서 누군가 보내고 있다는 뜻은 아니다(2026-08-16 실측):
  *   - 기자 웹이 실제로 보내는 것: `upload_wizard_step_*`·`upload_start`·`upload_resume`·`upload_complete` 5종
  *   - 아무도 보내지 않는 것: `playback_start`·`playback_progress`·`large_caption_mode_toggle`
- *     (구독자 웹 소비 트랙 미배선) · `mode_selected`
- *   `mode_selected`는 **대장 #123으로 프로덕션 발신을 의도적으로 제거**했다(존재하지 않는 "간단 모드"의
- *   선택지를 계측하면 채택률 KPI가 무의미해진다). 수신·집계 경로는 과거 수집분 호환을 위해 남긴다 —
- *   **다시 발신하지 말 것.**
+ *     (구독자 웹 소비 트랙 미배선 — 대장 #131)
+ *   `mode_selected`는 한때 발신이 제거돼 있었다(대장 #123 — 간단 모드가 정밀 모드와 항등이라
+ *   존재하지 않는 선택지의 채택률을 재고 있었다). **T-W2-34가 간단 모드를 실제로 구현하면서 재도입했다**
+ *   (2026-08-16) — 이제 기자 웹이 다시 보내며 KPI도 의미를 갖는다. payload 값(`'simple'`/`'precise'`)은
+ *   여기 계약이 아니라 **api 롤업의 분기와 앱 로컬 상수**가 짝을 이룬다(승격 시 양쪽을 함께 옮길 것).
  */
 export const TelemetryEventName = {
   // ① 콘텐츠 소비

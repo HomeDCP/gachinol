@@ -6,6 +6,7 @@ import type {
   SceneInput,
 } from '@gachinol/shared';
 import { requiresCultureTopic } from '@gachinol/shared';
+import { UploadMode } from './mode';
 
 /**
  * 폼 검증 순수 함수 — 서버 zod 스키마 미러.
@@ -165,13 +166,28 @@ export function validateClassify(
   };
 }
 
-/** 초안 저장 합성 검증 — 분류 + 장면 → CreateContentDraftRequest */
+/**
+ * 초안 저장 합성 검증 — 분류 + 장면 → CreateContentDraftRequest.
+ *
+ * ★ **두 모드가 실제로 갈라지는 유일한 지점**(T-W2-34, 대장 #123).
+ * 간단 모드는 자막 화면을 아예 거치지 않으므로 장면 검증을 **건너뛰고 빈 배열로 저장**한다.
+ * 서버는 `scenes` 빈 배열을 허용하며(`zCreateContentDraft`의 `z.array(zSceneInput).max(200)` —
+ * `min` 없음), 주민 제보 콘텐츠가 이미 `scenes: []`로 생성돼 파이프라인을 완주하고 있다
+ * (api `resident-links.service.ts`). 자막은 나중에 지사 담당자가
+ * `PATCH /v1/contents/:id/captions`로 채운다.
+ *
+ * ⚠ 이 분기를 지우면(간단 모드도 `validateScenes`를 타게 하면) 간단 모드는 다시 정밀 모드와
+ * 완전히 같은 항등함수가 된다 — 그것이 정확히 대장 #123이 지적한 결함이다.
+ * `__tests__/validation.test.ts`가 그 회귀를 고정한다.
+ */
 export function validateCreateDraft(
   classify: ClassifyFormValue,
   scenes: readonly SceneFormValue[],
+  mode: UploadMode,
 ): ValidationResult<CreateContentDraftRequest> {
   const classifyResult = validateClassify(classify);
-  const scenesResult = validateScenes(scenes);
+  const scenesResult: ValidationResult<SceneInput[]> =
+    mode === UploadMode.Simple ? { ok: true, value: [] } : validateScenes(scenes);
   if (!classifyResult.ok || !scenesResult.ok) {
     return {
       ok: false,

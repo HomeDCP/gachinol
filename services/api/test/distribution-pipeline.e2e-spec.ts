@@ -30,6 +30,7 @@ import { CreateBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } fr
 import { v7 as uuidv7 } from 'uuid';
 import request from 'supertest';
 import { CloudflareCacheService } from '../src/media/cloudflare-cache.service';
+import { PUBLIC_MEDIA_CACHE_CONTROL } from '../src/media/public-media.service';
 import { describeWithDb, e2eDb } from './e2e-db';
 
 const d = describeWithDb();
@@ -431,9 +432,23 @@ d('distribution pipeline (withDb + embedded redis/s3 + kakao mock)', () => {
       expect(publishedStatus).toBe('published');
 
       // 공개 복사가 s3rver에 실제로 반영됐는지 — HEAD 성공(존재)해야 한다
-      await expect(
-        s3Client!.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: publicKey })),
-      ).resolves.toMatchObject({ ContentLength: expect.any(Number) });
+      const copied = await s3Client!.send(
+        new HeadObjectCommand({ Bucket: S3_BUCKET, Key: publicKey }),
+      );
+      expect(copied.ContentLength).toEqual(expect.any(Number));
+      // T-W2-33 ⓑ — Cache-Control이 목적지 오브젝트에 실제로 실렸는가(MetadataDirective=REPLACE 필요),
+      // 그리고 REPLACE로 ContentType이 날아가지 않았는가(날아가면 브라우저 재생이 깨진다).
+      expect(copied.CacheControl).toBe(PUBLIC_MEDIA_CACHE_CONTROL);
+      expect(copied.ContentType).toBe('video/mp4');
+
+      // T-W2-33 ⓐ — 공개 사본 위치가 DB에 기록됐는가. 피드는 이 기록만 보고 공개 URL을 판정하므로
+      // (S3 HEAD 0회) 기록이 없으면 CDN 서빙이 영영 안 켜지고 서명 URL로만 나간다.
+      const afterPublish = (await prisma!.mediaAsset.findFirst({
+        where: { contentId, kind: 'rendition', generation: 1 },
+      }))!;
+      expect(afterPublish.publicBucket).toBe(S3_BUCKET);
+      expect(afterPublish.publicKey).toBe(publicKey);
+      expect(afterPublish.publicCopiedAt).toBeInstanceOf(Date);
 
       // CF 퍼지 호출 결과를 관측 — pass-through 스파이(원 구현 그대로 호출, 반환값만 가로챈다)
       const cfCache = app!.get(CloudflareCacheService);
@@ -458,6 +473,15 @@ d('distribution pipeline (withDb + embedded redis/s3 + kakao mock)', () => {
       await expect(
         s3Client!.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: publicKey })),
       ).rejects.toBeDefined();
+
+      // T-W2-33 ⓐ 대칭 — 기록도 함께 사라져야 한다. 이게 남으면 DB가 "공개 사본 있음"이라고
+      // 거짓말하고 피드가 404 URL을 내준다(HEAD 판정보다 나쁜 상태 — 뮤테이션 킬 대상).
+      const afterArchive = (await prisma!.mediaAsset.findFirst({
+        where: { contentId, kind: 'rendition', generation: 1 },
+      }))!;
+      expect(afterArchive.publicBucket).toBeNull();
+      expect(afterArchive.publicKey).toBeNull();
+      expect(afterArchive.publicCopiedAt).toBeNull();
 
       // CF 퍼지 — env(CF_ZONE_ID/CF_API_TOKEN) 미설정이므로 attempted:false가 관측되면 충분
       // (실 Cloudflare 계정 불요 — "시도됐는가"만 확인, 조용한 no-op이 아니었음을 증명)

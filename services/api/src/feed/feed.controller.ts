@@ -32,7 +32,8 @@ export class FeedController {
 
   @Public()
   @Get(':id/playback')
-  @ApiOperation({ summary: '재생 정보 — 서명 재생 URL·자막 (비published 404, 익명)' })
+  // hlsUrl은 공개 CDN URL(공개 사본이 기록된 경우) 또는 서명 URL — 어느 쪽인지는 응답에 드러나지 않는다
+  @ApiOperation({ summary: '재생 정보 — 재생 URL(공개 CDN 또는 서명)·자막 (비published 404, 익명)' })
   playback(@Param('id') id: string): Promise<PlaybackInfo> {
     return this.feed.getPlayback(id);
   }

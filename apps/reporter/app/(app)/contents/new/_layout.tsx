@@ -30,6 +30,9 @@ function WizardStack(): React.JSX.Element {
   return (
     <Stack>
       <Stack.Screen name="index" options={{ title: '새 콘텐츠 — 촬영' }} />
+      {/* 모드 선택은 자막 **앞**에 온다 — 뒤에 두면 자막 화면이 이미 검증을 강제한 뒤라
+          간단 모드가 아무것도 바꾸지 못한다(대장 #123, T-W2-34) */}
+      <Stack.Screen name="mode" options={{ title: '작성 방식' }} />
       <Stack.Screen name="scenes" options={{ title: '장면 기입' }} />
       <Stack.Screen name="classify" options={{ title: '분류·저장' }} />
       {/* 저장 완료 후 위저드 복귀 차단 — 헤더 버튼 숨김 + iOS 엣지 스와이프 비활성

@@ -1,4 +1,4 @@
-import { canTransition } from '../common/state-machine';
+import { canTransition, isTerminalState } from '../common/state-machine';
 
 /**
  * 콘텐츠 워크플로우 상태 23종.
@@ -118,3 +118,38 @@ export const CONTENT_RETRY_TARGET = {
 
 /** 실패 상태 여부 */
 export const isFailureStatus = (s: ContentStatus): boolean => s in CONTENT_RETRY_TARGET;
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 사후 자막 편집 (T-W2-34 — 대장 #123 · 03 §C-4 간단 모드)
+ *
+ * 간단 모드는 촬영자에게서 자막 부담을 걷어내고(촬영 → 분류 → 업로드), 자막은 **나중에 지사
+ * 담당자가 채운다**. 그런데 콘텐츠 수정(`UpdateContentDraftRequest`)은 서버가 `draft`·
+ * `revision_requested`에서만 허용하므로(api `ContentsService.EDITABLE_STATUSES`), 업로드가 끝나
+ * 파이프라인에 들어간 순간 자막을 채울 방법이 사라진다 — 정본이 전제한 "사후 보강"이 실제로는
+ * 불가능했다. 그 공백을 메우는 것이 아래 집합이며, 이것을 소비하는 쓰기 경로는
+ * `PATCH /v1/contents/:id/captions` 하나다(자막 외 필드는 못 건드린다).
+ *
+ * ── 경계 (사용자 결정 2026-08-16: "송출 허용 + 사후 보강") ──────────────────
+ * 자막이 없어도 승인·송출은 **막지 않는다**(승인 홉에 자막 가드를 넣지 않는다). 대신 자막은
+ * `published` **전까지** 언제든 채울 수 있다. `published` 이후를 닫는 이유는 송출된 뒤에 자막을
+ * 바꾸면 이미 나간 방송과 플랫폼에 남은 사본 사이에 정본이 둘로 갈리기 때문이다.
+ *
+ * ── 파생 규칙 (하드코딩 금지) ─────────────────────────────────────────────
+ * 종결 3종(`rejected`·`canceled`·`archived`)은 이름을 적지 않고 **전이 맵에서 파생**한다
+ * (출구 0 = 종결). 상태가 늘어도 이 목록은 자동으로 따라온다. 명시적으로 빼는 것은 `published`
+ * 하나뿐이며, 그것은 전이 맵이 아니라 위 사용자 결정에서 오는 경계라 여기 코드로 적는다.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ★ 사후 자막 편집이 허용되는 상태 — 발견 수단(목록 필터)과 쓰기 게이트가 **같은 원천**을 쓴다.
+ * 둘이 어긋나면 "자막 필요"로 떠 있는 콘텐츠를 열었더니 편집이 409로 거부되는 교착이 생긴다.
+ */
+export const CAPTION_EDITABLE_CONTENT_STATUSES: readonly ContentStatus[] = (
+  Object.keys(CONTENT_STATUS_TRANSITIONS) as ContentStatus[]
+).filter(
+  (s) => !isTerminalState(CONTENT_STATUS_TRANSITIONS, s) && s !== ContentStatus.Published,
+);
+
+/** 지금 자막을 채울 수 있는 상태인가 — 규칙 사본 금지, 이 술어만 쓴다 */
+export const isCaptionEditableStatus = (s: ContentStatus): boolean =>
+  CAPTION_EDITABLE_CONTENT_STATUSES.includes(s);

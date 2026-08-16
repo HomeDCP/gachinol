@@ -11,9 +11,11 @@ import type {
   SceneInput,
   StationId,
   TransitionContentRequest,
+  UpdateContentCaptionsRequest,
   UpdateContentDraftRequest,
 } from '@gachinol/shared';
 import {
+  CaptionFilter,
   ContentStatus,
   CultureTopic,
   MinorConsentFilter,
@@ -103,6 +105,23 @@ export const zUpdateContentDraft = z
     if (v.scenes) checkSceneOrders(v.scenes, ctx);
   }) satisfies ZodSchemaOf<UpdateContentDraftRequest>;
 
+/**
+ * 사후 자막 보강 (T-W2-34, 대장 #123) — `PATCH /v1/contents/:id/captions`.
+ * 수치 규칙(caption 1..500 · description ≤2000 · order 0부터 연속·중복 금지 · 최대 200장면)은
+ * `zSceneInput`·`checkSceneOrders`를 그대로 재사용한다(사본 0).
+ *
+ * `scenes`는 **필수·빈 배열 허용**이다: 빈 배열 전송 = 자막 전량 삭제(간단 모드로 되돌리기).
+ * 상태·액터 게이트는 서비스 계층(`ContentsService.updateCaptions`)이 소유한다 —
+ * 스키마는 바디 모양만 본다.
+ */
+export const zUpdateContentCaptions = z
+  .object({
+    scenes: z.array(zSceneInput).max(200),
+  })
+  .superRefine((v, ctx) => {
+    checkSceneOrders(v.scenes, ctx);
+  }) satisfies ZodSchemaOf<UpdateContentCaptionsRequest>;
+
 export const zContentListQuery = zPage.extend({
   status: zEnum(ContentStatus).optional(),
   category: zEnum(ProgramCategory).optional(),
@@ -113,6 +132,12 @@ export const zContentListQuery = zPage.extend({
    * status와 직교한다(차단된 콘텐츠의 상태가 reviewPolicy마다 다르다).
    */
   minorConsent: zEnum(MinorConsentFilter).optional(),
+  /**
+   * 자막 대기열 필터 (T-W2-34, 대장 #123) — 값·의미의 원천은 shared `CaptionFilter`.
+   * `needed`는 상태 조건(`CAPTION_EDITABLE_CONTENT_STATUSES`)을 포함하므로 status 필터와
+   * 함께 보내면 둘 다 AND로 적용된다(서비스 계층이 AND로 합성).
+   */
+  captions: zEnum(CaptionFilter).optional(),
 });
 
 export const zTransitionContent = z.object({
@@ -144,6 +169,7 @@ export const zCreateRevisionRequestBody = z.object({
 export class DistributeContentDto extends createZodDto(zDistributeContent) {}
 export class CreateContentDraftDto extends createZodDto(zCreateContentDraft) {}
 export class UpdateContentDraftDto extends createZodDto(zUpdateContentDraft) {}
+export class UpdateContentCaptionsDto extends createZodDto(zUpdateContentCaptions) {}
 export class ContentListQueryDto extends createZodDto(zContentListQuery) {}
 export class TransitionContentDto extends createZodDto(zTransitionContent) {}
 export class RejectContentDto extends createZodDto(zRejectContent) {}
