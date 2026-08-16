@@ -32,6 +32,7 @@ export default function RootLayout(): React.JSX.Element {
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="watch/[id]" options={{ headerShown: true, title: '시청' }} />
             <Stack.Screen name="live/[id]" options={{ headerShown: true, title: '라이브' }} />
+            <Stack.Screen name="upload/[token]" options={{ headerShown: true, title: '영상 보내기' }} />
           </Stack>
           <AppUpdateBanner visible={updateReady} applying={applying} onApply={applyUpdate} />
         </FeedFilterProvider>

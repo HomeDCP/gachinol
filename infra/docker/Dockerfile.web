@@ -54,8 +54,29 @@ COPY apps/subscriber/ apps/subscriber/
 RUN pnpm --filter @gachinol/shared build
 # 3) 웹 export — EXPO_PUBLIC_* 는 빌드 시점에 번들에 인라인되므로(런타임 env 아님) build ARG로 받는다.
 #    도메인 미확정(G9 ①)이라 하드코딩 금지 — compose가 build.args로 주입, 기본값은 로컬 검증용.
+#
+# ⚠️ **여기 없는 EXPO_PUBLIC_* 키는 어떤 배포로도 값이 들어가지 않는다**(대장 #146, T-W1-10 발견).
+#    `.env.example`에 등재돼 있어도 이 파일과 `.github/workflows/deploy-web.yml`의 build-args를 함께
+#    거치지 않으면 번들에 빈 값이 박힌다 — `EXPO_PUBLIC_SUPPORT_TEL`·`EXPO_PUBLIC_LIVE_YOUTUBE_URL`이
+#    T-W2-28(#127) 이후 실제로 그 상태였고, "서버 값 우선 · env 폴백"의 폴백이 죽어 있었다.
+#    **신규 EXPO_PUBLIC 키를 도입하는 태스크는 ⓐ `.env.example` ⓑ 이 파일 ⓒ deploy-web.yml
+#    세 곳을 함께 갱신한다.** 기본값을 비워 두는 것은 의도적이다 — 앱이 빈 값을 "미설정"으로 보고
+#    해당 UI를 숨기는 구조라(#127 선례), 가짜 기본값을 넣으면 죽은 버튼이 생긴다.
 ARG EXPO_PUBLIC_API_URL=http://localhost:4000
 ENV EXPO_PUBLIC_API_URL=${EXPO_PUBLIC_API_URL}
+# 구독자 웹 — 재생 실패 폴백(#127) · 문의하기(T-W1-09) · 편성표 라이브 게시(T-W1-10)
+ARG EXPO_PUBLIC_SUPPORT_TEL=
+ENV EXPO_PUBLIC_SUPPORT_TEL=${EXPO_PUBLIC_SUPPORT_TEL}
+ARG EXPO_PUBLIC_LIVE_YOUTUBE_URL=
+ENV EXPO_PUBLIC_LIVE_YOUTUBE_URL=${EXPO_PUBLIC_LIVE_YOUTUBE_URL}
+ARG EXPO_PUBLIC_KAKAO_CHANNEL_URL=
+ENV EXPO_PUBLIC_KAKAO_CHANNEL_URL=${EXPO_PUBLIC_KAKAO_CHANNEL_URL}
+ARG EXPO_PUBLIC_SUPPORT_EMAIL=
+ENV EXPO_PUBLIC_SUPPORT_EMAIL=${EXPO_PUBLIC_SUPPORT_EMAIL}
+ARG EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL=
+ENV EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL=${EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL}
+ARG EXPO_PUBLIC_SCHEDULE_LIVE_TITLE=
+ENV EXPO_PUBLIC_SCHEDULE_LIVE_TITLE=${EXPO_PUBLIC_SCHEDULE_LIVE_TITLE}
 RUN pnpm --filter @gachinol/subscriber exec expo export --platform web --output-dir dist \
  && pnpm --filter @gachinol/reporter exec expo export --platform web --output-dir dist \
  && pnpm --filter @gachinol/control-center exec expo export --platform web --output-dir dist
