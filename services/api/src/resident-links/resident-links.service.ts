@@ -21,7 +21,8 @@ import {
   RESIDENT_UPLOAD_KEY_PREFIX,
   RESIDENT_UPLOAD_MAX_BYTES,
 } from './resident-links.constants';
-import { isPipelineEntryAllowed, ResidentUploadStatus } from './resident-upload-status';
+import { assertResidentReviewApproved } from './resident-review.gate';
+import { ResidentUploadStatus } from './resident-upload-status';
 import type { IssueResidentLinkDto, ResidentUploadRequestDto } from './schemas/resident-link.schemas';
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -30,15 +31,17 @@ import type { IssueResidentLinkDto, ResidentUploadRequestDto } from './schemas/r
  * 지사 담당자가 주민에게 **인증 없는** 업로드 링크를 발급하고, 주민은 링크 하나로 촬영물을 올린다.
  * 올라온 물건은 **지사 담당자 검수 승인 전에는 정식 파이프라인에 진입하지 않는다**(03 §C-5).
  *
- * ── 검수 게이트를 무엇으로 강제하는가 (3중) ─────────────────────────────────
- * ① **구조적 강제(1차)**: 완료 통지 시 Content를 만들되 **미디어 잡을 인큐하지 않는다**. 정식 흐름에서
- *    `uploaded → processing`을 일으키는 유일한 힘은 UploadService의 인큐뿐이므로, 인큐가 없으면
- *    콘텐츠는 'uploaded'에 그대로 머문다(전진 동력 부재 = 가장 강한 강제).
+ * ── 검수 게이트를 무엇으로 강제하는가 (3중 — T-W2-24로 ①·③ 갱신) ──────────────
+ * ① **무인증 표면의 인큐 무능력**: 완료 통지 시 Content를 만들되 **미디어 잡을 인큐하지 않는다**.
+ *    이 서비스는 지금도 큐를 주입받지 않으므로(생성자 참조) 익명 요청이 닿는 코드 어디에도 인큐 문장이
+ *    있을 수 없다. T-W2-08 시점에는 이것이 **모듈 전체**의 보증이었으나, 승인 시 파이프라인 진입을
+ *    구현한 T-W2-24부터는 **이 파일의 보증**으로 축소됐다(큐는 인증 전용 ResidentReviewsService만 안다).
  * ② **상태 표현**: 승인 여부는 ContentStatus 23종이 아니라 `resident_uploads.status`가 표현한다
  *    (신규 ContentStatus 금지 — 02 §D-T9의 "awaiting_branch_review **상당** 상태"의 실체).
- * ③ **명시 가드**: `assertPipelineEntryAllowed()` — 파이프라인 진입 직전에 호출하면 미승인 건을 거절한다.
- *    ⚠️ 이 가드의 **호출 지점 배선**(`contents/*`·`upload/*`·`queue/*`)은 이 태스크의 파일 소유권
- *    밖이라 후속 위임이다. 지금은 ①이 실효 강제이고 ③은 그 배선이 붙는 순간을 위한 단일 판정 지점이다.
+ * ③ **명시 가드**: `assertPipelineEntryAllowed()` — T-W2-24가 **호출 지점을 배선했다**. 승인 액션이
+ *    인큐 직전에 부르고(사전 차단), 같은 판정이 `ContentWorkflowService.applyHop`의
+ *    `uploaded→processing` 엣지에도 걸린다(최후 방어선 — 인큐 주체와 무관하게 fail-closed).
+ *    ①이 모듈 범위에서 파일 범위로 좁아진 대가를 ③의 범위 확대가 갚는다.
  *
  * ── 개인정보 최소수집 (07 §3-15) ────────────────────────────────────────────
  * 저장하는 것: 발급 대장(발급자·발급 지사·발급 시각) + 업로더 연락처 1개 + 이용허락 클릭동의 **시각**.
@@ -264,7 +267,7 @@ export class ResidentLinksService {
   /**
    * ★ 여기서 **미디어 큐를 인큐하지 않는다**(정식 파이프라인 미진입 — 03 §C-5).
    * 만들어지는 Content는 origin='resident_link' · reporterId=null · status='uploaded'로 정지해 있고,
-   * 전진은 지사 담당자 검수 승인(후속 위임 엔드포인트) 이후에만 가능하다.
+   * 전진은 지사 담당자 검수 승인(`POST /v1/resident-uploads/:id/approve`) 이후에만 가능하다.
    *
    * 링크 만료 여부는 **보지 않는다**: 슬롯은 이미 발급 시점에 소비됐으므로 완료를 늦게 받아도 제한을
    * 초과할 수 없고, presigned URL 자체의 만료(기본 15분)가 실제 업로드 창을 이미 좁히고 있다.
@@ -340,12 +343,16 @@ export class ResidentLinksService {
   /* ────────────────────────── ⑤ 검수 게이트 (서버측 강제) ────────────────────────── */
 
   /**
-   * ★★ 파이프라인 진입 가드 — 03 §C-5 "미승인 콘텐츠는 정식 파이프라인 미진입"의 단일 판정 지점.
+   * ★★ 파이프라인 진입 가드 — 03 §C-5 "미승인 콘텐츠는 정식 파이프라인 미진입"의 **액션측** 판정 지점.
    *
    * `origin='resident_link'` 콘텐츠는 **지사 담당자 승인 전에는 `processing`에 들어갈 수 없다**.
-   * 판정 자체는 순수 함수(`isPipelineEntryAllowed`)이고 여기서는 조회 + 예외 변환만 한다.
-   * 코드는 `invalid_transition`(409) — 권한 문제가 아니라 "지금 그 전이를 할 수 없다"는 상태 문제이며,
-   * origin 기반 차단을 invalid_transition으로 표현한 `ContentWorkflowService.policyGuard` 선례와 같다.
+   * 조회·판정·예외는 `resident-review.gate.ts`가 소유하고(같은 판정을 두 벌 적지 않기 위해) 여기서는
+   * 콘텐츠 존재 확인(404)만 얹는다. 판정 **규칙**의 원천은 여전히 순수 함수 `isPipelineEntryAllowed`다.
+   *
+   * ★ 호출 지점(T-W2-24에 배선됨):
+   *   · `ResidentReviewsService.enterPipeline` — 승인 액션이 인큐 직전에(= 이 메서드의 주 소비자)
+   *   · `ContentWorkflowService.applyHop` — 같은 게이트의 **엣지 수준** 배선(gate.ts를 직접 소비).
+   *     그쪽이 최후 방어선이고 이쪽은 "미승인 잡을 애초에 워커에 보내지 않는" 사전 차단이다.
    */
   async assertPipelineEntryAllowed(contentId: string): Promise<void> {
     const content = await this.prisma.content.findUnique({
@@ -353,19 +360,7 @@ export class ResidentLinksService {
       select: { origin: true },
     });
     if (!content) throw new DomainException('not_found', '콘텐츠를 찾을 수 없습니다');
-    if (content.origin !== ContentOrigin.ResidentLink) return; // 대상 아님 — 기존 경로 무영향
-
-    const upload = await this.prisma.residentUpload.findUnique({
-      where: { contentId },
-      select: { status: true },
-    });
-    if (!isPipelineEntryAllowed(content.origin, upload?.status ?? null)) {
-      throw new DomainException(
-        'invalid_transition',
-        '지사 담당자 검수 승인 전에는 정식 파이프라인에 진입할 수 없습니다',
-        { origin: content.origin, reviewStatus: upload?.status ?? null },
-      );
-    }
+    await assertResidentReviewApproved(this.prisma, { id: contentId, origin: content.origin });
   }
 
   /* ────────────────────────── 내부 ────────────────────────── */

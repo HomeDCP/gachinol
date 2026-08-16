@@ -47,7 +47,14 @@ export interface NotWiredContentTransition {
 /**
  * 등재 전문 — **계측 결과를 그대로 옮긴 것**이다(임의 판단으로 넣거나 뺀 항목 0).
  * 멤버십은 계측이 정하고, `kind`·`reason`만 사람이 근거와 함께 적는다.
- * 초기 등재(2026-08-16): 전이맵 47엣지 중 관측 21 · 미관측 26(= 아래 전부).
+ * 초기 등재(2026-08-16): 전이맵 47엣지 중 관측 21 · 미관측 26.
+ *
+ * 갱신 이력(계측이 시킨 것만 적는다 — 사람이 임의로 넣고 뺀 항목은 0이어야 한다):
+ *  · T-W2-24(2026-08-16): `processing→analyzing` **삭제**. 주민 업로드 검수 게이트를
+ *    `ContentWorkflowService.applyHop`에 배선하면서 "게이트는 파이프라인 진입 문턱에서만 묻는다"를
+ *    고정하는 단위 테스트(content-workflow.service.spec.ts)가 이 엣지를 실 applyHop으로 밟게 됐다.
+ *    구동부(PipelineService.onCompleted(transcode))는 원래 실재했고 `untested`였을 뿐이라 이 삭제는
+ *    "구현이 늘었다"가 아니라 "단위 커버리지가 생겼다"는 뜻이다(관측 21→22 · 등재 26→25).
  *
  * 재산출: `GACHINOL_WIRING_REPORT=1 pnpm --filter @gachinol/api test`
  * (services/api/test/wiring/global-teardown.ts가 관측·미관측 전문을 출력한다).
@@ -176,16 +183,10 @@ export const NOT_WIRED_CONTENT_TRANSITIONS: readonly NotWiredContentTransition[]
     kind: NotWiredKind.Untested,
     reason: 'cancel() 실재 — 이 from 상태를 밟는 단위 테스트만 없다.',
   },
-  // 파이프라인 시스템 전이 6건: PipelineService가 실 큐 이벤트로 구동한다. 단위 스위트의
+  // 파이프라인 시스템 전이 5건: PipelineService가 실 큐 이벤트로 구동한다. 단위 스위트의
   // pipeline.service.spec.ts는 ContentWorkflowService를 목으로 대체해 applyHop까지 닿지 않고,
   // 실제 완주는 e2e(media/analysis/distribution-pipeline)가 담당한다 → 단위 관측 0.
-  {
-    from: 'processing',
-    to: 'analyzing',
-    kind: NotWiredKind.Untested,
-    reason:
-      'PipelineService.onCompleted(transcode) 실재(pipeline.service.ts:288) — 단위 스위트는 workflow를 목으로 두어 applyHop에 닿지 않는다. 실증은 analysis-pipeline e2e.',
-  },
+  // (`processing→analyzing`은 T-W2-24에서 빠졌다 — 아래 갱신 이력 참조)
   {
     from: 'processing',
     to: 'preview_generating',

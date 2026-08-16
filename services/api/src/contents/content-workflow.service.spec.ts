@@ -326,4 +326,82 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
       });
     });
   });
+
+  /* ─────────────── ★★ 주민 업로드 검수 게이트 (T-W2-24 AC4 — 엣지 측) ───────────────
+   * 승인 액션에 인큐가 붙으면서 T-W2-08의 "모듈이 큐를 모른다"는 구조적 강제는 모듈 범위에서 사라졌다.
+   * 그 대체물이 여기다: 단일 관문(applyHop)이 `uploaded→processing`을 막으므로 **인큐 주체가 누구든**
+   * 미승인 주민 콘텐츠는 파이프라인에 들어가지 못한다. 아래는 "어떤 경로로도 못 뚫는다"를 고정한다. */
+  describe('★★ 검수 게이트 관문 — 미승인 주민 콘텐츠의 uploaded→processing 차단 (AC4)', () => {
+    const residentSetup = (uploadStatus: string | null, over: Record<string, unknown> = {}) => {
+      const row = contentRow({
+        origin: 'resident_link',
+        reporterId: null,
+        status: 'uploaded',
+        ...over,
+      });
+      const prisma = makePrismaMock();
+      prisma.content.findUnique.mockResolvedValue(row);
+      prisma.residentUpload = {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue(uploadStatus === null ? null : { status: uploadStatus }),
+      };
+      return { prisma, service: new ContentWorkflowService(prisma), row };
+    };
+
+    it.each(['awaiting_branch_review', 'rejected', null])(
+      '미승인(%s)이면 시스템 전이(파이프라인 워커 경로)가 막힌다 — 상태·로그 무변',
+      async (uploadStatus) => {
+        const { prisma, service } = residentSetup(uploadStatus);
+        await expectDomainError(
+          service.applySystemTransition('c-1', 'uploaded', 'processing', 'job-1'),
+          'invalid_transition',
+        );
+        expect(prisma.content.updateMany).not.toHaveBeenCalled();
+        expect(prisma.statusTransitionLog.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('★ 범용 수동 전이(운영 복구 탈출구)로도 뚫리지 않는다 — admin도 검수를 건너뛸 수 없다', async () => {
+      const { prisma, service } = residentSetup('awaiting_branch_review');
+      const err = await expectDomainError(
+        service.transition('c-1', 'processing', adminUser()),
+        'invalid_transition',
+      );
+      expect(err.details).toMatchObject({
+        origin: 'resident_link',
+        reviewStatus: 'awaiting_branch_review',
+      });
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('지사 담당자 승인 후에는 통과한다 (승인 → 파이프라인 진입, AC3)', async () => {
+      const { prisma, service } = residentSetup('approved');
+      const res = await service.applySystemTransition('c-1', 'uploaded', 'processing', 'job-1');
+
+      expect(res.applied).toBe(true);
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'c-1', status: 'uploaded' } }),
+      );
+    });
+
+    it('회귀 0 — 기자 업로드는 검수 테이블을 조회조차 하지 않는다', async () => {
+      const prisma = makePrismaMock();
+      prisma.content.findUnique.mockResolvedValue(contentRow({ status: 'uploaded' }));
+      prisma.residentUpload = { findUnique: jest.fn() };
+      const service = new ContentWorkflowService(prisma);
+
+      await service.applySystemTransition('c-1', 'uploaded', 'processing', 'job-1');
+      expect(prisma.residentUpload.findUnique).not.toHaveBeenCalled();
+      expect(prisma.content.updateMany).toHaveBeenCalled();
+    });
+
+    it('진입 이후의 홉은 다시 묻지 않는다 — 게이트는 문턱에서 한 번만(processing→analyzing)', async () => {
+      const { prisma, service } = residentSetup('awaiting_branch_review', { status: 'processing' });
+      const res = await service.applySystemTransition('c-1', 'processing', 'analyzing', 'job-1');
+
+      expect(res.applied).toBe(true);
+      expect(prisma.residentUpload.findUnique).not.toHaveBeenCalled();
+    });
+  });
 });

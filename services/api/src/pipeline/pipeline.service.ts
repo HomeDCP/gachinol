@@ -1,5 +1,12 @@
 import { Inject, Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import type { AnalysisJobData, AnalysisJobResult, JobResultMap, MediaJobData } from '@gachinol/shared';
+import type {
+  AnalysisJobData,
+  AnalysisJobResult,
+  ContentStatus,
+  JobResultMap,
+  MediaJobData,
+} from '@gachinol/shared';
+import { ContentOrigin } from '@gachinol/shared';
 import type { Job, Queue, QueueEvents } from 'bullmq';
 import type { Prisma } from '@prisma/client';
 import { ContentWorkflowService } from '../contents/content-workflow.service';
@@ -22,6 +29,21 @@ import type {
   RecommendationJobData,
   RecommendationJobResult,
 } from '../recommendations/recommendation-job';
+
+/**
+ * 프리뷰 완료 후 검토 대기 목적지 — **origin이 정한다**(대장 #97).
+ *
+ * · `reporter_upload` → 기자가 저화질 프리뷰를 확인·승인한다(CLAUDE.md §4 기자 앱 최종 단계).
+ * · `live_vod`·`resident_link` → 담당 기자가 없어(`reporterId=null` 불변식) 기자 검토를 생략하고
+ *   센터 검토로 직행한다. resident_link는 여기에 더해 이미 지사 담당자 검수를 통과한 물건이다.
+ *
+ * 이 매핑의 **권위는 `ContentWorkflowService.policyGuard`**(전이 정책의 소유자)이고 여기는 그 정책이
+ * 허용하는 유일한 값을 고르는 파생이다 — 어긋나면 그 가드가 즉시 invalid_transition으로 잡는다
+ * (검증되는 파생이지 자유로운 사본이 아니다). 그래서 미래에 origin이 추가되면 여기서 조용히
+ * 오분류되는 게 아니라 그 가드가 거절해 로그로 드러난다(fail-loud) — 새 origin은 두 곳을 같이 고친다.
+ */
+const previewReviewTarget = (origin: string): ContentStatus =>
+  origin === ContentOrigin.ReporterUpload ? 'awaiting_reporter_review' : 'awaiting_center_review';
 
 /**
  * QueueEvents 소비자 — api가 유일한 DB 기록자. media·analysis 두 큐를 인프로세스로 소비해
@@ -313,10 +335,14 @@ export class PipelineService implements OnModuleInit {
       case 'preview': {
         const result = job.returnvalue as JobResultMap['preview'];
         await this.assets.upsertOutput(contentId, generation, jobId, result.asset);
+        // 목적지는 origin이 정한다(대장 #97) — 舊 코드는 awaiting_reporter_review 하드코딩이라
+        // 담당 기자가 없는 유래(live_vod·resident_link)가 프리뷰까지 와서 policyGuard에 막혔다.
+        const content = await this.loadContentRow(contentId);
+        if (!content) return; // 콘텐츠가 사라졌으면 전이할 대상이 없다(자산 upsert는 이미 멱등 반영)
         await this.workflow.applySystemTransition(
           contentId,
           'preview_generating',
-          'awaiting_reporter_review',
+          previewReviewTarget(content.origin),
           jobId,
         );
         return;
