@@ -33,7 +33,8 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
     "react-native-web": "^0.21.0",
-    "socket.io-client": "^4"
+    "socket.io-client": "^4",
+    "workbox-window": "^7.4.1"
   },
   "devDependencies": {
     "@testing-library/react-native": "^14.0.1",
