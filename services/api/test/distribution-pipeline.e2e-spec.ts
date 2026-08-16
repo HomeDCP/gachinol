@@ -10,15 +10,26 @@
  *  - media-worker 불요: 720p rendition 자산을 prisma로 직접 생성(서명 대상만 필요).
  *
  * 정직성: 실 오브젝트 바이트는 부재 — 서명 URL '발급'만 동작. 실 카카오 채널 API는 호출하지 않는다(목).
+ *
+ * T-W2-10 보강1(qa-verifier): archived 훅 배선(`ContentWorkflowService.transition()`의
+ * `if (to === 'archived') …`) 커버 전용 테스트 1건을 이 파일에 추가한다. 그 훅을 유닛 스위트에서
+ * published→archived로 직접 밟으면 `packages/shared/src/content/not-wired.ts`의 계측이 그 엣지를
+ * "관측됨"으로 표시해 wiring 레지스트리와 불일치가 난다(계측은 `NODE_ENV==='test' &&
+ * GACHINOL_WIRING_PROBE_DIR` 이중 게이트이고, 후자는 api 단위 jest의 global-setup만 설정 —
+ * `src/contents/transition-probe.ts` 참조). **e2e는 그 계측이 애초에 비활성**이라 이 엣지를 실제로
+ * 밟아도 레지스트리에 영향이 없다 — 그래서 배선 커버는 유닛이 아니라 여기서 한다.
+ * 이 파일이 이미 갖춘 embedded s3rver(실 오브젝트 바이트 기록 가능)를 재사용해 "공개 복사가
+ * 진짜로 옮겨지고 진짜로 지워지는지"를 S3 HEAD로 직접 확인한다.
  */
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { INestApplication } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
+import { CreateBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { v7 as uuidv7 } from 'uuid';
 import request from 'supertest';
+import { CloudflareCacheService } from '../src/media/cloudflare-cache.service';
 import { describeWithDb, e2eDb } from './e2e-db';
 
 const d = describeWithDb();
@@ -197,6 +208,10 @@ d('distribution pipeline (withDb + embedded redis/s3 + kakao mock)', () => {
     process.env.S3_ACCESS_KEY = S3_KEY;
     process.env.S3_SECRET_KEY = S3_SECRET;
     process.env.S3_FORCE_PATH_STYLE = 'true';
+    // T-W2-10 보강1 — 공개 복사 게이트(보강2, MEDIA_PUBLIC_BASE_URL 미설정 시 no-op)를 이 스위트
+    // 전체에서 열어 둔다. 값 자체가 실제로 도달 가능할 필요는 없다 — archived 훅 테스트는 구성된
+    // 공개 HTTP URL을 fetch하지 않고 s3Client로 직접 s3rver 버킷을 확인한다.
+    process.env.MEDIA_PUBLIC_BASE_URL = 'https://media.e2e.test';
 
     s3Client = new S3Client({
       region: 'us-east-1',
@@ -248,6 +263,7 @@ d('distribution pipeline (withDb + embedded redis/s3 + kakao mock)', () => {
     s3Client?.destroy();
     await embedded?.stop().catch(() => undefined);
     delete process.env.REDIS_URL;
+    delete process.env.MEDIA_PUBLIC_BASE_URL;
   });
 
   it('정상: distribute → 목 송출 → Publication published & content published (credentialRef 미유출)', async () => {
@@ -380,4 +396,78 @@ d('distribution pipeline (withDb + embedded redis/s3 + kakao mock)', () => {
     expect(hops.has('reporter_approved->publishing')).toBe(true);
     expect(hops.has('publishing->published')).toBe(true);
   }, 60000);
+
+  it(
+    'T-W2-10 보강1: published→archived 훅 배선 — 공개 렌디션이 실제로 복사됐다가 실제로 지워지고, ' +
+      'CF 퍼지가 attempted:false로 관측된다(applyHop 경로 실주행, 뮤테이션 킬 대상)',
+    async () => {
+      if (!ready()) {
+        console.warn('[dist-e2e] 인프라 미가용 — archived 훅 배선 테스트 skip');
+        return;
+      }
+      const contentId = await seedApprovedContent(aewolId); // 애월 기본 kakao 채널(시드됨)
+      const sourceKey = `contents/${contentId}/g1/rendition_720p.mp4`;
+      const publicKey = `public/${sourceKey}`; // MEDIA_PUBLIC_PREFIX 기본값 'public'
+
+      // 실 바이트를 s3rver에 기록 — copyObject가 옮길 실체가 있어야 "실제로 복사됐다"를 증명할 수 있다
+      // (다른 테스트들의 rendition은 바이트가 없어 복사가 "키 없음"으로 실패 — 그건 무해하지만 이
+      // 테스트의 목적과 다르다).
+      await s3Client!.send(
+        new PutObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: sourceKey,
+          Body: Buffer.from('fake-mp4-bytes-for-e2e'),
+        }),
+      );
+
+      // published까지 정상 송출 경로로 진행 — publishing→published 훅(applySystemTransition)이
+      // 공개 복사를 실행한다(T-W2-10 syncPublishedCopies).
+      await http()
+        .post(`/v1/contents/${contentId}/distribute`)
+        .set(auth(adminToken))
+        .send({})
+        .expect(200);
+      const publishedStatus = await pollContentStatus(contentId, ['published', 'publish_failed']);
+      expect(publishedStatus).toBe('published');
+
+      // 공개 복사가 s3rver에 실제로 반영됐는지 — HEAD 성공(존재)해야 한다
+      await expect(
+        s3Client!.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: publicKey })),
+      ).resolves.toMatchObject({ ContentLength: expect.any(Number) });
+
+      // CF 퍼지 호출 결과를 관측 — pass-through 스파이(원 구현 그대로 호출, 반환값만 가로챈다)
+      const cfCache = app!.get(CloudflareCacheService);
+      let capturedPurgeResult: { attempted: boolean; success: boolean } | undefined;
+      const originalPurge = cfCache.purge.bind(cfCache);
+      jest.spyOn(cfCache, 'purge').mockImplementation(async (urls) => {
+        const result = await originalPurge(urls);
+        capturedPurgeResult = result;
+        return result;
+      });
+
+      // archived로 전이 — content-workflow.service.ts의 `if (to === 'archived') …` 훅을 실제로 태운다.
+      // 이 한 줄이 삭제되면(뮤테이션) 아래 두 단언(공개 객체 소멸·퍼지 attempted 관측)이 실패해야 한다.
+      const archiveRes = await http()
+        .post(`/v1/contents/${contentId}/transitions`)
+        .set(auth(adminToken))
+        .send({ toStatus: 'archived', note: 'T-W2-10 보강1 e2e' })
+        .expect(200);
+      expect(archiveRes.body.status).toBe('archived');
+
+      // 공개 객체가 실제로 사라졌는지 — HEAD가 이제 실패(NotFound)해야 한다
+      await expect(
+        s3Client!.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: publicKey })),
+      ).rejects.toBeDefined();
+
+      // CF 퍼지 — env(CF_ZONE_ID/CF_API_TOKEN) 미설정이므로 attempted:false가 관측되면 충분
+      // (실 Cloudflare 계정 불요 — "시도됐는가"만 확인, 조용한 no-op이 아니었음을 증명)
+      expect(cfCache.purge).toHaveBeenCalled();
+      expect(capturedPurgeResult).toEqual({
+        attempted: false,
+        success: false,
+        reason: 'not_configured',
+      });
+    },
+    60000,
+  );
 });

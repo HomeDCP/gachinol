@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { ContentStatus, User } from '@gachinol/shared';
 import {
   afterReporterApproval,
@@ -11,6 +11,7 @@ import {
 import type { Content as ContentRow, Prisma } from '@prisma/client';
 import { v7 as uuidv7 } from 'uuid';
 import { DomainException } from '../common/errors/domain.exception';
+import { PublicMediaService } from '../media/public-media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   assertResidentReviewApproved,
@@ -44,7 +45,15 @@ const REPORTER_REVIEW_DECISIONS: readonly ContentStatus[] = [
  */
 @Injectable()
 export class ContentWorkflowService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ContentWorkflowService.name);
+
+  // publicMedia는 선택 의존(테스트 하위호환 — 기존 `new ContentWorkflowService(prisma)` 호출부가
+  // 여럿 있고 DI 컨테이너 밖에서 직접 생성한다). 실 앱에서는 ContentsModule이 MediaModule을
+  // import하므로 Nest가 항상 주입한다 — undefined는 순수 단위 테스트에서만 발생.
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly publicMedia?: PublicMediaService,
+  ) {}
 
   /**
    * 기자 승인(awaiting_reporter_review): reporter_approved → 같은 트랜잭션에서
@@ -236,6 +245,12 @@ export class ContentWorkflowService {
     await this.prisma.$transaction(async (tx) => {
       await this.applyHop(tx, content, from, to, actor, { note, mutate });
     });
+    // 커밋 후 훅(인큐-애프터-커밋 동형) — 공개 렌디션 캐시 서빙(D-T8, T-W2-10).
+    // `transition()`은 published·archived 양쪽 다 도달 가능한 유일한 공용 경로다: published는
+    // 워커 부재기 수동 복구(§11-4 범용 전이)로, archived는 보관 구동부 부재로 **유일** 경로다
+    // (packages/shared/src/content/not-wired.ts published→archived 항목 참조).
+    if (to === 'published') await this.syncPublicMediaAfterPublish(contentId, content.generation);
+    if (to === 'archived') await this.removePublicMediaAfterArchive(contentId, content.generation);
     return this.load(contentId);
   }
 
@@ -262,6 +277,12 @@ export class ContentWorkflowService {
     const applied = await this.prisma.$transaction((tx) =>
       this.applyHop(tx, content, from, to, actor, opts, /* idempotent */ true),
     );
+    // 커밋 후 훅(인큐-애프터-커밋 동형) — publishing→published는 이 경로가 정상계(PipelineService.
+    // onPublishCompleted)다. applied=false(재전송·경합·이미 적용됨)면 실제로 전이가 일어나지
+    // 않았으므로 재복사하지 않는다(중복 호출 방지 — S3 복사 자체는 멱등이라 안전하지만 불필요한 I/O).
+    if (applied && to === 'published') {
+      await this.syncPublicMediaAfterPublish(contentId, content.generation);
+    }
     return { applied };
   }
 
@@ -485,5 +506,37 @@ export class ContentWorkflowService {
     // CAS 성공·감사 로그 기록 이후에만 부른다: 실제로 적용된 홉만 "관측"으로 센다(경합 no-op 제외).
     recordContentTransition(from, to);
     return true;
+  }
+
+  /**
+   * 발행(published) 커밋 후 훅 — 공개 렌디션 복사(D-T8). PublicMediaService 내부에서 이미
+   * per-asset best-effort(개별 실패를 삼키고 로그)이지만, 여기서도 방어적으로 감싼다 — 이 훅의
+   * 실패가 publishing→published 전이 응답 자체를 실패시켜서는 안 된다(전이는 이미 커밋됐다).
+   */
+  private async syncPublicMediaAfterPublish(contentId: string, generation: number): Promise<void> {
+    if (!this.publicMedia) return;
+    try {
+      await this.publicMedia.syncPublishedCopies(contentId, generation);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`공개 렌디션 동기화 훅 실패(content=${contentId}): ${message}`);
+    }
+  }
+
+  /**
+   * 보관(archived) 커밋 후 훅 — 공개 객체 제거 + CF 캐시 퍼지(D-T8 필수 대칭, 선택적 정리 아님).
+   * PublicMediaService 내부에서 이미 throw하지 않지만, 동일한 이유로 여기서도 방어적으로 감싼다.
+   */
+  private async removePublicMediaAfterArchive(
+    contentId: string,
+    generation: number,
+  ): Promise<void> {
+    if (!this.publicMedia) return;
+    try {
+      await this.publicMedia.removePublishedCopies(contentId, generation);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`공개 렌디션 제거 훅 실패(content=${contentId}): ${message}`);
+    }
   }
 }

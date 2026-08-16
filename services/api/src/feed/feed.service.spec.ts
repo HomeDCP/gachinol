@@ -241,6 +241,76 @@ describe('FeedService.getPlayback', () => {
   });
 });
 
+describe('FeedService — 공개 URL(D-T8) 우선, 서명 URL 폴백', () => {
+  const makeServiceWithPublicMedia = () => {
+    const prisma = {
+      content: { findMany: jest.fn(), findUnique: jest.fn() },
+      mediaAsset: { findMany: jest.fn(), findFirst: jest.fn() },
+      aiAnalysis: { findMany: jest.fn() },
+      station: { findMany: jest.fn() },
+    };
+    const s3 = { presignGet: jest.fn() };
+    const publicMedia = { resolvePublicUrl: jest.fn() };
+    const service = new FeedService(prisma as never, s3 as never, publicMedia as never);
+    return { service, prisma, s3, publicMedia };
+  };
+
+  it('getPlayback: 공개 URL이 있으면 hlsUrl로 채택하고 presignGet은 호출하지 않는다', async () => {
+    const { service, prisma, s3, publicMedia } = makeServiceWithPublicMedia();
+    prisma.content.findUnique.mockResolvedValue(row());
+    prisma.mediaAsset.findMany.mockResolvedValue([rendition()]);
+    prisma.mediaAsset.findFirst.mockResolvedValue(null);
+    publicMedia.resolvePublicUrl.mockResolvedValue('https://media.example.com/public/k720.mp4');
+
+    const info = await service.getPlayback('x');
+
+    expect(publicMedia.resolvePublicUrl).toHaveBeenCalledWith('contents/x/g1/rendition_720p.mp4');
+    expect(info.hlsUrl).toBe('https://media.example.com/public/k720.mp4');
+    expect(s3.presignGet).not.toHaveBeenCalled();
+  });
+
+  it('getPlayback: 공개 URL 부재(null) → 기존 서명 URL로 폴백', async () => {
+    const { service, prisma, s3, publicMedia } = makeServiceWithPublicMedia();
+    prisma.content.findUnique.mockResolvedValue(row());
+    prisma.mediaAsset.findMany.mockResolvedValue([rendition()]);
+    prisma.mediaAsset.findFirst.mockResolvedValue(null);
+    publicMedia.resolvePublicUrl.mockResolvedValue(null);
+    s3.presignGet.mockResolvedValue({ url: 'signed-fallback', expiresAt: 'x' });
+
+    const info = await service.getPlayback('x');
+
+    expect(info.hlsUrl).toBe('signed-fallback');
+    expect(s3.presignGet).toHaveBeenCalledWith('contents/x/g1/rendition_720p.mp4');
+  });
+
+  it('getPlayback: 공개 URL 조회 자체가 예외를 던져도 서명 URL로 폴백(throw 없음)', async () => {
+    const { service, prisma, s3, publicMedia } = makeServiceWithPublicMedia();
+    prisma.content.findUnique.mockResolvedValue(row());
+    prisma.mediaAsset.findMany.mockResolvedValue([rendition()]);
+    prisma.mediaAsset.findFirst.mockResolvedValue(null);
+    publicMedia.resolvePublicUrl.mockRejectedValue(new Error('S3 down'));
+    s3.presignGet.mockResolvedValue({ url: 'signed-fallback', expiresAt: 'x' });
+
+    const info = await service.getPlayback('x');
+    expect(info.hlsUrl).toBe('signed-fallback');
+  });
+
+  it('list: 썸네일도 공개 URL 우선으로 채택한다', async () => {
+    const { service, prisma, s3, publicMedia } = makeServiceWithPublicMedia();
+    prisma.content.findMany.mockResolvedValue([row()]);
+    prisma.mediaAsset.findMany.mockResolvedValue([
+      rendition({ kind: 'thumbnail', storageKey: 'thumb-key' }),
+    ]);
+    prisma.aiAnalysis.findMany.mockResolvedValue([]);
+    publicMedia.resolvePublicUrl.mockResolvedValue('https://media.example.com/public/thumb.jpg');
+
+    const page = await service.list(q());
+
+    expect(page.items[0]!.thumbnailUrl).toBe('https://media.example.com/public/thumb.jpg');
+    expect(s3.presignGet).not.toHaveBeenCalled();
+  });
+});
+
 describe('FeedService.listPublicStations', () => {
   it('branch + operating|dormant, sortOrder asc', async () => {
     const { service, prisma } = makeService();
