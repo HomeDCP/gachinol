@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { toId } from '@gachinol/shared';
 import type { ContentId } from '@gachinol/shared';
 import { useDraft } from '../../../../src/features/contents/draft-context';
+import { useUploadFunnelEvents } from '../../../../src/telemetry/use-upload-funnel-events';
 import { UploadAbortedError } from '../../../../src/upload/upload-service';
 import type { UploadProgress } from '../../../../src/upload/upload-service';
 import { useUploadService } from '../../../../src/upload/use-upload-service';
@@ -20,6 +21,7 @@ export default function UploadScreen(): React.JSX.Element {
   const contentId: ContentId | null = id ? toId<ContentId>(id) : null;
   const { media: draftMedia } = useDraft();
   const uploadService = useUploadService();
+  const funnelEvents = useUploadFunnelEvents();
   // 상세 화면의 [업로드 시작] 경유(위저드 메모리 없음) — 원본 없이 진입 시 placeholder
   const media = useMemo(
     () =>
@@ -41,6 +43,15 @@ export default function UploadScreen(): React.JSX.Element {
   const startedRef = useRef(false);
   const navigation = useNavigation();
 
+  // 위저드 단계 진입/이탈(02§E-16 업로드퍼널 트랙) — contentId 없이 진입(예: 잘못된 딥링크)한
+  // 세션은 upload_complete를 낼 수 없어 wizardCompletionRate 분모만 늘린다(하향 편향) → 발신하지 않는다.
+  useEffect(() => {
+    if (!contentId) return;
+    funnelEvents.wizardStepEnter('upload', contentId);
+    return () => funnelEvents.wizardStepExit('upload', contentId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 마운트당 1회만(진입/이탈), contentId는 라우트 param이라 마운트 후 불변
+  }, []);
+
   // 위저드 내부 pop 차단 — headerBackVisible:false만으로는 Android 하드웨어 백이 막히지 않아
   // scenes/classify로 복귀 후 '초안 저장' 재클릭 → 중복 초안 생성이 가능했다.
   // GO_BACK/POP만 가로챈다 (router.replace의 REPLACE는 통과 — 상세 이동·위저드 종료는 정상 동작).
@@ -58,29 +69,50 @@ export default function UploadScreen(): React.JSX.Element {
     return unsubscribe;
   }, [navigation, phase, contentId]);
 
+  /** 업로드 1회 시도 — 최초 진입(kind='start')과 실패 후 재시도(kind='resume')가 공유하는 실행 경로 */
+  const runUpload = useCallback(
+    (kind: 'start' | 'resume'): void => {
+      if (!contentId || !media) return;
+      setPhase('running');
+      setProgress({ loadedBytes: 0, totalBytes: 1, ratio: 0 });
+      if (kind === 'start') funnelEvents.uploadStart(contentId);
+      else funnelEvents.uploadResume(contentId);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      uploadService
+        .upload(
+          {
+            contentId,
+            fileUri: media.uri,
+            fileName: media.fileName,
+            mimeType: media.mimeType,
+            sizeBytes: media.sizeBytes,
+          },
+          setProgress,
+          controller.signal,
+        )
+        .then(() => {
+          setPhase('done');
+          funnelEvents.uploadComplete(contentId);
+        })
+        .catch((err: unknown) => {
+          setPhase(err instanceof UploadAbortedError ? 'aborted' : 'failed');
+        });
+    },
+    [contentId, media, uploadService, funnelEvents],
+  );
+
   useEffect(() => {
     if (startedRef.current || !contentId || !media) return;
     startedRef.current = true;
-    const controller = new AbortController();
-    abortRef.current = controller;
-    uploadService
-      .upload(
-        {
-          contentId,
-          fileUri: media.uri,
-          fileName: media.fileName,
-          mimeType: media.mimeType,
-          sizeBytes: media.sizeBytes,
-        },
-        setProgress,
-        controller.signal,
-      )
-      .then(() => setPhase('done'))
-      .catch((err: unknown) => {
-        setPhase(err instanceof UploadAbortedError ? 'aborted' : 'failed');
-      });
-    return () => controller.abort();
-  }, [contentId, media, uploadService]);
+    runUpload('start');
+    // 언마운트 시 진행 중 업로드 취소 — retry로 갱신된 컨트롤러도 함께 정리한다
+    return () => abortRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 최초 1회 트리거 전용(runUpload는 최신 클로저를 참조)
+  }, [contentId, media]);
+
+  // 03§C-3 "업로드 실패 화면은 '다시 시도' 버튼 하나만 크게" — 재시도 = 재개(resume) 계측 트리거
+  const retry = (): void => runUpload('resume');
 
   const goDetail = (): void => {
     if (contentId) router.replace(`/contents/${contentId}`);
@@ -123,8 +155,10 @@ export default function UploadScreen(): React.JSX.Element {
         ) : null}
         {phase === 'failed' ? (
           <>
-            <Text style={styles.message}>업로드 중 오류가 발생했습니다. 다시 시도해 주세요.</Text>
-            <Button label="상세 보기" onPress={goDetail} />
+            {/* 03§C-3 "업로드 실패 화면은 '다시 시도' 버튼 하나만 크게" — 기술 용어 없이 사용자 언어로 */}
+            <Text style={styles.message}>인터넷이 잠깐 끊겼어요. 다시 눌러주세요.</Text>
+            <Button label="다시 시도" onPress={retry} />
+            <Button label="상세 보기" variant="secondary" onPress={goDetail} />
           </>
         ) : null}
       </ScrollView>

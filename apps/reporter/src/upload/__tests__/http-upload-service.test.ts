@@ -109,7 +109,7 @@ test('시작 전 abort → UploadAbortedError, upload-url 미호출', async () =
   expect(FileSystem.createUploadTask).not.toHaveBeenCalled();
 });
 
-test('전송 중 abort → cancelAsync 호출 + UploadAbortedError, 완료 미호출', async () => {
+test('전송 중 abort → cancelAsync 호출 + UploadAbortedError + 서버에 실패 통지(upload-complete 재사용)', async () => {
   const { client, request } = makeClient();
   const controller = new AbortController();
   const cancelAsync = jest.fn(async () => undefined);
@@ -126,11 +126,16 @@ test('전송 중 abort → cancelAsync 호출 + UploadAbortedError, 완료 미�
     UploadAbortedError,
   );
   expect(cancelAsync).toHaveBeenCalled();
-  // upload-url(1회)만, upload-complete 미호출
-  expect(request).toHaveBeenCalledTimes(1);
+  // upload-url(①) + 실패 통지(notifyUploadFailed가 upload-complete를 재사용) = 2회.
+  // makeClient()의 2번째 큐잉 값(fakeContent)이 그대로 소비되지만, 통지의 목적은 응답이 아니라
+  // 서버측 uploading→upload_failed 부수효과이므로 성공 응답으로 와도 무방(호출 여부·인자만 검증).
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(request).toHaveBeenNthCalledWith(2, 'POST', '/contents/c1/upload-complete', {
+    body: { contentId: 'c1', storageKey: issued.storageKey },
+  });
 });
 
-test('비2xx PUT → 에러 전파, upload-complete 미호출', async () => {
+test('비2xx PUT → 원래 에러(HTTP 403) 그대로 전파 + 서버에 실패 통지(upload-complete 재사용)', async () => {
   const { client, request } = makeClient();
   FileSystem.createUploadTask.mockImplementation(() => ({
     uploadAsync: async () => ({ status: 403 }),
@@ -139,5 +144,59 @@ test('비2xx PUT → 에러 전파, upload-complete 미호출', async () => {
 
   const svc = createHttpUploadService(client);
   await expect(svc.upload(input, () => {})).rejects.toThrow(/403/);
-  expect(request).toHaveBeenCalledTimes(1); // upload-url만
+  expect(request).toHaveBeenCalledTimes(2); // upload-url(①) + 실패 통지(upload-complete 재사용)
+  expect(request).toHaveBeenNthCalledWith(2, 'POST', '/contents/c1/upload-complete', {
+    body: { contentId: 'c1', storageKey: issued.storageKey },
+  });
+});
+
+test('실패 통지(upload-complete) 자체가 거부돼도 원래 에러가 그대로 전파된다(통지 실패가 원래 에러를 가리지 않음)', async () => {
+  const request = jest
+    .fn()
+    .mockResolvedValueOnce(issued) // ① upload-url
+    .mockRejectedValueOnce(new Error('object not found (기대된 400)')); // 실패 통지 — 서버 실제 응답 형태
+  const client = { request, ensureFreshTokens: jest.fn() } as unknown as ApiClient;
+  FileSystem.createUploadTask.mockImplementation(() => ({
+    uploadAsync: async () => ({ status: 500 }),
+    cancelAsync: jest.fn(async () => undefined),
+  }));
+
+  const svc = createHttpUploadService(client);
+  // 통지(2번째 request)가 reject해도 던져지는 건 원래 PUT 실패(HTTP 500)다
+  await expect(svc.upload(input, () => {})).rejects.toThrow(/500/);
+  expect(request).toHaveBeenCalledTimes(2);
+});
+
+test('실패 후 재시도(두 번째 upload() 호출)가 409 없이 성공한다 — [다시 시도] 버튼과 동형 호출 패턴', async () => {
+  const request = jest
+    .fn()
+    .mockResolvedValueOnce(issued) // ①-1 upload-url (최초 시도)
+    .mockRejectedValueOnce(new Error('object not found')) // 실패 통지(1차 실패 → 서버가 uploading→upload_failed로 복구)
+    .mockResolvedValueOnce(issued) // ①-2 upload-url (재시도 — upload_failed는 ISSUABLE이라 409 없이 재발급)
+    .mockResolvedValueOnce(fakeContent); // ③-2 upload-complete (재시도 — 성공)
+  const client = { request, ensureFreshTokens: jest.fn() } as unknown as ApiClient;
+  const svc = createHttpUploadService(client);
+
+  // 1차 시도 — PUT 실패
+  FileSystem.createUploadTask.mockImplementationOnce(() => ({
+    uploadAsync: async () => ({ status: 500 }),
+    cancelAsync: jest.fn(async () => undefined),
+  }));
+  await expect(svc.upload(input, () => {})).rejects.toThrow(/500/);
+
+  // 2차 시도 — 같은 input으로 svc.upload 재호출("다시 시도" 버튼의 실제 호출 패턴), PUT 성공
+  FileSystem.createUploadTask.mockImplementationOnce(() => ({
+    uploadAsync: async () => ({ status: 200 }),
+    cancelAsync: jest.fn(async () => undefined),
+  }));
+  const result = await svc.upload(input, () => {});
+
+  expect(result).toEqual({ storageKey: issued.storageKey });
+  expect(request).toHaveBeenCalledTimes(4);
+  // 재시도의 upload-url 호출(3번째 request)이 정상 진행됐다 — mock이 409 없이 resolve하도록
+  // 구성한 것 자체가 "1차 실패 통지 덕분에 서버가 재발급 가능 상태(upload_failed)로 복구됐다"는
+  // 전제를 코드로 고정한다(서버 409 판정 로직 자체는 services/api 소유라 여기서 재검증하지 않는다).
+  expect(request).toHaveBeenNthCalledWith(3, 'POST', '/contents/c1/upload-url', {
+    body: { contentId: 'c1', fileName: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 1000 },
+  });
 });
