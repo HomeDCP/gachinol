@@ -36,6 +36,9 @@ export * from './content/dto';
 export * from './media/media-asset';
 export * from './media/media-job';
 
+// resident (주민 업로드 검수 — T-W2-25a shared 승격)
+export * from './resident/resident-upload-status';
+
 // job
 export * from './job/job';
 

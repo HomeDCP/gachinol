@@ -1,10 +1,9 @@
-import { ContentOrigin } from '@gachinol/shared';
 import {
-  canTransitionResidentUpload,
-  isPipelineEntryAllowed,
+  ContentOrigin,
   RESIDENT_UPLOAD_STATUS_TRANSITIONS,
   ResidentUploadStatus,
-} from './resident-upload-status';
+} from '@gachinol/shared';
+import { canTransitionResidentUpload, isPipelineEntryAllowed } from './resident-upload-status';
 
 describe('ResidentUploadStatus 전이 맵', () => {
   it('pending에서만 완료·실패로 갈라지고, 종결 상태는 출구가 없다', () => {

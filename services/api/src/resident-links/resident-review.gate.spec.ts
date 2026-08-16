@@ -1,7 +1,6 @@
-import { allContentTransitionEdges, ContentOrigin } from '@gachinol/shared';
+import { allContentTransitionEdges, ContentOrigin, ResidentUploadStatus } from '@gachinol/shared';
 import { DomainException } from '../common/errors/domain.exception';
 import { assertResidentReviewApproved, isPipelineEntryEdge } from './resident-review.gate';
-import { ResidentUploadStatus } from './resident-upload-status';
 
 const reader = (status: string | null) => ({
   residentUpload: {

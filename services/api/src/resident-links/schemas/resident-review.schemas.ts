@@ -1,11 +1,17 @@
 import type { StationId } from '@gachinol/shared';
+import { ResidentUploadStatus } from '@gachinol/shared';
 import { createZodDto } from 'nestjs-zod';
 import { zEnum, zId, zPage } from '../../common/zod';
-import { ResidentUploadStatus } from '../resident-upload-status';
 
 /* ══════════════════════════════════════════════════════════════════════════
- * 검수 대기열 요청 계약 — **shared가 아니라 모듈 내부**(T-W2-08 발급 스키마와 동일 판단).
- * 소비자는 지사 담당자 검수 화면(후속 FE 태스크) 하나뿐이고, 앱·워커가 공유하는 도메인 계약이 아니다.
+ * 검수 대기열 요청 계약 — **모듈 내부**(zod 스키마·DTO 자체는 api 전용으로 유지).
+ * T-W2-08 당시 이 문단은 "shared가 아니라 모듈 내부"의 근거로 "소비자는 지사 담당자 검수 화면
+ * (후속 FE 태스크) 하나뿐이고, 앱·워커가 공유하는 도메인 계약이 아니다"를 들었다 — 그 후속 FE
+ * 태스크(T-W2-25b, 기자 앱 검수 화면)가 이제 착수되어 전제가 깨졌다. **enum·전이맵
+ * 자체(`ResidentUploadStatus`·`RESIDENT_UPLOAD_STATUS_TRANSITIONS`)는 T-W2-25a에서 shared로
+ * 승격했다**(2026-08-16, `@gachinol/shared`의 `resident/resident-upload-status.ts`가 유일 원천).
+ * 여기 남은 것은 이 enum을 감싼 zod 쿼리 DTO뿐이다 — REST 쿼리 파싱은 api 경계 관심사라 승격 대상이
+ * 아니다(다른 도메인의 zod 스키마도 shared에 두지 않는 것과 동형).
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
