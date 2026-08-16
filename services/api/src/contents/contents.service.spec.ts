@@ -611,6 +611,62 @@ describe('ContentsService', () => {
     });
   });
 
+  /**
+   * 대장 #118 — 미성년자 게이트가 막은 콘텐츠의 발견 경로. reviewPolicy='reporter_only'는 센터
+   * 검토를 안 거쳐 status 필터로는 골라낼 수 없다 → 목록 쿼리에 직교 필터가 있어야 한다.
+   */
+  describe('list — 미성년자 동의 게이트 필터 (T-W2-27)', () => {
+    const listWith = async (query: Record<string, unknown>) => {
+      const { prisma, service } = setup();
+      prisma.content.count.mockResolvedValue(0);
+      prisma.content.findMany.mockResolvedValue([]);
+      await service.list(centerOperatorUser(), { page: 1, pageSize: 20, ...query } as never);
+      return prisma.content.findMany.mock.calls[0][0].where;
+    };
+
+    it('pending — hasMinorSubject=true ∧ 확인시각 null (게이트가 막고 있는 것만)', async () => {
+      const where = await listWith({ minorConsent: 'pending' });
+      expect(where.hasMinorSubject).toBe(true);
+      expect(where.minorConsentConfirmedAt).toBeNull();
+    });
+
+    it('confirmed — hasMinorSubject=true ∧ 확인시각 not null', async () => {
+      const where = await listWith({ minorConsent: 'confirmed' });
+      expect(where.hasMinorSubject).toBe(true);
+      expect(where.minorConsentConfirmedAt).toEqual({ not: null });
+    });
+
+    it('미지정이면 게이트 조건을 전혀 걸지 않는다 (기존 목록 무회귀)', async () => {
+      const where = await listWith({});
+      expect(where.hasMinorSubject).toBeUndefined();
+      expect(where.minorConsentConfirmedAt).toBeUndefined();
+    });
+
+    it('status와 직교 — reporter_only가 멈추는 awaiting_reporter_review와 함께 걸린다', async () => {
+      const where = await listWith({
+        minorConsent: 'pending',
+        status: 'awaiting_reporter_review',
+      });
+      expect(where.status).toBe('awaiting_reporter_review');
+      expect(where.hasMinorSubject).toBe(true);
+      expect(where.minorConsentConfirmedAt).toBeNull();
+    });
+
+    it('count와 findMany가 같은 where를 쓴다 (totalCount 어긋남 방지)', async () => {
+      const { prisma, service } = setup();
+      prisma.content.count.mockResolvedValue(0);
+      prisma.content.findMany.mockResolvedValue([]);
+      await service.list(centerOperatorUser(), {
+        page: 1,
+        pageSize: 20,
+        minorConsent: 'pending',
+      } as never);
+      expect(prisma.content.count.mock.calls[0][0].where).toEqual(
+        prisma.content.findMany.mock.calls[0][0].where,
+      );
+    });
+  });
+
   describe('읽기 범위 정합 — 목록(지사)과 상세(지사)는 같은 범위, 쓰기는 담당 기자만', () => {
     it('같은 지사 다른 기자의 콘텐츠 — 상세 조회는 허용(목록과 정합)', async () => {
       const { prisma, service } = setup();

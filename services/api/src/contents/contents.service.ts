@@ -9,7 +9,7 @@ import type {
   StatusTransitionLog,
   User,
 } from '@gachinol/shared';
-import { isReporterUser, requiresCultureTopic } from '@gachinol/shared';
+import { MinorConsentFilter, isReporterUser, requiresCultureTopic } from '@gachinol/shared';
 import type { Content as ContentRow } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { DomainException } from '../common/errors/domain.exception';
@@ -130,6 +130,17 @@ export class ContentsService {
     }
   }
 
+  /**
+   * 목록 — reporter는 자기 지사 강제.
+   *
+   * `minorConsent` 필터(T-W2-27, 대장 #118): 미성년자 게이트가 막고 있는 콘텐츠를 센터가 **발견**하는
+   * 경로. status 필터로 대체할 수 없다 — `reviewPolicy='reporter_only'`(교양·날씨)는 센터 검토를 아예
+   * 거치지 않아 차단된 콘텐츠가 `awaiting_reporter_review`에 멈추고, 그 외 정책은
+   * `awaiting_center_review`에 멈춘다(content-workflow.service.ts policyGuard ④). 두 값 모두
+   * `hasMinorSubject=true`를 전제로 하며, 판정의 원천은 `minorConsentConfirmedAt`(=shared
+   * `isMinorConsentPending`이 보는 컬럼) 하나다 — `approvedAt`은 기자 승인 hop에서도 채워져 게이트
+   * 통과의 프록시가 아니다.
+   */
   async list(user: User, query: ContentListQueryDto): Promise<Paginated<ContentSummary>> {
     // reporter는 쿼리 stationId를 서버가 자기 소속으로 덮어씀
     const stationId = isReporterUser(user) ? user.stationId : query.stationId;
@@ -137,6 +148,13 @@ export class ContentsService {
       ...(stationId ? { stationId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.category ? { category: query.category } : {}),
+      ...(query.minorConsent
+        ? {
+            hasMinorSubject: true,
+            minorConsentConfirmedAt:
+              query.minorConsent === MinorConsentFilter.Pending ? null : { not: null },
+          }
+        : {}),
     };
     const [totalCount, rows] = await this.prisma.$transaction([
       this.prisma.content.count({ where }),

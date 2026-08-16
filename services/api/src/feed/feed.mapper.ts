@@ -78,7 +78,15 @@ export const toPlaybackInfo = (
   return info;
 };
 
-/** Station row → 공개 StationSummary 축약(전체 Station 엔티티 노출 금지) */
+/**
+ * Station row → 공개 StationSummary 축약(전체 Station 엔티티 노출 금지).
+ *
+ * supportTel·youtubeUrl은 **공개 목적의 연락 채널**이라 익명 응답에 싣는다(T-W2-28 · 대장 #127):
+ * 재생 실패 폴백의 "지사에 전화 / 유튜브에서 보기"가 지사 단위로 성립하려면 이 관문을 통과해야
+ * 한다. 개인 연락처(CommunityFigure)는 여기로 나가지 않는다 — PII 판정 근거는 shared
+ * `Station.supportTel` 주석. `if (값)` 가드라 빈 문자열·null은 **키 자체가 생기지 않는다**
+ * (앱이 "설정됨"으로 오판해 목적지 없는 버튼을 그리는 것을 투영 경계에서 막는다).
+ */
 export const toStationSummary = (row: StationRow): StationSummary => {
   const s: StationSummary = {
     id: toId<StationId>(row.id),
@@ -87,5 +95,9 @@ export const toStationSummary = (row: StationRow): StationSummary => {
     status: row.status as StationStatus,
   };
   if (row.thumbnailUrl) s.thumbnailUrl = row.thumbnailUrl;
+  const supportTel = row.supportTel?.trim();
+  if (supportTel) s.supportTel = supportTel;
+  const youtubeUrl = row.youtubeUrl?.trim();
+  if (youtubeUrl) s.youtubeUrl = youtubeUrl;
   return s;
 };

@@ -5,7 +5,7 @@ import type { AiAnalysis } from '../analysis/ai-analysis';
 import type { Publication } from '../distribution/publication';
 import type { MediaAsset } from '../media/media-asset';
 import type { CultureTopic, ProgramCategory } from './category';
-import type { Content } from './content';
+import type { Content, MinorConsentFilter } from './content';
 import type { RevisionRequest } from './revision-request';
 import type { ContentStatus } from './workflow';
 
@@ -15,6 +15,12 @@ export interface ContentListQuery extends PageQuery {
   category?: ProgramCategory;
   /** 관제 공용 */
   stationId?: StationId;
+  /**
+   * 미성년자 동의 게이트 필터 (T-W2-27, 대장 #118) — 센터가 "동의 확인 대기" 대기열을 발견하는
+   * 목록 경로. status와 **직교**한다: `reviewPolicy='reporter_only'`는 센터 검토를 거치지 않아
+   * 차단된 콘텐츠가 `awaiting_reporter_review`에 멈춰 있으므로 상태 필터로는 골라낼 수 없다.
+   */
+  minorConsent?: MinorConsentFilter;
 }
 
 export interface SceneInput {

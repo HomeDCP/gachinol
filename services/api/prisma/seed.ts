@@ -20,6 +20,14 @@ interface StationSeed {
   region: string;
   sortOrder: number;
   dormantSince?: Date;
+  /**
+   * 공개 연락 채널(T-W2-28 · 대장 #127) — **전부 데모 값이다. 실 번호·실 채널이 아니다.**
+   * 064-000-0000은 미할당 번호, @gachinol-demo-*는 존재하지 않는 채널 핸들이다.
+   * 운영 실 값은 시드가 아니라 센터 관제의 지사 수정(PATCH /v1/stations/:id)으로 넣는다 —
+   * 아래 upsert는 그래서 **비어 있을 때만** 데모 값을 채운다(운영자가 넣은 값을 덮지 않는다).
+   */
+  supportTel?: string;
+  youtubeUrl?: string;
 }
 
 /** e2e 테스트에서도 재사용 — CLI 실행은 아래 main() */
@@ -42,6 +50,8 @@ export async function runSeed(prisma: PrismaClient, admin: SeedAdminCredentials)
       region: '제주시 애월읍',
       sortOrder: 1,
       dormantSince: now,
+      supportTel: '064-000-0000', // 데모(미할당 번호)
+      youtubeUrl: 'https://www.youtube.com/@gachinol-demo-aewol', // 데모(미개설 핸들)
     },
     {
       code: 'jeju-si',
@@ -51,10 +61,13 @@ export async function runSeed(prisma: PrismaClient, admin: SeedAdminCredentials)
       region: '제주시',
       sortOrder: 2,
       dormantSince: now,
+      supportTel: '064-000-0001', // 데모(미할당 번호)
+      youtubeUrl: 'https://www.youtube.com/@gachinol-demo-jeju-si', // 데모(미개설 핸들)
     },
   ];
 
   for (const s of stations) {
+    const existing = await prisma.station.findUnique({ where: { code: s.code } });
     await prisma.station.upsert({
       where: { code: s.code },
       create: {
@@ -66,9 +79,19 @@ export async function runSeed(prisma: PrismaClient, admin: SeedAdminCredentials)
         region: s.region,
         sortOrder: s.sortOrder,
         dormantSince: s.dormantSince ?? null,
+        supportTel: s.supportTel ?? null,
+        youtubeUrl: s.youtubeUrl ?? null,
       },
-      // 멱등 갱신 — 상태(status·dormantSince)는 운영 전이 결과 보존을 위해 건드리지 않는다
-      update: { name: s.name, region: s.region, sortOrder: s.sortOrder },
+      // 멱등 갱신 — 상태(status·dormantSince)는 운영 전이 결과 보존을 위해 건드리지 않는다.
+      // 공개 연락 채널도 같은 이유로 **비어 있을 때만** 채운다: 데모 값이라 운영자가 넣은 실
+      // 번호·실 채널을 시드 재실행이 덮어쓰면 안 된다(2회차 실행은 no-op = 멱등).
+      update: {
+        name: s.name,
+        region: s.region,
+        sortOrder: s.sortOrder,
+        ...(existing?.supportTel == null && s.supportTel ? { supportTel: s.supportTel } : {}),
+        ...(existing?.youtubeUrl == null && s.youtubeUrl ? { youtubeUrl: s.youtubeUrl } : {}),
+      },
     });
   }
 

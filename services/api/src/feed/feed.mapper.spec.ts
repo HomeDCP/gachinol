@@ -180,6 +180,8 @@ describe('toStationSummary', () => {
       region: '제주시 애월읍',
       description: '내부 설명',
       thumbnailUrl: null,
+      supportTel: null,
+      youtubeUrl: null,
       sortOrder: 1,
       foundedAt: null,
       dormantSince: new Date(),
@@ -200,5 +202,37 @@ describe('toStationSummary', () => {
     expect(toStationSummary(stationRow({ thumbnailUrl: 'https://cdn/x.jpg' })).thumbnailUrl).toBe(
       'https://cdn/x.jpg',
     );
+  });
+
+  // ── 공개 연락 채널 (T-W2-28 · 대장 #127) ────────────────────────────────
+  // 이 투영이 유일한 공개 통로다 — 여기서 빠지면 구독자 웹의 "지사에 전화 / 유튜브에서 보기"
+  // 대체 경로가 다시 앱 env(빌드 1개=값 1개)에만 의존하게 된다.
+  it('supportTel·youtubeUrl이 있으면 익명 공개 응답에 실려 나간다(지사별 값의 유일한 공급원)', () => {
+    const s = toStationSummary(
+      stationRow({
+        supportTel: '064-000-0000',
+        youtubeUrl: 'https://www.youtube.com/@gachinol-demo-aewol',
+      }),
+    );
+    expect(s.supportTel).toBe('064-000-0000');
+    expect(s.youtubeUrl).toBe('https://www.youtube.com/@gachinol-demo-aewol');
+    expect(Object.keys(s).sort()).toEqual(
+      ['id', 'name', 'region', 'status', 'supportTel', 'youtubeUrl'].sort(),
+    );
+  });
+
+  it('미설정(null)이면 키 자체가 없다 — 앱이 "설정됨"으로 오판해 죽은 버튼을 그리지 않게', () => {
+    const s = toStationSummary(stationRow({ supportTel: null, youtubeUrl: null }));
+    expect(s).not.toHaveProperty('supportTel');
+    expect(s).not.toHaveProperty('youtubeUrl');
+  });
+
+  it('빈 문자열·공백만 있는 값도 키를 만들지 않는다(쓰기 zod 우회분에 대한 2차 방어)', () => {
+    expect(toStationSummary(stationRow({ supportTel: '', youtubeUrl: '' }))).not.toHaveProperty(
+      'supportTel',
+    );
+    const blank = toStationSummary(stationRow({ supportTel: '   ', youtubeUrl: '\t\n' }));
+    expect(blank).not.toHaveProperty('supportTel');
+    expect(blank).not.toHaveProperty('youtubeUrl');
   });
 });

@@ -9,13 +9,22 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import type { ContentStatus, ContentSummary, ProgramCategory } from '@gachinol/shared';
+import type { ContentSummary, ProgramCategory } from '@gachinol/shared';
 import { userMessageForError } from '../../../src/api/errors';
 import { useBoardFilter } from '../../../src/board/board-filter-context';
+import {
+  BOARD_VIEWS,
+  boardViewEmptyMessage,
+  toBoardFilter,
+} from '../../../src/features/contents/board-views';
 import { formatDuration, formatRelativeTime } from '../../../src/features/contents/format';
 import { CATEGORY_LABEL } from '../../../src/features/contents/labels';
 import { useContentBoard } from '../../../src/features/contents/queries';
-import { statusBadge } from '../../../src/features/contents/status';
+import {
+  minorConsentBadge,
+  needsCenterAttention,
+  statusBadge,
+} from '../../../src/features/contents/status';
 import { useBranchStations } from '../../../src/features/stations/queries';
 import type { BoardFilter } from '../../../src/query/keys';
 import { Badge } from '../../../src/ui/badge';
@@ -24,21 +33,8 @@ import { ErrorView } from '../../../src/ui/error-view';
 import { Screen } from '../../../src/ui/screen';
 import { colors, radii, spacing, typo } from '../../../src/ui/theme';
 
-/**
- * 상태 칩 — 서버 status는 단일 값만 받는다(status-set/IN 미지원).
- * 기본 진입은 '센터 검토 대기'로 노이즈(전 지사·draft·live_vod 포함)를 억제.
- */
-const STATUS_FILTERS: readonly { label: string; status?: ContentStatus }[] = [
-  { label: '검토 대기', status: 'awaiting_center_review' },
-  { label: '전체' },
-  { label: '처리 중', status: 'processing' },
-  { label: '분석 중', status: 'analyzing' },
-  { label: '프리뷰 생성', status: 'preview_generating' },
-  { label: '기자 확인 대기', status: 'awaiting_reporter_review' },
-  { label: '편집 실패', status: 'processing_failed' },
-  { label: '송출 실패', status: 'publish_failed' },
-  { label: '송출 완료', status: 'published' },
-];
+// 보드 뷰 칩(라벨·조회 필터 매핑)은 src/features/contents/board-views.ts가 원천 — 순수 매핑이라
+// 라우트 모듈을 렌더하지 않고 단위 테스트로 고정한다.
 
 const CATEGORY_FILTERS: readonly ProgramCategory[] = [
   'news',
@@ -61,20 +57,16 @@ function SkeletonCard(): React.JSX.Element {
 /** ② 검토 보드 — 12개 지사 전체(무필터) 최신순 카드 리스트 (센터의 홈) */
 export default function BoardScreen(): React.JSX.Element {
   const { stationId, setStationId } = useBoardFilter();
-  const [statusIndex, setStatusIndex] = useState(0);
+  const [viewIndex, setViewIndex] = useState(0);
   const [category, setCategory] = useState<ProgramCategory | undefined>(undefined);
   const [categoryOpen, setCategoryOpen] = useState(false);
 
   const stations = useBranchStations();
 
-  const filter = useMemo<BoardFilter>(() => {
-    const status = STATUS_FILTERS[statusIndex]?.status;
-    return {
-      ...(status ? { status } : {}),
-      ...(category ? { category } : {}),
-      ...(stationId ? { stationId } : {}),
-    };
-  }, [statusIndex, category, stationId]);
+  const filter = useMemo<BoardFilter>(
+    () => toBoardFilter(BOARD_VIEWS[viewIndex], { category, stationId }),
+    [viewIndex, category, stationId],
+  );
 
   const list = useContentBoard(filter);
 
@@ -95,7 +87,9 @@ export default function BoardScreen(): React.JSX.Element {
 
   const renderCard = ({ item }: { item: ContentSummary }): React.JSX.Element => {
     const badge = statusBadge(item.status);
-    const needsAction = Boolean(badge.needsCenterAction);
+    // 동의 게이트 배지는 상태 배지와 별개 축이다 — 강조 판정은 두 축을 합친 needsCenterAttention 하나로.
+    const consent = minorConsentBadge(item);
+    const needsAction = needsCenterAttention(item);
     return (
       <Pressable
         style={[styles.card, needsAction && styles.cardHighlight]}
@@ -111,6 +105,7 @@ export default function BoardScreen(): React.JSX.Element {
             </Text>
             <View style={styles.badgeRow}>
               <Badge label={badge.label} tone={badge.tone} />
+              {consent ? <Badge label={consent.label} tone={consent.tone} /> : null}
               {needsAction ? <Text style={styles.actionLabel}>확인 필요</Text> : null}
             </View>
             <Text style={styles.cardMeta}>
@@ -128,20 +123,20 @@ export default function BoardScreen(): React.JSX.Element {
 
   return (
     <Screen>
-      {/* 상태 칩 (단일 선택) */}
+      {/* 보드 뷰 칩 (단일 선택) — 상태 축 + 동의 게이트 축(대장 #118) */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.chipScroll}
         contentContainerStyle={styles.chipRow}
       >
-        {STATUS_FILTERS.map((f, index) => {
-          const selected = index === statusIndex;
+        {BOARD_VIEWS.map((f, index) => {
+          const selected = index === viewIndex;
           return (
             <Pressable
               key={f.label}
               style={[styles.chip, selected && styles.chipSelected]}
-              onPress={() => setStatusIndex(index)}
+              onPress={() => setViewIndex(index)}
             >
               <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>
                 {f.label}
@@ -244,7 +239,9 @@ export default function BoardScreen(): React.JSX.Element {
               onRefresh={() => void list.refetch()}
             />
           }
-          ListEmptyComponent={<EmptyState message="검토할 콘텐츠가 없습니다" />}
+          ListEmptyComponent={
+            <EmptyState message={boardViewEmptyMessage(BOARD_VIEWS[viewIndex])} />
+          }
         />
       )}
     </Screen>

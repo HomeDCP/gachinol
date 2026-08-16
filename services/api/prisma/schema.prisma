@@ -28,6 +28,10 @@ model Station {
   region       String
   description  String?
   thumbnailUrl String?   @map("thumbnail_url")
+  // 공개 연락 채널(T-W2-28, 대장 #127) — 조직(지사)의 공개 업무 연락처라 개인 연락처(PII)와 구분된다.
+  // 근거 주석은 packages/shared/src/station/station.ts(계약 원천)에 있다. 개인 휴대번호 저장 금지.
+  supportTel   String?   @map("support_tel")
+  youtubeUrl   String?   @map("youtube_url")
   sortOrder    Int       @default(0) @map("sort_order")
   foundedAt    DateTime? @map("founded_at") @db.Date
   dormantSince DateTime? @map("dormant_since") @db.Timestamptz(3)

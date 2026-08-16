@@ -26,6 +26,19 @@ import { CONTENT_STATUS_TRANSITIONS, ContentStatus } from './workflow';
  *
  * 한계(무설명 승격 금지): 이 축은 **열거 가능한 계약**(전이 엣지)에만 걸린다. "이 함수가 실제로
  * 호출되는가" 같은 일반 문제는 여전히 사람 조사 몫이다(#29 ⑥).
+ *
+ * ★ 한계 ② — **stale될 수 없는 것은 멤버십뿐이다** (대장 #125에서 실증, T-W2-27에서 명시):
+ * 위 "목록은 stale될 수 없다"가 보증하는 범위는 **어떤 엣지가 등재돼 있는가**까지다. 각 항목의
+ * `reason`(사람이 쓴 사유 문구)은 아무것도 검증하지 않는다 — `not-wired.spec.ts`가 보는 것은
+ * `kind`가 열거값인지와 사유 길이가 10자를 넘는지뿐이다.
+ * 실제 사례: `published→archived`의 사유가 인용한 사실("api src 전체에 문자열 archived 참조 0건")은
+ * T-W2-10이 `content-workflow.service.ts`에 보관 후 훅을 추가하면서 **거짓이 됐는데도**, 멤버십 판정은
+ * 여전히 정확해서(전용 구동부는 지금도 없다) 스위트는 계속 그린이었다 — 자동 검증이 구조적으로
+ * 잡을 수 없는 종류의 결함이다.
+ * 따라서 사람 몫으로 남는 두 가지: ① 사유에 **검증 가능한 사실**("참조 0건", "파일:줄 번호")을
+ * 인용할수록 stale 위험이 커진다 — 인용하려면 그 사실이 지금도 참인지 확인한 뒤 적는다.
+ * ② 코드를 고칠 때는 그 코드를 인용하고 있는 사유가 있는지 함께 훑는다(정정을 코드에만 반영하고
+ * 그것을 설명하는 문구를 안 고치는 것이 이 리포의 반복 결함이다).
  */
 
 export const NotWiredKind = {
@@ -105,7 +118,7 @@ export const NOT_WIRED_CONTENT_TRANSITIONS: readonly NotWiredContentTransition[]
     to: 'archived',
     kind: NotWiredKind.Unimplemented,
     reason:
-      '보관(archive) 구동부가 없다 — api src 전체에 문자열 archived 참조 0건(엔드포인트·스케줄러·워커 어디에도). 범용 수동 전이가 유일 경로.',
+      '보관(archive) **전용** 구동부가 없다 — 이 엣지를 지정해 실행하는 제품 액션·엔드포인트·스케줄러·워커가 0건이고, 범용 수동 전이(POST /v1/contents/:id/transitions)가 유일 경로다. api src에 archived 문자열은 있으나(content-workflow.service.ts transition()의 `to === "archived"` 분기 = T-W2-10의 공개 객체 제거 훅) 그것은 도달 **후** 부작용이지 전이를 일으키는 곳이 아니다. (舊 사유는 "api src 전체에 문자열 archived 참조 0건"이라 적었고 T-W2-10 이후 거짓이 됐다 — 대장 #125에서 정정. 멤버십 판정은 그때도 정확했다: 헤더 "한계 ②" 참조.)',
   },
 
   // ── untested — 전용 구동부는 실재하나 api 단위 스위트가 밟지 않는다 ──

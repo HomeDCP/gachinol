@@ -1,8 +1,13 @@
+// ★ 이름 카탈로그·봉투 상한은 shared가 단일 원천(T-W2-29, 대장 #128) — 이 스펙이 api 로컬 사본을
+//   참조하면 클라이언트와의 drift를 잡을 수 없다. 서버 내부 값(롤업 용량·zod 스키마)만 로컬에서 온다.
 import {
+  TELEMETRY_EVENT_NAMES,
   TELEMETRY_MAX_BATCH_SIZE,
   TELEMETRY_MAX_PAYLOAD_BYTES,
-  TELEMETRY_MAX_ROLLUP_KEYS,
   TelemetryEventName,
+} from '@gachinol/shared';
+import {
+  TELEMETRY_MAX_ROLLUP_KEYS,
   TelemetryRollup,
   TelemetryService,
   zTelemetryEvent,
@@ -103,6 +108,17 @@ describe('TelemetryRollup', () => {
     const summary = rollup.toSummary();
     expect(summary.totalEventsReceived).toBe(2);
     expect(summary.unknownEventCount).toBe(1);
+  });
+
+  /**
+   * ★ 계약 구동 확인(T-W2-29) — shared 카탈로그에 이름을 추가하고 서버 배선(switch case)을 잊으면
+   * 여기가 깨진다. 이름 목록을 이 파일에 재타이핑하지 않고 `TELEMETRY_EVENT_NAMES`로 전수 순회하므로
+   * 사본이 생기지 않는다(카탈로그가 늘면 케이스도 자동으로 늘어난다).
+   */
+  it.each(TELEMETRY_EVENT_NAMES)('shared 카탈로그의 %s는 서버가 known으로 처리한다', (name) => {
+    const rollup = new TelemetryRollup();
+    expect(rollup.record({ name })).toBe('known');
+    expect(rollup.toSummary().unknownEventCount).toBe(0);
   });
 
   describe('① 콘텐츠 소비', () => {

@@ -1,3 +1,9 @@
+import {
+  TELEMETRY_MAX_PAYLOAD_BYTES,
+  TELEMETRY_MAX_BATCH_SIZE,
+  TelemetryEventName,
+  type TelemetryIngestResult,
+} from '@gachinol/shared';
 import { Injectable, Logger } from '@nestjs/common';
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
@@ -10,9 +16,13 @@ import { z } from 'zod';
  * Prisma 마이그레이션·Redis·`packages/shared` 전부 무변경. 계측은 KPI 관측용이라 유실 허용 등급이고,
  * 프로세스 재시작 시 롤업이 소실되는 것도 허용한다(구조화 로그가 durable 원천, 롤업은 빠른 조회 캐시).
  *
- * ── 이벤트 DTO/zod 스키마 위치 ────────────────────────────────────────────
- * api 로컬(shared 금지) — `distribution/distribution-job.ts`가 워커 인프로세스라 shared를 쓰지 않은
- * 것과 동형: 이 모듈도 클라이언트(앱)와 별도 프로세스 경계를 넘지 않는 REST 계약일 뿐이다.
+ * ── 이벤트 이름 카탈로그·봉투 상한의 위치: `@gachinol/shared` (T-W2-29, 대장 #128 ⓐ) ──────────
+ * T-W1-08은 카탈로그를 이 파일에 두었다("앱과 프로세스 경계를 넘지 않는 REST 계약"이라는 판단).
+ * 그러나 기자 웹이 같은 이름을 리터럴로 재타이핑해 소비하고 있었고, 서버가 카탈로그 밖 이름을
+ * 조용히 무시하므로(아래) 이름이 어긋나면 아무도 실패하지 않고 관측만 유실됐다 →
+ * `TelemetryEventName`·`TELEMETRY_MAX_BATCH_SIZE`·`TELEMETRY_MAX_PAYLOAD_BYTES`·`TelemetryIngestResult`는
+ * **shared가 단일 원천**이고 이 파일은 소비만 한다(사본 금지). zod 스키마·DTO는 여전히 api 로컬이다 —
+ * shared는 런타임 의존성 0이 규약이라 zod를 들일 수 없다.
  *
  * ── 미지의 이벤트 이름 처리: 무시 + 카운트 (400 거절 아님) ───────────────────
  * 봉투(이름·sessionId·contentId·occurredAt·payload)는 zod가 구조적으로 강제하되, `name`이 알려진
@@ -22,35 +32,16 @@ import { z } from 'zod';
  * 요청 전체를 400(validation_failed)으로 거부한다 — 이건 클라이언트 버그 신호라 조용히 삼키면 안 된다.
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/** 3트랙 이벤트 이름 카탈로그 — 02 §E-16 원문 3트랙(소비·업로드퍼널·모드선택)의 단일 원천 */
-export const TelemetryEventName = {
-  // ① 콘텐츠 소비
-  PlaybackStart: 'playback_start',
-  PlaybackProgress: 'playback_progress',
-  // ② 업로드 퍼널
-  WizardStepEnter: 'upload_wizard_step_enter',
-  WizardStepExit: 'upload_wizard_step_exit',
-  UploadStart: 'upload_start',
-  UploadResume: 'upload_resume',
-  UploadComplete: 'upload_complete',
-  LargeCaptionToggle: 'large_caption_mode_toggle',
-  // ③ 모드 선택
-  ModeSelected: 'mode_selected',
-} as const;
-export type TelemetryEventName = (typeof TelemetryEventName)[keyof typeof TelemetryEventName];
-
-/** 배치 상한 — 초과 시 요청 전체 400(구조 위반, zod 거부). env 미도입(고정 상수로 충분한 규모) */
-export const TELEMETRY_MAX_BATCH_SIZE = 100;
-
-/**
- * 개별 이벤트 payload 직렬화 크기 상한(바이트) — 대장 #79 조치②: `payload: z.record(...)`가 임의
- * 키-값을 허용해, 배치(최대 `TELEMETRY_MAX_BATCH_SIZE`건) 각 이벤트마다 거대한 payload를 실을 수
- * 있던 취약점을 막는다. 실제 카탈로그 payload(percent 숫자·enabled 불리언·mode 문자열)는 수십 바이트
- * 수준이라 4KB는 충분히 여유롭다. 초과 시 zod가 배치 전체를 400(validation_failed)으로 거부한다 —
- * 구조 위반이라 "미지의 이벤트 이름은 무시" 정책(위 안내)과 달리 조용히 삼키지 않는다.
- * env 미도입(고정 상수로 충분한 규모, 조율자 권고).
+/*
+ * `TelemetryEventName`(카탈로그)·`TELEMETRY_MAX_BATCH_SIZE`·`TELEMETRY_MAX_PAYLOAD_BYTES`는
+ * `@gachinol/shared`(packages/shared/src/telemetry/telemetry-event.ts)가 단일 원천이다 —
+ * 위 헤더 주석 참고. 여기서 재수출하지 않는다(소비처가 shared를 직접 import해야 사본이 안 생긴다).
+ *
+ * `TELEMETRY_MAX_PAYLOAD_BYTES`의 유래(대장 #79 조치②): `payload: z.record(...)`가 임의 키-값을
+ * 허용해 배치 각 이벤트마다 거대한 payload를 실을 수 있던 취약점을 막는다. 초과 시 zod가 배치 전체를
+ * 400(validation_failed)으로 거부한다 — 구조 위반이라 "미지의 이벤트 이름은 무시" 정책과 달리
+ * 조용히 삼키지 않는다.
  */
-export const TELEMETRY_MAX_PAYLOAD_BYTES = 4096;
 
 /** UTF-8 직렬화 바이트 기준(문자 길이 아님) — 이모지·한글 등 멀티바이트 페이로드를 과소평가하지 않는다 */
 const zTelemetryPayload = z
@@ -84,13 +75,6 @@ export const zTelemetryEventBatch = z
   .max(TELEMETRY_MAX_BATCH_SIZE, `배치는 최대 ${TELEMETRY_MAX_BATCH_SIZE}건까지 허용됩니다`);
 
 export class TelemetryEventBatchDto extends createZodDto(zTelemetryEventBatch) {}
-
-export interface TelemetryIngestResult {
-  /** 카탈로그에 있는 이벤트로 처리된 건수 */
-  accepted: number;
-  /** 카탈로그 밖 이름이라 무시된 건수(배치 자체는 거부되지 않음) */
-  unknownEventCount: number;
-}
 
 const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
 type ProgressMilestone = (typeof PROGRESS_MILESTONES)[number];
@@ -356,6 +340,8 @@ export class TelemetryRollup {
         return 'known';
       }
 
+      // ⚠️ 발신은 대장 #123으로 프로덕션에서 제거됐다(존재하지 않는 "간단 모드"를 계측하면 채택률
+      // KPI가 무의미해진다). 수신·집계 경로는 과거 수집분 호환을 위해 남긴다 — 재도입 금지.
       case TelemetryEventName.ModeSelected: {
         const mode = event.payload?.mode;
         if (mode === 'simple') this.simpleCount += 1;

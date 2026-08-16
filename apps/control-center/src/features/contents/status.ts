@@ -1,7 +1,8 @@
-import type { ContentStatus } from '@gachinol/shared';
+import type { ContentStatus, MinorConsentFacts } from '@gachinol/shared';
 import {
   AUTO_PROGRESS_CONTENT_STATUSES,
   isAutoProgressContentStatus,
+  isMinorConsentPending,
   isStalledAutomationContentStatus,
 } from '@gachinol/shared';
 
@@ -119,3 +120,38 @@ export const isTerminalStatus = (s: ContentStatus): boolean => TERMINAL_STATUSES
 export const AUTO_PROGRESS_STATUSES: readonly ContentStatus[] = AUTO_PROGRESS_CONTENT_STATUSES;
 
 export const isAutoProgressStatus = (s: ContentStatus): boolean => isAutoProgressContentStatus(s);
+
+/**
+ * ★ 미성년자 동의 게이트 배지 (T-W2-27, 대장 #118) — 목록·상세 공용.
+ *
+ * 왜 별도 배지인가: 이 게이트는 **상태와 직교**한다. 게이트가 막고 있는 콘텐츠의 status는
+ * reviewPolicy에 따라 `awaiting_center_review`(reporter_then_center)이거나
+ * `awaiting_reporter_review`(reporter_only)이고, 후자는 센터 검토 자체를 거치지 않아
+ * `statusBadge()`만으로는 "센터가 봐야 한다"는 신호가 전혀 나오지 않는다(그게 대장 #118의 교착).
+ *
+ * "대기인가"의 판정은 shared `isMinorConsentPending` **하나뿐**이다 — api 승인 가드
+ * (`policyGuard ④`)가 쓰는 것과 같은 술어라 서버가 막는 조건과 화면이 강조하는 조건이 갈릴 수 없다.
+ * 여기에 사본 조건(`minorConsentConfirmedAt === null` 직접 비교 등)을 쓰지 말 것.
+ *
+ * 종결 상태(rejected·canceled·archived)에서는 배지를 남기되 "조치 필요"로 올리지 않는다 —
+ * 사실은 그대로 보이되(감사), 더 이상 승인될 수 없는 콘텐츠로 대기열을 오염시키지 않는다.
+ */
+export const minorConsentBadge = (
+  item: MinorConsentFacts & { status: ContentStatus },
+): StatusBadge | undefined => {
+  if (!item.hasMinorSubject) return undefined; // 플래그가 꺼진 대다수 — 이 축과 무관
+  if (!isMinorConsentPending(item)) return { label: '동의 확인 완료', tone: 'success' };
+  return isTerminalStatus(item.status)
+    ? { label: '동의 미확인', tone: 'neutral' }
+    : { label: '동의 확인 대기', tone: 'danger', needsCenterAction: true };
+};
+
+/**
+ * 카드 강조(“확인 필요”) 판정 — 상태 축과 동의 게이트 축을 합친 유일 관문.
+ * 화면이 두 배지의 `needsCenterAction`을 각자 OR 하면 한쪽을 빠뜨리기 쉬워 여기로 모은다.
+ */
+export const needsCenterAttention = (
+  item: MinorConsentFacts & { status: ContentStatus },
+): boolean =>
+  statusBadge(item.status).needsCenterAction === true ||
+  minorConsentBadge(item)?.needsCenterAction === true;

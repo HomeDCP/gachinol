@@ -6,6 +6,7 @@ import {
   CONTENT_RETRY_TARGET,
   CONTENT_STATUS_TRANSITIONS,
   isFailureStatus,
+  isMinorConsentPending,
   nextStates,
 } from '@gachinol/shared';
 import type { Content as ContentRow, Prisma } from '@prisma/client';
@@ -413,11 +414,9 @@ export class ContentWorkflowService {
       from === 'awaiting_reporter_review' &&
       to === 'reporter_approved' &&
       content.reviewPolicy === 'reporter_only';
-    if (
-      (isCenterApproval || isReporterOnlyTerminalApproval) &&
-      content.hasMinorSubject &&
-      !content.minorConsentConfirmedAt
-    ) {
+    // 판정 술어는 shared `isMinorConsentPending` 하나뿐(T-W2-27) — 관제 보드의 발견 수단
+    // (목록 필터·배지)이 같은 술어에서 파생하므로 "무엇이 차단인가"가 서버·UI에서 갈릴 수 없다.
+    if ((isCenterApproval || isReporterOnlyTerminalApproval) && isMinorConsentPending(content)) {
       throw new DomainException(
         'invalid_transition',
         '피촬영자 만 14세 미만 플래그가 켜져 있습니다 — 법정대리인 동의서 확인 전에는 승인할 수 없습니다',

@@ -16,7 +16,11 @@ import type {
 } from '@gachinol/shared';
 import type { ApiClient } from './client';
 
-/** GET /v1/contents — 센터는 전 지사 횡단 (stationId로 특정 지사 필터 가능) */
+/**
+ * GET /v1/contents — 센터는 전 지사 횡단 (stationId로 특정 지사 필터 가능).
+ * `minorConsent`는 미성년자 동의 게이트 필터(T-W2-27, 대장 #118) — status로 대체할 수 없다
+ * (reviewPolicy='reporter_only'는 센터 검토를 안 거쳐 차단분이 awaiting_reporter_review에 멈춘다).
+ */
 export const listContents = (
   c: ApiClient,
   q: ContentListQuery,
@@ -28,6 +32,7 @@ export const listContents = (
       status: q.status,
       category: q.category,
       stationId: q.stationId,
+      minorConsent: q.minorConsent,
     },
   });
 

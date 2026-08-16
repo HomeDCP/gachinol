@@ -66,7 +66,16 @@ export class ContentsController {
 
   @Get()
   @Roles('reporter', 'center_operator')
-  @ApiOperation({ summary: '목록 — reporter는 자기 지사 강제' })
+  @ApiOperation({
+    summary: '목록 — reporter는 자기 지사 강제',
+    description:
+      'minorConsent=pending|confirmed는 미성년자 동의 게이트 필터다(T-W2-27, 대장 #118). 둘 다 ' +
+      'hasMinorSubject=true인 콘텐츠만 남기며, pending은 아직 확인되지 않은 것 = 센터가 확인해야 ' +
+      '승인이 풀리는 대기열이다. status로 대체할 수 없다 — reviewPolicy=reporter_only는 센터 검토를 ' +
+      '거치지 않아 차단된 콘텐츠가 awaiting_reporter_review에 멈추기 때문이다. 사실 필터라 ' +
+      '종결(rejected·canceled) 상태를 따로 제외하지 않는다. 응답 ContentSummary에도 ' +
+      'hasMinorSubject·minorConsentConfirmedAt이 실린다(확인자 id는 상세에만).',
+  })
   list(
     @CurrentUser() user: User,
     @Query() query: ContentListQueryDto,
