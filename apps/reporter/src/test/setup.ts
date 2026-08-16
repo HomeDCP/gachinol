@@ -18,3 +18,19 @@ jest.mock('expo-secure-store', () => {
     },
   };
 });
+
+/**
+ * 화면 렌더 테스트(T-W2-26)를 위한 expo-video 목 — 네이티브 플레이어 부재(subscriber
+ * src/test/setup.ts와 동형 패턴). 원본 재생 화면(resident-uploads/[id].tsx 등)을 렌더할 때 필요.
+ */
+jest.mock('expo-video', () => ({
+  useVideoPlayer: () => ({
+    play: jest.fn(),
+    pause: jest.fn(),
+    replace: jest.fn(),
+    currentTime: 0,
+    timeUpdateEventInterval: 0,
+    addListener: () => ({ remove: jest.fn() }),
+  }),
+  VideoView: () => null,
+}));
