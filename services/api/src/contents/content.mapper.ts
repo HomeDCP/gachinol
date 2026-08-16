@@ -69,6 +69,13 @@ export const toContent = (row: ContentRow): Content => {
     durationSec: row.durationSec,
     approvedByUserId: row.approvedByUserId ? toId<UserId>(row.approvedByUserId) : null,
     approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
+    hasMinorSubject: row.hasMinorSubject,
+    minorConsentConfirmedByUserId: row.minorConsentConfirmedByUserId
+      ? toId<UserId>(row.minorConsentConfirmedByUserId)
+      : null,
+    minorConsentConfirmedAt: row.minorConsentConfirmedAt
+      ? row.minorConsentConfirmedAt.toISOString()
+      : null,
     publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

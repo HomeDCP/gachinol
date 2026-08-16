@@ -1,5 +1,5 @@
 import { zPage } from '../../common/zod';
-import { zCreateContentDraft } from './content.schemas';
+import { zCreateContentDraft, zUpdateContentDraft } from './content.schemas';
 
 describe('content.schemas', () => {
   const base = {
@@ -74,6 +74,30 @@ describe('content.schemas', () => {
     it('UUID 형식이 아니면 실패', () => {
       const res = zCreateContentDraft.safeParse({ ...base, remakeOfContentId: 'not-a-uuid' });
       expect(res.success).toBe(false);
+    });
+  });
+
+  describe('hasMinorSubject — 선택 필드(T-W2-23)', () => {
+    it('zCreateContentDraft: 미지정이면 undefined로 성공 (미전송 시 서버가 false로 저장)', () => {
+      const res = zCreateContentDraft.safeParse(base);
+      expect(res.success).toBe(true);
+      if (res.success) expect(res.data.hasMinorSubject).toBeUndefined();
+    });
+
+    it('zCreateContentDraft: boolean 전송 시 그대로 성공', () => {
+      const res = zCreateContentDraft.safeParse({ ...base, hasMinorSubject: true });
+      expect(res.success).toBe(true);
+      if (res.success) expect(res.data.hasMinorSubject).toBe(true);
+    });
+
+    it('zCreateContentDraft: boolean이 아니면 실패', () => {
+      const res = zCreateContentDraft.safeParse({ ...base, hasMinorSubject: 'yes' });
+      expect(res.success).toBe(false);
+    });
+
+    it('zUpdateContentDraft: hasMinorSubject만 단독 전송해도 성공', () => {
+      const res = zUpdateContentDraft.safeParse({ hasMinorSubject: false });
+      expect(res.success).toBe(true);
     });
   });
 

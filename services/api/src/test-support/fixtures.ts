@@ -269,6 +269,7 @@ export const makePrismaMock = () => {
     },
     statusTransitionLog: {
       create: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
     },

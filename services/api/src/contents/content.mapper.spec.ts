@@ -26,6 +26,25 @@ describe('content.mapper — row → shared wire', () => {
     expect(() => toContent(row)).toThrow();
   });
 
+  it('toContent — 미성년자 동의 3필드 투영 (T-W2-23): 미확인은 전부 null/false', () => {
+    const content = toContent(contentRow());
+    expect(content.hasMinorSubject).toBe(false);
+    expect(content.minorConsentConfirmedByUserId).toBeNull();
+    expect(content.minorConsentConfirmedAt).toBeNull();
+  });
+
+  it('toContent — 미성년자 동의 확인 완료 상태를 그대로 투영', () => {
+    const row = contentRow({
+      hasMinorSubject: true,
+      minorConsentConfirmedByUserId: 'u-center',
+      minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
+    });
+    const content = toContent(row);
+    expect(content.hasMinorSubject).toBe(true);
+    expect(content.minorConsentConfirmedByUserId).toBe('u-center');
+    expect(content.minorConsentConfirmedAt).toBe('2026-08-10T00:00:00.000Z');
+  });
+
   it('toContentSummary — 비정규화 이름 채움, live_vod는 reporterName null', () => {
     const summary = toContentSummary({
       ...contentRow(),

@@ -1,4 +1,15 @@
-import { Body, Controller, Get, HttpCode, Logger, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Logger,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type {
   Content,
@@ -79,6 +90,35 @@ export class ContentsController {
     @Body() body: UpdateContentDraftDto,
   ): Promise<Content> {
     return this.contents.update(user, id, body);
+  }
+
+  @Post(':id/minor-consent')
+  @HttpCode(200)
+  @Roles('center_operator', 'admin')
+  @ApiOperation({
+    summary: '미성년자 피촬영자 법정대리인 동의 확인 — 센터 전용 (07 §3-3·02 §E-20, T-W2-23)',
+    description:
+      '촬영한 기자가 아니라 검토하는 센터가 확인해야 게이트가 실효를 갖는다. hasMinorSubject=false인 ' +
+      '콘텐츠는 거부(선확인 후 플래그를 켜는 우회 차단). 이미 확인된 콘텐츠는 멱등 200이며 최초 ' +
+      '확인자·시각을 덮어쓰지 않는다(감사 기록 보존).',
+  })
+  confirmMinorConsent(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
+    return this.contents.confirmMinorConsent(user, id);
+  }
+
+  @Delete(':id/minor-consent')
+  @Roles('center_operator', 'admin')
+  @ApiOperation({
+    summary: '미성년자 동의 확인 철회 — 센터 전용',
+    description:
+      '미확인 상태면 409. 미성년자 게이트가 차단하는 전이(reviewPolicy에 따라 ' +
+      'awaiting_center_review→center_approved 또는 awaiting_reporter_review→reporter_approved)가 ' +
+      'status_transition_logs에 이미 기록됐으면 게이트 효력이 없어 409로 거부한다. approvedAt은 ' +
+      '판정에 쓰지 않는다(reporter_then_center의 기자 승인 hop에서도 채워지므로 게이트 통과의 ' +
+      '프록시가 아니다). 사유 바디는 받지 않는다(저장할 컬럼이 없다 — T-W2-24 선례).',
+  })
+  withdrawMinorConsent(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
+    return this.contents.withdrawMinorConsent(user, id);
   }
 
   @Post(':id/approve')

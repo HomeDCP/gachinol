@@ -31,6 +31,8 @@ export interface CreateContentDraftRequest {
   category: ProgramCategory;
   cultureTopics?: readonly CultureTopic[];
   scenes: readonly SceneInput[];
+  /** 피촬영자 중 만 14세 미만 존재 여부 — 미전송 시 false (07 §3-3·02 §E-20, T-W2-23) */
+  hasMinorSubject?: boolean;
   /**
    * 반려(rejected)·취소(canceled)된 콘텐츠 재작업 시 원본 참조 (T-W2-20).
    * 서버가 검증: 원본 실재·상태(rejected|canceled)·같은 지사(stationId) 소속.
@@ -45,6 +47,12 @@ export interface UpdateContentDraftRequest {
   category?: ProgramCategory;
   cultureTopics?: readonly CultureTopic[];
   scenes?: readonly SceneInput[];
+  /**
+   * 피촬영자 중 만 14세 미만 존재 여부 (T-W2-23). fail-closed 불변식: true→false로 내리면
+   * 서버가 같은 update에서 확인 기록(minorConsentConfirmedByUserId·At)도 함께 지운다 —
+   * 켬→센터 확인→끔→다시 켬으로 동의 게이트를 우회하는 경로를 막는다.
+   */
+  hasMinorSubject?: boolean;
   targetChannelAccountIds?: readonly ChannelAccountId[];
 }
 
