@@ -4,14 +4,21 @@
 #   docker compose -f infra/docker/docker-compose.prod.yml \
 #                  -f infra/docker/docker-compose.xeon.yml up -d
 #
-# ⚠️ **DCP 파이프라인 영구 철수 확정(운영자, 2026-08-17)** — 제온은 이제 gachinol 단독 사용이다.
-#    그에 맞춰 **DCP 상호배제를 해제**했다(아래 ④). 아래 ①②③은 철수 완료 통보 후 [A-2]에서 재설계한다
-#    — 지금 리소스 리밋을 풀면 철수 도중의 DCP와 자원 경합이 생기므로 **순서상 아직 손대지 않는다**.
+# ✅ **DCP 파이프라인 영구 철수 완료(운영자 확정 2026-08-17). 제온은 gachinol 단독 사용이다.**
+#    [A-1]에서 상호배제를 해제하고(아래 ④), **[A-2]에서 회수 자원을 재배분했다** — 아래 ①②③ 갱신.
+#    재배분은 전부 **제온 실측 근거**로 정했다(추정 금지): media-worker 블록·minio 블록 주석 참조.
 #
-# (철수 전 전제) 제온은 **가동 중인 DCP 파이프라인**(dcpx-api/worker/redis/caddy)과 호스트를 공유했다.
-# 이 오버레이의 목적은 그 공존을 안전하게 만드는 것이었다:
-#   ① 리소스 하드리밋 — DCP worker 상한 26GiB + 우리 몫 < 물리 32GB, 최소 6GB 여유 확보 (**[A-2] 재설계 대상**)
-#   ② 포트 격리 — dcpx-caddy(:443)·dcpx-api(:8080)와 겹치지 않는 포트만 사용(4000·9000·9001·8081)
+# 이 오버레이의 현재 목적(단독 사용 전제):
+#   ① 리소스 배분 — **[A-2] 재설계 완료(2026-08-17)**. 총 31GiB 중 컨테이너 합계 **14.25GiB**
+#      (api 2 · media-worker 3 · postgres 4 · minio 2 · ai-worker 2 · redis 1 · web 0.25)로 두고
+#      나머지 **~16.75GiB는 페이지캐시·OS 여유**로 남긴다 — 미디어 IO가 캐시에 크게 의존하고,
+#      리밋을 꽉 채우면 OOM 시 컨테이너가 먼저 죽는다. 실사용은 현재 합계 530MiB 수준이라
+#      이 값들은 상한이지 예약이 아니다(cgroup limit은 미사용분을 잡아두지 않는다).
+#      CPU는 media-worker만 상한을 둔다(32) — 나머지는 무제한이되 실사용이 1% 미만이라 경합이 없다.
+#   ② 포트 — dcpx가 쓰던 :443·:8080은 이제 비어 있다. 우리는 4000(api)·9000(minio)·8081(web)을
+#      LAN에 열고, **9001(minio 콘솔)은 [A-2]에서 루프백 전용으로 축소**했다(minio 블록 참조).
+#      :443 전환은 **도메인 확정이 선행**이다 — named tunnel도 Let's Encrypt TLS도 도메인을 요구한다.
+#      그때까지 외부 노출은 `gachinol-quick-tunnel.service`(Cloudflare Quick Tunnel)가 담당한다.
 #   ③ host net 금지 — 전부 bridge. 호스트 도달은 extra_hosts로만
 #   ④ ~~DCP 상호배제~~ — **해제됨(2026-08-17)**. `DCP_ARBITER_URL`을 제거해 `DcpArbiterService`가
 #      `enabled=false`로 부팅하며 미디어 큐가 상시 가동된다. **DCP api가 사라지기 전에 이 해제를 먼저
@@ -76,36 +83,48 @@ services:
       - '${API_PORT_PUBLISH:-4000}:4000'
     deploy:
       resources:
-        limits: { memory: 1g }
+        limits: { memory: 2g }
 
-  # 트랜스코딩 = CPU 경합의 주범. DCP encoding이 32코어를 전부 쓰므로(dcpomatic -t 32)
-  # 동시성 1 + CPU 상한으로 조이고, 그 위에 아비터가 큐 자체를 정지시킨다(이중 방어).
+  # 트랜스코딩 — [A-2] DCP 철수로 32C/64T 전부 회수. 아래 값은 **제온 실측 기반**이다
+  # (2026-08-17, 실기 촬영본 1080p HEVC 117.9초 → 720p, 프로파일은 ffmpeg.ts transcode()와 동일):
+  #   cpus:  4→130.7s · 8→65.2s · 16→32.2s · **32→18.2s** · 64→18.0s
+  #          ⇒ x264 veryfast의 스레드 병렬성이 **물리 코어 32에서 포화**한다(64는 이득 0.6%).
+  #             HT 32스레드를 더 줘도 0.2초밖에 안 빨라지므로 그 몫은 다른 서비스에 남긴다.
+  #   동시:  2×16=3.00건/분 · 4×8=2.40 · 8×4=2.40 · 4×16=3.60(전 코어 점유)
+  #          ⇒ 처리량 최대는 4×16이지만 **워크로드가 하루 1~9건**이라(01 §C-5 편성: MVP 주 5건,
+  #             12지사 확장 주 60건) 병목은 처리량이 아니라 **지연**이다 — 기자가 프리뷰를 기다린다.
+  #   메모리: 인코딩 392MiB/건(동시 2건에서 394로 선형) + Node 런타임 ~140MB ⇒ 2건에 ~930MB
+  # 선택: cpus=32 / concurrency=2 — 1건이면 32코어로 18.2s(종전 65.2s 대비 3.6배),
+  #       2건 겹치면 각 16코어로 35.7s에 둘 다. 물리 코어만 점유.
   media-worker:
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_FORCE_PATH_STYLE: 'true'
-      MEDIA_WORKER_CONCURRENCY: '1'
+      MEDIA_WORKER_CONCURRENCY: '2'
     depends_on:
       minio:
         condition: service_healthy
     deploy:
       resources:
-        limits: { cpus: '8', memory: 2g }
+        limits: { cpus: '32', memory: 3g }
 
+  # 실 제공자(RTZR STT·비전) 주입 시 메모리 요구가 오른다 — 지금은 결정적 스텁이라 40MB 남짓
   ai-worker:
     deploy:
       resources:
-        limits: { memory: 1g }
+        limits: { memory: 2g }
 
+  # 미디어 메타·전이 로그·감사 로그가 콘텐츠 건수에 비례해 증가한다. 현재 pgdata 49.5MB로
+  # 작지만 12지사 확장 시 shared_buffers·캐시 여유가 필요해 선제 상향(1g→4g).
   postgres:
     deploy:
       resources:
-        limits: { memory: 1g }
+        limits: { memory: 4g }
 
   redis:
     deploy:
       resources:
-        limits: { memory: 512m }
+        limits: { memory: 1g }
 
   # 프로덕션은 Cloudflare R2지만 제온엔 오브젝트 스토리지가 없다 → S3 호환 로컬 대체.
   # 코드는 S3_ENDPOINT만 보므로 R2 전환 시 이 서비스를 빼고 env만 바꾸면 된다.
@@ -116,11 +135,22 @@ services:
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY 필요(.env)}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY 필요(.env)}
-    volumes: [miniodata:/data]
+    # [A-2] 미디어 데이터는 **2TB 전용 NVMe**(/srv/dcpwork, DCP 철수로 회수)에 둔다.
+    # 근거(실측 2026-08-17): 콘텐츠 1건 ≈ 180MB(2분물, 원본+렌디션+프리뷰+썸네일).
+    #   MVP 주 5건 = 월 3.3GB / 12지사 주 60건 = **월 39GB** → 루트 여유 365GB로는 12지사 시 9개월.
+    #   이전 시점은 **지금이 최적**이다 — 현재 567MB라 수 초면 끝나고, 수백 GB로 커진 뒤엔 몇 시간 걸린다.
+    # 소유권: minio 공식 이미지는 컨테이너 내부에서 uid 0으로 돈다 → 호스트 디렉터리도 root:root.
+    #   (앱 3종 api·media-worker·ai-worker는 uid 10001이지만 이 경로를 직접 만지지 않는다 — S3 API로만 접근)
+    # 마운트 지속성: /srv/dcpwork 는 fstab에 UUID로 등재돼 있고 docker.service는 enabled라
+    #   재부팅 후에도 local-fs.target → docker 순으로 정상 기동한다(실측 확인).
+    volumes: ['/srv/dcpwork/minio:/data']
     ports:
-      # 앱이 서명 URL로 직접 미디어를 주고받는다 → LAN 노출 필요(콘솔 9001은 선택)
+      # 9000: 앱이 서명 URL로 직접 미디어를 주고받는다 → LAN 노출 유지(필수).
+      # 9001(콘솔): [A-2]로 **루프백 전용**으로 축소했다 — 앱은 콘솔을 쓰지 않고 운영자만 본다.
+      #   접근은 SSH 터널로: ssh -N -L 9001:127.0.0.1:9001 xeon → http://127.0.0.1:9001
+      #   (방화벽은 건드리지 않았다 — docker 포트 바인딩 주소만 바꿨다)
       - '${MINIO_PORT_PUBLISH:-9000}:9000'
-      - '${MINIO_CONSOLE_PORT_PUBLISH:-9001}:9001'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT_PUBLISH:-9001}:9001'
     healthcheck:
       test: ['CMD', 'mc', 'ready', 'local']
       interval: 10s
@@ -128,7 +158,7 @@ services:
       retries: 10
     deploy:
       resources:
-        limits: { memory: 1g }
+        limits: { memory: 2g }
 
   # 버킷 1회 생성(로컬 개발 compose와 동일 패턴)
   minio-init:
@@ -185,4 +215,7 @@ services:
         limits: { memory: 256m }
 
 volumes:
+  # [A-2]에서 minio는 `/srv/dcpwork/minio` 바인드로 옮겼다(그 블록 주석 참조). 이 named volume은
+  # **이전 전 데이터가 그대로 남아 있는 백업**이라 선언을 지우지 않는다 — 삭제는 이전 검증이 끝나고
+  # 운영자가 판단한다(리포 규율상 volume prune 금지).
   miniodata: {}
