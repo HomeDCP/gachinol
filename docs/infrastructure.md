@@ -140,22 +140,54 @@ redis 1 · web 0.25). 인코딩 실측 **392MiB/건**(동시 2건에서 394로 �
 
 콘텐츠 1건 ≈ **180MB**(2분물: 원본+렌디션+프리뷰+썸네일) 실측. **이전 시점은 지금이 최적이었다** —
 567MB라 1.6초에 끝났고, 수백 GB로 커진 뒤엔 몇 시간 다운타임이다.
-소유권 **`root:root 0700`** (minio 공식 이미지가 컨테이너 내부에서 uid 0으로 동작 — 실측).
-DCP 잔재인 setgid `dcpauto` 규약은 승계하지 않는다. 미디어에 주민 제보 등 비공개 콘텐츠가 들어가므로 최소 권한.
+소유권 **`/srv/dcpwork/minio` = `root:root 0700`**, 부모 **`/srv/dcpwork` = `root:root 0755`(setgid 제거)**.
+minio 공식 이미지가 컨테이너 내부에서 uid 0으로 동작하므로(실측) 상위만 조이면 접근에 영향이 없다.
+DCP 잔재인 setgid `dcpauto`(GID 1002) 규약은 **승계하지 않는다** — 부모를 정리하지 않으면 앞으로
+`/srv/dcpwork` 아래에 만드는 디렉터리(미디어 캐시·렌디션 임시 경로 등)가 **그룹을 조용히 상속**한다.
+미디어에 주민 제보 등 비공개 콘텐츠가 들어가므로 하위는 최소 권한으로 잠근다.
+
+> ⚠️ **권한 설정에서 실제로 밟은 함정 2개**(2026-08-17 교차검증에서 적발):
+> ① **`cp -a`가 `chmod`를 덮는다** — `mkdir` → `chmod 0700` → `cp -a /from/. /to/` 순서로 하면
+> `cp -a`가 **원본 디렉터리의 모드(0755)까지 복사**해 0700이 조용히 되돌아간다.
+> **`chmod`는 반드시 `cp` 뒤에** 한다.
+> ② **`chmod 0755`로는 setgid가 안 지워진다** — 4자리 8진수를 줘도 `drwxr-sr-x`로 남았다.
+> **`chmod g-s`(심볼릭)로 명시 제거**하고 `mkdir` 테스트로 상속이 끊겼는지 확인할 것.
+
 ⚠️ `df`가 `/srv/dcpwork`를 36G 사용으로 표시하는 것은 **누수가 아니라** XFS(`rmapbt=1 reflink=1`)의
 per-AG 메타데이터 예약이다(AG 64 × 571MiB). **실가용 1.8TB.**
+
+⚠️ **NAS 마운트 3종은 여유 공간이 아니다.** `/mnt/nas`(SMB ro)·`/mnt/nas-nfs`(NFS ro)는 읽기 전용이고,
+**`/mnt/nas-out`(SMB rw)에는 DCP 납품물 2.1TB가 들어 있는 타 프로젝트 실 자산**이다.
+rw라고 임시 저장소로 쓰지 마라. NAS를 미디어 아카이브로 쓰려면 **NAS 쪽 별도 공유 신설**이 선행이며
+그것은 운영자(NAS GUI) 작업이다.
 
 **⑤ 노출**: MinIO 콘솔(9001)을 **루프백 전용**으로 축소(앱은 콘솔을 쓰지 않는다. 접근은 SSH 터널).
 9000은 앱이 서명 URL로 직접 쓰므로 LAN 유지. **`:443` 전환은 도메인 확정이 선행**이다 —
 named tunnel도 Let's Encrypt TLS도 도메인을 요구한다. 그때까지 `gachinol-quick-tunnel.service` 유지
 (⚠️ URL이 재기동마다 바뀐다 — 실제 2회 변경).
 
+**⑥ 스왑 회수**(2026-08-17 후속): DCP가 26GiB 상한으로 돌던 시절의 잔재로 **스왑 2.4GiB**가 남아 있었다.
+스왑에 있는 페이지는 접근 시 느리다. 메모리 여유가 충분해(23Gi > 2.4Gi) `swapoff -a && swapon -a`로
+**재부팅 없이 회수**했다 — 10.9초, 7컨테이너 무중단, 스왑 **2.4Gi → 0B**(메모리 사용 7.3→9.7Gi로 복귀).
+
 **부팅 자동복구**(정적 검증 5항 통과): fstab UUID 등재 · `srv-dcpwork.mount` active ·
 docker.service enabled · docker가 `local-fs.target` 이후 시작 · 7서비스 `restart: unless-stopped`.
+⚠️ **재부팅 실검증은 보류 중**이다 — 재부팅하면 `gachinol-quick-tunnel.service`가 재시작되며
+**구독자 웹 공개 URL이 바뀐다**(운영 영향). 운영자 승인 후 수행.
 
 **손대지 않은 것**: DCP 보존 자산 전부(이미지·볼륨·레포·`/var/lib/dcpauto`·릴레이 유닛·NAS 마운트) ·
-`dcpx-fan-control`/`dcpx-nas-mounts`(이름만 dcpx인 호스트 인프라) · `prune` 계열 미실행
-(**build cache 22.49GB / 회수 가능 6.79GB는 보고만** — 실행은 운영자 승인 사항) · `/etc/nftables.conf` 무변경.
+`dcpx-fan-control`/`dcpx-nas-mounts`(이름만 dcpx인 호스트 인프라) · `/etc/nftables.conf` 무변경.
+
+**`prune` 정책**(2026-08-17 교차검증으로 범위 명확화): 금지의 취지는 **dcpx 이미지 2종·볼륨 2종 보존**이다.
+`docker builder prune`은 **빌드 캐시만** 지우고 이미지·볼륨을 건드리지 않으므로 그 취지 밖이다 —
+다만 루트 84/454GB(19%)로 여유가 충분하고 회수량이 6.79GB뿐이라 **지금은 실행하지 않는다**(현황
+build cache 22.49GB). 디스크 압박 시 **`docker builder prune`만** 실행하고,
+**`docker system|image|volume prune`은 계속 금지**한다.
+
+⚠️ **도메인 확정 후 `:443` TLS 전환 시 선결 주의**: `/etc/nftables.conf` 3행에 `flush ruleset`이 있어
+**파일을 통째로 재적용하면 Docker `ip nat DOCKER` 체인과 Tailscale `ts-input`/`ts-forward`까지 삭제된다.**
+라이브 변경은 `sudo nft delete rule inet filter input handle N`으로 개별 수행하고, 파일은 **다음 부팅용으로
+편집만** 하며, 검증은 `sudo nft -c -f`(문법 검사 전용)로 한다.
 
 #### A-1. 클라우드 이관 시 사양(원안 유지)
 
