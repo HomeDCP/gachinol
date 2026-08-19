@@ -160,10 +160,14 @@ DCP 잔재인 setgid `dcpauto`(GID 1002) 규약은 **승계하지 않는다** �
 ⚠️ `df`가 `/srv/dcpwork`를 36G 사용으로 표시하는 것은 **누수가 아니라** XFS(`rmapbt=1 reflink=1`)의
 per-AG 메타데이터 예약이다(AG 64 × 571MiB). **실가용 1.8TB.**
 
-⚠️ **NAS 마운트 3종은 여유 공간이 아니다.** `/mnt/nas`(SMB ro)·`/mnt/nas-nfs`(NFS ro)는 읽기 전용이고,
-**`/mnt/nas-out`(SMB rw)에는 DCP 납품물 2.1TB가 들어 있는 타 프로젝트 실 자산**이다.
-rw라고 임시 저장소로 쓰지 마라. NAS를 미디어 아카이브로 쓰려면 **NAS 쪽 별도 공유 신설**이 선행이며
-그것은 운영자(NAS GUI) 작업이다.
+ⓘ **NAS 마운트 3종은 2026-08-19 철거됐다**(DCP 측 인계 — 실측 확인: `/mnt` 아래 마운트 0).
+`/mnt/nas`(SMB ro)·`/mnt/nas-nfs`(NFS ro)·`/mnt/nas-out`(SMB rw) + `dcpx-nas-mounts.service` +
+자격증명 경로가 함께 제거됐다. **지운 것은 접근 통로뿐이고 NAS의 데이터는 그대로다** —
+`/mnt/nas-out`에 있던 DCP 납품물 2.1TB도 NAS 쪽에 남아 있다.
+**부수 이득**: 그 서비스가 `Before=docker.service`라 NAS 무응답 시 **docker 기동을 최대 60초 지연**시켰는데,
+철거로 그 지연이 사라졌다.
+⇒ **NAS를 미디어 아카이브로 쓰려면 NAS 쪽 별도 공유 신설 + 마운트 재구성이 선행**이다(운영자 작업).
+재현 절차는 DCP 레포 `docs/reference/NAS-MOUNTS-RESTORE.md`가 원천(유닛 전문·NFS squash 선결조건·함정 6종).
 
 **⑤ 노출**: MinIO 콘솔(9001)을 **루프백 전용**으로 축소(앱은 콘솔을 쓰지 않는다. 접근은 SSH 터널).
 9000은 앱이 서명 URL로 직접 쓰므로 LAN 유지. **`:443` 전환은 도메인 확정이 선행**이다 —
@@ -174,13 +178,36 @@ named tunnel도 Let's Encrypt TLS도 도메인을 요구한다. 그때까지 `ga
 스왑에 있는 페이지는 접근 시 느리다. 메모리 여유가 충분해(23Gi > 2.4Gi) `swapoff -a && swapon -a`로
 **재부팅 없이 회수**했다 — 10.9초, 7컨테이너 무중단, 스왑 **2.4Gi → 0B**(메모리 사용 7.3→9.7Gi로 복귀).
 
-**부팅 자동복구**(정적 검증 5항 통과): fstab UUID 등재 · `srv-dcpwork.mount` active ·
-docker.service enabled · docker가 `local-fs.target` 이후 시작 · 7서비스 `restart: unless-stopped`.
-⚠️ **재부팅 실검증은 보류 중**이다 — 재부팅하면 `gachinol-quick-tunnel.service`가 재시작되며
-**구독자 웹 공개 URL이 바뀐다**(운영 영향). 운영자 승인 후 수행.
+### A-0-1. ⭐ 부팅 안전장치 2건 — **정리 대상으로 오인해 지우지 말 것**
 
-**손대지 않은 것**: DCP 보존 자산 전부(이미지·볼륨·레포·`/var/lib/dcpauto`·릴레이 유닛·NAS 마운트) ·
-`dcpx-fan-control`/`dcpx-nas-mounts`(이름만 dcpx인 호스트 인프라) · `/etc/nftables.conf` 무변경.
+DCP 철수 후 재부팅 실검증 **전에** DCP 측이 넣은 선결조치다(2026-08-19 인계, 조율자 실측 확인).
+둘은 **짝으로 동작**하며 하나만 남기면 의도가 깨진다.
+
+| 위치 | 내용 | 없으면 무슨 일이 나는가 |
+|---|---|---|
+| `/etc/fstab` | `/srv/dcpwork` 항목에 **`nofail`** | 디스크 문제 시 `local-fs.target` 실패 → **emergency mode** → 헤드리스 서버라 **SSH 불가** |
+| `/etc/systemd/system/docker.service.d/`<br>`10-require-dcpwork.conf` (신설) | `[Unit] RequiresMountsFor=/srv/dcpwork` | 마운트가 안 붙은 채 docker가 뜨면 **빈 디렉터리에 bind** 되어 루트 디스크에 빈 스토리지가 생기는 **조용한 오동작** |
+
+**설계 의도**: 디스크 문제 시 **서버는 뜨고(SSH 가능) docker만 안 뜬다.** 이건 버그가 아니라 의도다 —
+MinIO 데이터가 `/srv/dcpwork/minio` bind mount에 의존하므로, 마운트 없이 기동하는 것보다 **안 뜨는 편이 안전**하다.
+실측(2026-08-19): `systemctl show docker.service -p RequiresMountsFor` → `/srv/dcpwork` 적용 확인.
+
+⚠️ 이 두 설정은 **"왜 있는지 모르는 잔재"로 보이기 쉽다.** `dcpwork`라는 이름이 DCP 잔재를 연상시켜
+정리 대상으로 오인될 위험이 있다 — **그 디렉터리는 이제 gachinol의 미디어 스토리지다.**
+
+**부팅 자동복구 — 실검증 완료(2026-08-19, DCP 측 수행)**: 부팅 순서 정상 · MinIO 데이터 정상 인식 ·
+**7컨테이너 자동기동**(web·api·media-worker·postgres·redis·minio·ai-worker) · **다운타임 81초** ·
+`systemctl --failed` 없음. (조율자 재확인: 7컨테이너 healthy, failed 유닛 0)
+정적 검증 5항(fstab UUID 등재 · `srv-dcpwork.mount` active · docker enabled ·
+docker가 `local-fs.target` 이후 시작 · 7서비스 `restart: unless-stopped`)도 그대로 유효하다.
+
+**손대지 않은 것**: DCP 보존 자산 전부(이미지 `dcpx-{api,worker}:dev` · 볼륨 `docker_caddy_data`/
+`docker_redis_data` · 레포 `~/dcpomatic-xeon` · `/var/lib/dcpauto/app.db`+`app.db.pre-*` 3종 ·
+`gachinol-dcp-relay` 유닛 파일(inactive+disabled)) · `/etc/nftables.conf` 무변경.
+
+⚠️ **`dcpx-fan-control.service`는 유지한다**(현재 active) — 이름만 `dcpx`이지 실제로는 **호스트 인프라**다
+(nct6779 pwm2 CPU 온도 비례 팬 제어). DCP 잔재로 오인해 지우면 **제온이 시끄러워지고 냉각 특성이 바뀐다**.
+※ `dcpx-nas-mounts.service`는 NAS 마운트와 함께 2026-08-19 철거됐다(위 NAS 항목 참조).
 
 **`prune` 정책**(2026-08-17 교차검증으로 범위 명확화): 금지의 취지는 **dcpx 이미지 2종·볼륨 2종 보존**이다.
 `docker builder prune`은 **빌드 캐시만** 지우고 이미지·볼륨을 건드리지 않으므로 그 취지 밖이다 —
