@@ -6,11 +6,15 @@
 ## 0. 요약 (Executive Summary)
 
 - **최대 비용 변수는 컴퓨트가 아니라 egress(전송)와 스토리지다.** 영상 서비스이기 때문. 트랜스코딩 CPU는 병목이 아니다.
-- **핵심 결정: 오브젝트 스토리지=Cloudflare R2 + 배포=Cloudflare CDN.** R2는 egress $0(공식) → 시청자·지사가 늘어도 전송비가 0에 수렴. AWS S3/CloudFront 서울($0.12~0.13/GB)에 영상을 태우면 12지사·20TB/월 기준 월 ~$2,400 vs R2+CF ~$0. **이 한 가지가 프로젝트 재무를 좌우한다.**
+- ~~**핵심 결정: 오브젝트 스토리지=Cloudflare R2 + 배포=Cloudflare CDN.**~~ → **2026-08-17 사용자 결정으로 자체 호스팅 전환.**
+  프로덕션 스토리지 = **제온 MinIO**(용량은 HDD 증설), 앞단 = Cloudflare 무료 티어. **R2는 대기 옵션**이며 전환은 env만.
+  R2의 egress $0 논거(AWS 서울 대비 12지사·20TB/월 기준 월 ~$2,400 절감)는 여전히 유효해 **§4-C의 전환 트리거로 남겨 뒀다.**
+  ⚠️ 자체 호스팅의 실제 한계는 저장 용량이 아니라 **가정 회선 업로드 대역폭**이다 — §4-C-0.
 - **라이브=Cloudflare Stream.** 인코딩·다채널 동시송출(최대 50 목적지) 무료, 한국 리전 가격 페널티 없음. (AWS IVS 한국은 조사 대상 중 최고가라 배제.)
 - **AI 워커는 GPU 불필요.** 한국어 STT는 리턴제로(RTZR) API(월 $5~15), 비전은 프레임 샘플링(로컬 CPU).
 - **개략 월 비용: MVP(2지사) ≈ $20~40 + 라이브 방송분. 확장(12지사) ≈ $150~350 + 라이브·AI.**
-- ⚠️ **제품 정의를 바꾸는 두 발견**: (1) 카카오톡 채널 자동 발행 API 부재, (2) 5채널 동시 라이브 불가(실현 가능=YouTube+Facebook). §5 참조.
+- ⚠️ **제품 정의를 바꾸는 두 발견**: (1) 카카오톡 채널 자동 발행 API 부재, (2) 5채널 동시 라이브 불가. §5 참조.
+- **송출 채널 확정(2026-08-17)**: **카카오톡 채널 + YouTube 2채널.** Facebook 이하 제외 → **Meta App Review가 크리티컬 패스에서 빠졌다.** §5-2-1
 
 ---
 
@@ -156,10 +160,14 @@ DCP 잔재인 setgid `dcpauto`(GID 1002) 규약은 **승계하지 않는다** �
 ⚠️ `df`가 `/srv/dcpwork`를 36G 사용으로 표시하는 것은 **누수가 아니라** XFS(`rmapbt=1 reflink=1`)의
 per-AG 메타데이터 예약이다(AG 64 × 571MiB). **실가용 1.8TB.**
 
-⚠️ **NAS 마운트 3종은 여유 공간이 아니다.** `/mnt/nas`(SMB ro)·`/mnt/nas-nfs`(NFS ro)는 읽기 전용이고,
-**`/mnt/nas-out`(SMB rw)에는 DCP 납품물 2.1TB가 들어 있는 타 프로젝트 실 자산**이다.
-rw라고 임시 저장소로 쓰지 마라. NAS를 미디어 아카이브로 쓰려면 **NAS 쪽 별도 공유 신설**이 선행이며
-그것은 운영자(NAS GUI) 작업이다.
+ⓘ **NAS 마운트 3종은 2026-08-19 철거됐다**(DCP 측 인계 — 실측 확인: `/mnt` 아래 마운트 0).
+`/mnt/nas`(SMB ro)·`/mnt/nas-nfs`(NFS ro)·`/mnt/nas-out`(SMB rw) + `dcpx-nas-mounts.service` +
+자격증명 경로가 함께 제거됐다. **지운 것은 접근 통로뿐이고 NAS의 데이터는 그대로다** —
+`/mnt/nas-out`에 있던 DCP 납품물 2.1TB도 NAS 쪽에 남아 있다.
+**부수 이득**: 그 서비스가 `Before=docker.service`라 NAS 무응답 시 **docker 기동을 최대 60초 지연**시켰는데,
+철거로 그 지연이 사라졌다.
+⇒ **NAS를 미디어 아카이브로 쓰려면 NAS 쪽 별도 공유 신설 + 마운트 재구성이 선행**이다(운영자 작업).
+재현 절차는 DCP 레포 `docs/reference/NAS-MOUNTS-RESTORE.md`가 원천(유닛 전문·NFS squash 선결조건·함정 6종).
 
 **⑤ 노출**: MinIO 콘솔(9001)을 **루프백 전용**으로 축소(앱은 콘솔을 쓰지 않는다. 접근은 SSH 터널).
 9000은 앱이 서명 URL로 직접 쓰므로 LAN 유지. **`:443` 전환은 도메인 확정이 선행**이다 —
@@ -170,13 +178,36 @@ named tunnel도 Let's Encrypt TLS도 도메인을 요구한다. 그때까지 `ga
 스왑에 있는 페이지는 접근 시 느리다. 메모리 여유가 충분해(23Gi > 2.4Gi) `swapoff -a && swapon -a`로
 **재부팅 없이 회수**했다 — 10.9초, 7컨테이너 무중단, 스왑 **2.4Gi → 0B**(메모리 사용 7.3→9.7Gi로 복귀).
 
-**부팅 자동복구**(정적 검증 5항 통과): fstab UUID 등재 · `srv-dcpwork.mount` active ·
-docker.service enabled · docker가 `local-fs.target` 이후 시작 · 7서비스 `restart: unless-stopped`.
-⚠️ **재부팅 실검증은 보류 중**이다 — 재부팅하면 `gachinol-quick-tunnel.service`가 재시작되며
-**구독자 웹 공개 URL이 바뀐다**(운영 영향). 운영자 승인 후 수행.
+### A-0-1. ⭐ 부팅 안전장치 2건 — **정리 대상으로 오인해 지우지 말 것**
 
-**손대지 않은 것**: DCP 보존 자산 전부(이미지·볼륨·레포·`/var/lib/dcpauto`·릴레이 유닛·NAS 마운트) ·
-`dcpx-fan-control`/`dcpx-nas-mounts`(이름만 dcpx인 호스트 인프라) · `/etc/nftables.conf` 무변경.
+DCP 철수 후 재부팅 실검증 **전에** DCP 측이 넣은 선결조치다(2026-08-19 인계, 조율자 실측 확인).
+둘은 **짝으로 동작**하며 하나만 남기면 의도가 깨진다.
+
+| 위치 | 내용 | 없으면 무슨 일이 나는가 |
+|---|---|---|
+| `/etc/fstab` | `/srv/dcpwork` 항목에 **`nofail`** | 디스크 문제 시 `local-fs.target` 실패 → **emergency mode** → 헤드리스 서버라 **SSH 불가** |
+| `/etc/systemd/system/docker.service.d/`<br>`10-require-dcpwork.conf` (신설) | `[Unit] RequiresMountsFor=/srv/dcpwork` | 마운트가 안 붙은 채 docker가 뜨면 **빈 디렉터리에 bind** 되어 루트 디스크에 빈 스토리지가 생기는 **조용한 오동작** |
+
+**설계 의도**: 디스크 문제 시 **서버는 뜨고(SSH 가능) docker만 안 뜬다.** 이건 버그가 아니라 의도다 —
+MinIO 데이터가 `/srv/dcpwork/minio` bind mount에 의존하므로, 마운트 없이 기동하는 것보다 **안 뜨는 편이 안전**하다.
+실측(2026-08-19): `systemctl show docker.service -p RequiresMountsFor` → `/srv/dcpwork` 적용 확인.
+
+⚠️ 이 두 설정은 **"왜 있는지 모르는 잔재"로 보이기 쉽다.** `dcpwork`라는 이름이 DCP 잔재를 연상시켜
+정리 대상으로 오인될 위험이 있다 — **그 디렉터리는 이제 gachinol의 미디어 스토리지다.**
+
+**부팅 자동복구 — 실검증 완료(2026-08-19, DCP 측 수행)**: 부팅 순서 정상 · MinIO 데이터 정상 인식 ·
+**7컨테이너 자동기동**(web·api·media-worker·postgres·redis·minio·ai-worker) · **다운타임 81초** ·
+`systemctl --failed` 없음. (조율자 재확인: 7컨테이너 healthy, failed 유닛 0)
+정적 검증 5항(fstab UUID 등재 · `srv-dcpwork.mount` active · docker enabled ·
+docker가 `local-fs.target` 이후 시작 · 7서비스 `restart: unless-stopped`)도 그대로 유효하다.
+
+**손대지 않은 것**: DCP 보존 자산 전부(이미지 `dcpx-{api,worker}:dev` · 볼륨 `docker_caddy_data`/
+`docker_redis_data` · 레포 `~/dcpomatic-xeon` · `/var/lib/dcpauto/app.db`+`app.db.pre-*` 3종 ·
+`gachinol-dcp-relay` 유닛 파일(inactive+disabled)) · `/etc/nftables.conf` 무변경.
+
+⚠️ **`dcpx-fan-control.service`는 유지한다**(현재 active) — 이름만 `dcpx`이지 실제로는 **호스트 인프라**다
+(nct6779 pwm2 CPU 온도 비례 팬 제어). DCP 잔재로 오인해 지우면 **제온이 시끄러워지고 냉각 특성이 바뀐다**.
+※ `dcpx-nas-mounts.service`는 NAS 마운트와 함께 2026-08-19 철거됐다(위 NAS 항목 참조).
 
 **`prune` 정책**(2026-08-17 교차검증으로 범위 명확화): 금지의 취지는 **dcpx 이미지 2종·볼륨 2종 보존**이다.
 `docker builder prune`은 **빌드 캐시만** 지우고 이미지·볼륨을 건드리지 않으므로 그 취지 밖이다 —
@@ -201,7 +232,49 @@ build cache 22.49GB). 디스크 압박 시 **`docker builder prune`만** 실행�
 - **제주 현지**: 전면 온프레미스는 비권장(운영 부담). **재난 라이브 회복력 목적의 소형 RTMP 릴레이 1대**만 하이브리드로 검토.
 
 ### 결정 C — 스토리지·CDN
-- **Cloudflare R2 + Cloudflare CDN** 확정. egress $0가 이 프로젝트의 최대 레버리지.
+
+#### C-0. 자체 호스팅으로 전환 (2026-08-17 사용자 결정) — **이 소절이 현행이다**
+
+사용자 지시: *"제온서버가 백앤드이고, 추후 공간이 더 필요하면 하드 디스크를 증설하여 스토리지의 기능도 하게 할 것이다."*
+
+**확정**: 프로덕션 오브젝트 스토리지 = **제온 자체 호스팅 MinIO**(현재 `/srv/dcpwork/minio`, 2TB NVMe 중 1.8TB 실가용).
+용량 증가는 **하드디스크 증설**로 대응한다. 앞단은 Cloudflare 무료 티어(터널·CDN).
+
+아래 C-1 이하의 R2 원문은 **폐기가 아니라 대기**다 — 코드가 `S3_ENDPOINT`/`S3_FORCE_PATH_STYLE`로 이미
+S3 호환이라 **전환 비용이 env 몇 줄**이고, 아래 전환 트리거에 걸리면 그때 켠다.
+
+**용량 산정**(§4-A ④ 실측 기준, 콘텐츠 1건 ≈ 180MB):
+
+| 단계 | 월 증가 | 1.8TB 소진까지 |
+|---|---|---|
+| MVP(2지사, 주 5건) | 3.3GB | **45년** |
+| 12지사(주 60건) | 39GB | **3.8년** |
+
+⇒ **용량은 당분간 문제가 아니다.** HDD 증설은 12지사 풀가동 + 원본 장기보관을 시작한 뒤에 판단해도 늦지 않다.
+
+> ⚠️ **증설이 푸는 것은 용량이지 대역폭이 아니다 — 실제 병목은 이쪽이다.**
+> 제온이 origin이면 **모든 시청 트래픽이 가정 회선의 업로드 대역폭을 통과**한다.
+> 720p 렌디션이 ~2.5Mbps이므로 **동시 시청 10명 ≈ 25Mbps**로, 일반 가정 업로드 상한(대칭 기가 아니면 수십 Mbps)에
+> 금방 닿는다. 스토리지를 아무리 늘려도 이 한계는 그대로다.
+> 완화 순서: ⓐ Cloudflare 캐시가 흡수(공개 렌디션 = 세대별 불변 키라 캐시 적중률이 높다, §4-C-1) →
+> ⓑ 그래도 모자라면 R2 전환(egress $0). ⓐ가 무료 티어 ToS 2.8(대용량 비HTML 프록시 제한)에 걸릴 여지가 있어
+> **CF 무료 티어로 영상까지 태우는 것은 임시 운영으로 본다.**
+
+**R2 전환 트리거 (하나라도 충족 시 사용자에게 보고 후 전환)**
+
+| # | 트리거 | 측정 방법 |
+|---|---|---|
+| 1 | 동시 시청 피크가 **10명**을 넘는 날이 주 2회 이상 | api 접속 로그 / 구독자 계측 |
+| 2 | 재생 시작 실패·버퍼링 비율이 유의하게 상승 | 03 §A-6 폴백 화면 발생률 |
+| 3 | Cloudflare가 무료 티어 미디어 프록시에 제동을 걺 | CF 대시보드 경고·429 |
+| 4 | 저장 총량이 **1.5TB**를 넘김(1.8TB 실가용의 83%) | `df -h /srv/dcpwork` |
+| 5 | 제온 정지가 서비스 정지와 동의어인 상태가 부담스러워짐 | 운영 판단(단일 장애점) |
+
+**백업은 별도 문제다**(증설·R2 어느 쪽이든 유효): 지금 미디어 원본은 **제온 1벌뿐**이고,
+NAS 3종은 §4-A ④ 주의에 따라 대체 저장소가 아니다. 3-2-1 원칙의 최소선(오프사이트 1벌)이 없다 → 대장 #153.
+
+#### C-1. 원안 (R2 — 대기 옵션)
+- **Cloudflare R2 + Cloudflare CDN**. egress $0가 이 프로젝트의 최대 레버리지 — **트리거 충족 시 이 안으로 간다.**
 - 대안(비용 유사): Backblaze B2 + Bunny CDN.
 - **회피**: AWS S3/CloudFront 서울에 영상 egress를 태우는 구조.
 
@@ -333,7 +406,28 @@ CDN이 앞에 서므로 그때는 CDN 쪽 헤더 정책과 함께 본다.
 | Instagram | 서드파티 송출 비공식 | ❌ | 유예/링크 홍보 |
 | X | 송출 O | ❌ 읽기 종량제 $0.005/건 | 유예 |
 | **Threads** | ❌ 라이브 기능 없음 | N/A | **요구사항 삭제** |
-- **대응**: CLAUDE.md의 "YouTube·FB·IG·X·Threads 동시 라이브"를 **"YouTube + Facebook 동시 + 나머지 링크 홍보"**로 하향. 프롬프터도 YouTube+FB 중심. **Meta App Review는 리드타임 2~4주 → 지금 착수(크리티컬 패스).**
+- ~~**대응**: "YouTube·FB·IG·X·Threads 동시 라이브"를 **"YouTube + Facebook 동시 + 나머지 링크 홍보"**로 하향. Meta App Review는 리드타임 2~4주 → 지금 착수(크리티컬 패스).~~
+
+#### 5-2-1. **YouTube 단독으로 재하향 (2026-08-17 사용자 결정) — 이 소절이 현행이다**
+
+사용자 지시: *"송출되는 채널은 현재 정확히는 미정이나, 카카오톡, 유튜브가 유력하다."*
+
+**확정 스코프 = 카카오톡 채널(반자동 게시) + YouTube(Data API) 2채널.** Facebook을 포함한 나머지는 전부 제외한다.
+
+| 항목 | 종전(YT+FB) | 현행(YT 단독) |
+|---|---|---|
+| VOD 송출 | 카카오 반자동 + YouTube | **동일** |
+| 라이브 | YouTube + Facebook 동시 | **YouTube 단독** |
+| 프롬프터 댓글 | YT + FB 통합 | **YouTube만** |
+| 필요한 대외 심사 | **Meta App Review**(2~4주, 팔로워 100↑·60일↑) + YouTube 쿼터 증량 | **YouTube 쿼터 증량만** |
+
+**이 결정이 사는 이유는 비용이 아니라 일정이다.** Meta App Review는 팔로워 100명·운영 60일이 선행 요건이라
+**아직 방송을 시작하지도 않은 지금은 신청 자체가 불가능**했다. 크리티컬 패스에서 빠지면서
+"첫 방송 전에 Meta 심사를 통과해야 한다"는 순환 의존이 사라진다.
+
+**코드 영향 = 0.** `meta`/`x`/`threads` 어댑터는 이미 **목 기본 + env 게이트** 구조라(§7 착수점 B),
+채널 계정을 만들지 않으면 호출되지 않는다. 삭제하지 않고 **보존**한다 — 재개 시 env만 열면 된다.
+⇒ 관련 대장 항 #101(프롬프터 SNS 댓글 숨김 불가)은 **YouTube 어댑터에 한해서만** 판정하면 된다.
 
 ---
 
@@ -376,12 +470,12 @@ CDN이 앞에 서므로 그때는 CDN 쪽 헤더 정책과 함께 본다.
 
 **진행 상태**: 앱 3종 + 백엔드 6도메인(Ingest·Process·Analyze·Distribute·Live·Monetize 일부) 구현·머지 완료(PR #1~#10). **배포 산출물 착수(2026-07-25)**: 프로덕션 Dockerfile 3종·`infra/docker/` compose·GitHub Actions CI/CD 완료(§7). 남은 것: 배포(CD)·R2 실전환·실 어댑터(착수점 B).
 
-**확정된 것** (조사 근거, §1~§5):
-- 스토리지·CDN = Cloudflare R2 + Cloudflare CDN (egress $0 — 최대 레버리지)
+**확정된 것** (조사 근거, §1~§5. **★ = 2026-08-17 사용자 결정으로 갱신**):
+- ★ 스토리지 = **제온 자체 호스팅 MinIO**(용량은 HDD 증설), 앞단 Cloudflare 무료 티어. **R2는 대기 옵션**(전환 트리거 §4-C-0)
 - 라이브 = Cloudflare Stream (관리형), AI STT = 리턴제로(RTZR), GPU 불요
-- 서버 = 4vCPU/8GB 단일 VM 시작 → 병목별 확장
+- ★ 서버 = **제온 단독**(정식 백엔드. 클라우드 VM 4vCPU/8GB 산정은 이관 시 기준으로만 유지 — §4-A-1)
 - 카카오 채널 = **반자동 게시 모델**(백엔드 게시자산 준비 + 담당자 관리자앱 게시). 직접 발행 API 없음 확정
-- 라이브 채널 = YouTube + Facebook 동시(나머지 링크 홍보), Threads 삭제
+- ★ 송출 채널 = **카카오톡 + YouTube 2채널**(라이브도 YouTube 단독). Facebook 이하 제외 → **Meta App Review 불요**
 
 **결정 완료** (2026-07-25):
 1. 반자동 카카오 + SNS 스코프 하향 → **문서(CLAUDE.md·본 문서)에 반영 완료, 코드(어댑터)는 유예**. CLAUDE.md는 결정 문서라 확정을 먼저 반영하고, 코드 catch-up은 착수점 B로 분리.

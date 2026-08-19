@@ -23,8 +23,11 @@
 
 ## 3. 제주방송센터 콘텐츠 (6종)
 
-1. **주간뉴스 라이브** — 12개 지사 소식 취합. **YouTube + Facebook 동시 라이브**(IG/X는 링크 홍보, **Threads 삭제** — 5채널 동시 라이브 실현 불가로 스코프 하향, [docs/infrastructure.md](docs/infrastructure.md) §5-2).
+1. **주간뉴스 라이브** — 12개 지사 소식 취합. **YouTube 단독 라이브**(카카오톡 채널은 유입 공지, 나머지 SNS는 링크 홍보).
    채널별 실시간 댓글을 **아나운서에게 프롬프터로 통합 제공** → 아나운서가 보며 실시간 소통·진행.
+   > **스코프 이력**: 5채널 동시 라이브(불가, §5-2) → YouTube + Facebook 동시(2026-07) → **YouTube 단독**(2026-08-17 사용자 결정).
+   > Facebook 제외로 **Meta App Review(리드타임 2~4주 + 팔로워 100↑ 요건)가 크리티컬 패스에서 빠진다.**
+   > Meta/X/Threads 어댑터 코드는 **보존**하되 미사용(재개 시 env 게이트만 열면 된다). 상세 [docs/infrastructure.md](docs/infrastructure.md) §5-2.
 2. **정치인 게스트 대담**
 3. **교양 프로그램** — 독서·요리·여행지·관광·숙소·민박·지역축제·먹거리·농민·생산자 안내 등
 4. **지역특화 날씨예보** ⭐ 킬러 콘셉트 — 기상청이 아닌 **이장·촌장·어촌계장의 '감'** 기반.
@@ -53,7 +56,12 @@
 - **백엔드 메인 API**: **Node.js + TypeScript + NestJS**
 - **AI 분석 워커**: **Python + FastAPI** (비전/STT/요약·추천) — 무거운 ML은 여기로 분리
 - **미디어 워커**: Node + **FFmpeg** (트랜스코딩·자동편집 오케스트레이션·저화질 프리뷰)
-- **데이터**: PostgreSQL(관계형) · Redis(큐·캐시·실시간 pub/sub) · S3 호환 오브젝트 스토리지(영상). **프로덕션 스토리지·CDN = Cloudflare R2 + Cloudflare**(egress $0 확정 — 최대 재무 레버리지), 로컬은 MinIO. 코드는 `S3_ENDPOINT`/`S3_FORCE_PATH_STYLE`로 R2 전환(env만). 상세 [docs/infrastructure.md](docs/infrastructure.md) §3·§4-C
+- **데이터**: PostgreSQL(관계형) · Redis(큐·캐시·실시간 pub/sub) · S3 호환 오브젝트 스토리지(영상).
+  **프로덕션 스토리지 = 제온 자체 호스팅 MinIO**(2026-08-17 사용자 결정 — 백엔드와 같은 호스트, 현재 2TB NVMe `/srv/dcpwork/minio`.
+  **용량 부족 시 하드디스크 증설**로 확장). 앞단 = Cloudflare(무료 티어 터널·CDN). **Cloudflare R2는 폐기가 아니라 대기 옵션**이며
+  코드가 `S3_ENDPOINT`/`S3_FORCE_PATH_STYLE`로 이미 S3 호환이라 **전환은 env만**이다.
+  ⚠️ **증설이 푸는 것은 용량이지 대역폭이 아니다** — 제온이 origin이면 시청 트래픽이 가정 회선 업로드를 통과한다.
+  전환 트리거는 [docs/infrastructure.md](docs/infrastructure.md) §4-C가 단일 원천. 상세 §3·§4-C
 - **ORM**: Prisma 6 (PostgreSQL). enum은 DB에 shared snake_case 문자열(text) 저장 — Prisma enum 금지. ID는 앱 발급 UUID v7
 - **요청 검증**: zod + nestjs-zod — 스키마는 shared 계약에 satisfies로 정합 강제
 - **인증**: JWT(access 15m / refresh 14d 회전+재사용 탐지) + argon2id. passport 미도입
@@ -89,17 +97,19 @@ gachinol/
 [기자 앱] 촬영·자막·분류
    │ 업로드(원본)
    ▼
-[api] ──넣기──> [큐] ──> [media-worker] 트랜스코딩·자동편집·저화질 프리뷰
-   │                         │
-   │                    [ai-worker] 화면(비전)+텍스트(STT/요약) 분석 → 태깅·추천
-   ▼                         │
-[오브젝트 스토리지]           ▼
-   │                    [센터 관제 앱] 주간 콘텐츠 추천·승인/수정
-   │  기자 프리뷰 승인 ◄──────┘
-   ▼
-[다채널 송출]  카카오톡 채널(반자동 게시) · YouTube · Facebook   [라이브 동시=YT+FB, IG/X는 링크 홍보, Threads 삭제]
+┌──────────────── 제온(192.168.0.101) = 백엔드 + 스토리지 ────────────────┐
+│ [api] ──넣기──> [큐] ──> [media-worker] 트랜스코딩 → ⚠️자동편집(auto_edit) → 저화질 프리뷰
+│    │                         │                        └ **미구현**(대장 #98·#151)
+│    │                    [ai-worker] 화면(비전)+텍스트(STT/요약) 분석 → 태깅·추천
+│    ▼                         │
+│ [오브젝트 스토리지 = MinIO]   ▼      ← 용량 부족 시 **HDD 증설**
+└────│─────────────────────────│──────────────────────────────────────────┘
+     │                    [센터 관제 웹] 주간 콘텐츠 추천·승인/수정
+     │  기자 프리뷰 승인 ◄──────┘
+     ▼  ← **기자 승인 XOR 센터 승인**(분류별 reviewPolicy) 통과분만 송출
+[송출]  카카오톡 채널(반자동 게시) · YouTube(Data API 자동)
    │
-   ├─ 라이브: RTMP ingest → 다채널 fan-out → HLS 배포
+   ├─ 라이브: RTMP ingest → YouTube 단독 → HLS 배포
    ├─ 댓글 수집: 채널별 실시간 댓글 → [api] 집계 → 아나운서 프롬프터
    ▼
 [구독자 앱] 시청 + 라이브 채팅          [B2B] 방송3사·종편·케이블 판매
@@ -111,7 +121,8 @@ Live(라이브+댓글집계) · Monetize(라이브커머스·B2B 세일즈)**.
 ## 8. 외부 연동 (키는 `.env`, 목록은 `.env.example`)
 
 - **카카오톡 채널** (유입 창구) — **직접 발행 API 없음**(확정) → 반자동 게시(담당자 관리자앱). 친구톡은 대행사 계약 시 썸네일+링크 푸시만 가능. [docs/infrastructure.md](docs/infrastructure.md) §5-1
-- **YouTube Live/Data API**, **Meta Graph API**(FB) — 라이브 송출 + 댓글 수집. **IG/X는 유예·Threads 삭제**(코드 어댑터는 유지, 스코프 하향 §5-2)
+- **YouTube Live/Data API** — VOD 업로드 + 라이브 송출 + 댓글 수집. **2026-08-17부터 실사용 SNS는 YouTube 하나뿐**
+  (Meta Graph/X/Threads 어댑터 코드는 **보존**하되 미사용 — 재개 시 기존 env 게이트만 열면 된다). 스코프 이력 §5-2
 - **PG(결제)** — 라이브커머스
 - **비전/STT** — ai-worker
 
@@ -307,7 +318,20 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
   (기기 시간대 무관). 목 데이터 0. jest-expo 단위 +58(status·week·validation·selectors) → **control-center 95→153/15스위트**,
   subscriber 48·reporter 74·media-worker 13 불변, expo export(ios+android)·expo-doctor 18/18 통과.
 - **배포 인프라 (본 세션 — 착수점 A)**: api·media-worker·ai-worker **컨테이너화(Docker 멀티스테이지, glibc·pnpm deploy)** + **GitHub Actions CI/CD**(`ci.yml` lint·typecheck·test / `build-images.yml` 이미지 빌드→GHCR) + **프로덕션 compose**(`infra/docker/docker-compose.prod.yml` — R2/Cloudflare 전제, 개발용 `infra/docker-compose.yml`과 분리) 완료. 확정된 제품 모델(카카오 반자동·라이브 YT+FB 하향)은 **문서에만 반영**, **코드(어댑터 재구현)은 유예 — 착수점 B**: `KakaoMockAdapter`→`KakaoManualPublishAdapter`·YouTube 실 어댑터·IG/X/Threads 스코프 정리는 후속 슬라이스. 상세 [docs/infrastructure.md](docs/infrastructure.md) §5·§7.
-- **제온 임시 백엔드 (본 세션 — P1)**: 개인 제온 서버(2×Xeon E5-2683 v4 = 32C/64T, 32GB, Debian 13, Docker 29.6)를 **임시 백엔드**로 사용. 이 호스트는 **가동 중인 DCP 파이프라인과 공유**하므로 상호배제가 필수 → `services/api/src/arbiter/` **DcpArbiterService**(인프로세스, `DCP_ARBITER_URL` 게이트): DCP 측 `GET /api/arbiter/state`를 **읽기 전용** 조회해 `busy`면 **BullMQ 미디어 큐를 전역 정지**(`Queue.pause()` — 별도 프로세스인 media-worker도 새 잡을 안 집고 진행 중 1건만 마침, 선점 없음). 갱신은 **SSE(`/api/stream`) 트리거 + 폴백 폴링**이며 **`busy` 불린만 소비**(DCP의 상태머신 재구현 0 → 그쪽 상태 추가에 면역). imminent(`stage===null && queued>0`)는 우리 리스크 정책으로 양보하되, **개입 대기(`review_pending` 등)에는 양보하지 않는다**(사람 대기라 큐가 안 움직여 우리가 영구 정지함). 조회 실패는 `DCP_ARBITER_FAIL_MODE`(기본 hold). 상태 노출 `GET /v1/system/processing-state`. 배포는 `infra/docker/docker-compose.xeon.yml` **오버레이**(prod compose 위에 덧씌움 — MinIO 추가·전 서비스 메모리 리밋·media-worker `cpus:8`+동시성1·포트 4000/9000만·bridge 유지 + `extra_hosts: host.docker.internal`). **shared·Prisma 무변경**, api 유닛 381→419. DCP 측 계약은 그쪽 DSGN-API §2.1(외부 조회 계약)이 원천.
+- **🖥️ 제온 = gachinol 단독 서버 (2026-08-19 확정)**: DCP 파이프라인이 **영구 철수**해 제온(192.168.0.101 / Tailscale 100.92.205.127)은 이제 우리 단독 사용이다. 상호배제는 **해제**됐고(`DCP_ARBITER_URL` 제거 → `DcpArbiterService`가 `enabled=false`. 코드 8파일은 제온 외 환경 대비로 보존), 회수 자원은 **[A-2]에서 재배분 완료**(media-worker `cpus:32`·동시성2 → 인코딩 65.2s→18.0s **3.6배** · 컨테이너 리밋 합계 14.25GiB · MinIO 데이터를 **2TB NVMe `/srv/dcpwork/minio`**로 이전 · 콘솔 9001 루프백 축소 · 스왑 2.4GiB 회수). **재부팅 실검증 완료**(2026-08-19, 다운타임 81초, 7컨테이너 자동기동, failed 0).
+  - ⭐ **지우면 안 되는 부팅 안전장치 2건**: `/etc/fstab`의 `/srv/dcpwork` **`nofail`**(없으면 디스크 문제 시 emergency mode → **헤드리스라 SSH 불가**) + `/etc/systemd/system/docker.service.d/10-require-dcpwork.conf`의 **`RequiresMountsFor=/srv/dcpwork`**(없으면 마운트 없이 docker가 떠 **빈 디렉터리에 bind** = 조용한 오동작). 둘은 짝이며 **디스크 문제 시 서버는 뜨고 docker만 안 뜨는 것이 의도**다.
+  - ⚠️ **`dcpx-fan-control.service`는 호스트 인프라다**(팬 온도 비례제어). 이름만 dcpx라 잔재로 오인해 지우면 발열·소음이 바뀐다. **`docker system|image|volume prune` 금지**(DCP 보존 자산 잔존, `builder prune`만 예외적으로 허용하되 지금은 불요). **`/etc/nftables.conf` 통째 재적용 금지**(3행 `flush ruleset`이 Docker `ip nat DOCKER`·Tailscale 체인까지 삭제).
+  - 상세·근거·실측표는 **[docs/infrastructure.md](docs/infrastructure.md) §4-A-0**이 단일 원천. 서버 측 기록은 제온 `/srv/admin/{decisions,inventory}.md`·`runbooks/dcp-retire.md`.
+- **(이력) 제온 임시 백엔드 — DCP 공유 시절**: 개인 제온 서버(2×Xeon E5-2683 v4 = 32C/64T, 32GB, Debian 13, Docker 29.6)를 **임시 백엔드**로 사용. 이 호스트는 **가동 중인 DCP 파이프라인과 공유**했으므로 상호배제가 필수였다 → `services/api/src/arbiter/` **DcpArbiterService**(인프로세스, `DCP_ARBITER_URL` 게이트): DCP 측 `GET /api/arbiter/state`를 **읽기 전용** 조회해 `busy`면 **BullMQ 미디어 큐를 전역 정지**(`Queue.pause()` — 별도 프로세스인 media-worker도 새 잡을 안 집고 진행 중 1건만 마침, 선점 없음). 갱신은 **SSE(`/api/stream`) 트리거 + 폴백 폴링**이며 **`busy` 불린만 소비**(DCP의 상태머신 재구현 0 → 그쪽 상태 추가에 면역). imminent(`stage===null && queued>0`)는 우리 리스크 정책으로 양보하되, **개입 대기(`review_pending` 등)에는 양보하지 않는다**(사람 대기라 큐가 안 움직여 우리가 영구 정지함). 조회 실패는 `DCP_ARBITER_FAIL_MODE`(기본 hold). 상태 노출 `GET /v1/system/processing-state`. 배포는 `infra/docker/docker-compose.xeon.yml` **오버레이**(prod compose 위에 덧씌움 — MinIO 추가·전 서비스 메모리 리밋·media-worker `cpus:8`+동시성1·포트 4000/9000만·bridge 유지 + `extra_hosts: host.docker.internal`). **shared·Prisma 무변경**, api 유닛 381→419. DCP 측 계약은 그쪽 DSGN-API §2.1(외부 조회 계약)이 원천.
+- **🔧 제품 정의 갱신 (2026-08-17 사용자 지시 — 대장 #151~#153)**: 파이프라인 정의를
+  *"기자 웹 업로드 → **제온**이 수신 → **자동편집** → 미리보기 반환 → **기자 승인 또는 센터 승인** → 송출 →
+  웹앱·카톡 채널 알림으로 시청"*으로 확정. 세 가지가 바뀌었다.
+  1. **자동편집(`auto_edit`)이 파이프라인 정식 단계로 승격** — 종전에는 `T-AI` 병렬 트랙의 선택 항목이었다.
+     계약(`JobType.AutoEdit`·`MediaAssetKind.EditedMaster`·`regenerating` 3엣지)은 이미 있고 **구동부만 0건**(대장 #98).
+     ⚠️ **작업 범위는 아직 미정** — 사용자가 "AI 기반 편집"을 원해 **제온 로컬 LLM 타당성 조사**를 지시했고(2026-08-17),
+     그 보고를 보고 판단한다. 범위 확정 전에는 착수하지 않는다.
+  2. **송출 채널 = 카카오톡 + YouTube 2채널**(§3-1·§8). Facebook 이하 전부 스코프 제외(어댑터 코드는 보존).
+  3. **제온이 정식 백엔드 겸 스토리지**(§5) — R2는 대기 옵션으로 강등, 용량은 HDD 증설로 확장.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
   1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD
      (~~`reporter_only` 자동 송출 후킹~~은 이미 동작 중이며, **센터 송출 지시 UI도 2026-08-15 배선 완료** — 대장 #94)
@@ -352,4 +376,10 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
 - ~~센터 관제 앱의 웹 콘솔 병행 여부~~ → **웹 피벗으로 해소**(2026-08-04): 관제 자체가 웹앱이 되어 데스크톱 콘솔을 겸한다(02 §C 데스크톱 매트릭스·W2 DoD 1440px 확인 포함)
 - ~~카톡 채널 배포 방식~~ → **반자동 게시로 확정**(직접 발행 API 없음). 자체 앱/YouTube가 실재생, 카카오는 유입 채널. 자체 앱 이전/병행은 계속 열려 있음. §5-1
 - ~~결제 PG 사~~ → **웹 피벗 계획에서 단계화**(2026-08-04): 커머스 1단계=**링크아웃**(판매·결제는 외부 플랫폼, PG 불요) → 2단계(자체 결제·PG 계약)는 GMV 트리거 충족 시 착수([docs/plan/05-monetization.md](docs/plan/05-monetization.md) §A-1·§G). B2B 미디어 세일즈 유통 방식은 계속 미정(01 §B-3 전략 초안 있음)
+- ~~프로덕션 스토리지(R2 vs 자체)~~ → **확정(2026-08-17)**: **제온 자체 호스팅**(MinIO), 용량은 HDD 증설. R2는 대기 옵션(env 전환). §5·infra §4-C
+- ~~라이브 SNS 채널 범위~~ → **확정(2026-08-17)**: **YouTube 단독**. Facebook/IG/X/Threads 제외(어댑터 코드 보존). §3-1·infra §5-2
+- **자동편집(`auto_edit`)의 작업 범위 — 사용자 판단 대기 (2026-08-17 신설, 최우선)**.
+  파이프라인 정식 단계로 승격은 확정됐으나 *"무엇을 편집하는가"*가 아직 어느 정본에도 없다.
+  사용자가 **AI 기반 편집**을 희망하며 **제온 로컬 LLM 구동 타당성 조사**를 지시 → 보고 후 범위 확정.
+  ⚠️ 범위 확정 전 착수 금지(계약만 있고 구동부 0건인 상태를 임의 구현으로 메우지 않는다 — 대장 #98·#151)
 - 도메인·제온 외부 노출 방식(Cloudflare Tunnel 권장/포트 개방) — **W0 착수 전 사용자 결정 필요**([docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md) §E 1번)
