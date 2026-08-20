@@ -77,6 +77,15 @@ export interface NotWiredContentTransition {
  *    요구해 그 콘텐츠에는 애초에 적용될 수 없었다. 즉 12건을 한 문장으로 묶어 쓴 사유가 이 한 건에
  *    대해서는 틀렸고, 멤버십 판정만 정확했다(헤더 "한계 ②"의 사례가 하나 더 늘었다).
  *    (관측 22→23 · 등재 25→24).
+ *  · auto_edit Phase 1(2026-08-20): `regenerating→{analyzing, preview_generating, regeneration_failed}`
+ *    **3건 삭제**. 대장 #98이 닫혔다 — 구동부는 media-worker `processors/auto-edit.ts`(기계편집:
+ *    음량 정규화·렌디션·faststart, **AI 호출 0회**) + api `enqueueAutoEdit` +
+ *    `PipelineService.onCompleted('auto_edit')`이며, `content-workflow.service.spec.ts`의
+ *    "재생성 루프" 스위트가 3엣지를 실 applyHop으로 밟는다.
+ *    진입 엣지 `revision_requested→regenerating`은 원래 목록 밖이었으나(범용 수동 전이로 관측)
+ *    이제 전용 구동부 `ContentWorkflowService.regenerate()`가 생겼다 — 멤버십 변화는 없다.
+ *    ⇒ `STALLED_AUTOMATION_CONTENT_STATUSES`가 **빈 배열**이 되어 3앱의 "정지 상태" 경고 톤이
+ *    자동으로 사라진다(#29 ④가 예고한 대로 사람이 되돌릴 것을 기억할 필요가 없다).
  *
  * 재산출: `GACHINOL_WIRING_REPORT=1 pnpm --filter @gachinol/api test`
  * (services/api/test/wiring/global-teardown.ts가 관측·미관측 전문을 출력한다).
@@ -102,25 +111,6 @@ export const NOT_WIRED_CONTENT_TRANSITIONS: readonly NotWiredContentTransition[]
     kind: NotWiredKind.Unimplemented,
     reason:
       '"분석 생략 진행"(전이맵 주석의 센터 판단 경로)의 전용 구동부가 없다 — api 전체에서 이 엣지를 지정해 실행하는 코드 0건. retry()는 analysis_failed→analyzing만 간다(CONTENT_RETRY_TARGET). 범용 수동 전이가 유일 경로.',
-  },
-  {
-    from: 'regenerating',
-    to: 'analyzing',
-    kind: NotWiredKind.Unimplemented,
-    reason:
-      'auto_edit 워커 미구현 (대장 #98). JobType.AutoEdit 계약과 payload `reanalyze` 분기 주석까지 있으나 그것을 소비하는 워커·핸들러가 0건이다.',
-  },
-  {
-    from: 'regenerating',
-    to: 'preview_generating',
-    kind: NotWiredKind.Unimplemented,
-    reason: 'auto_edit 워커 미구현 (대장 #98) — reanalyze=false 분기. 구동부 0건.',
-  },
-  {
-    from: 'regenerating',
-    to: 'regeneration_failed',
-    kind: NotWiredKind.Unimplemented,
-    reason: 'auto_edit 워커 미구현 (대장 #98) — 재생성 잡 자체가 없어 실패 전이도 발생할 수 없다.',
   },
   {
     from: 'published',
@@ -362,9 +352,10 @@ export const isAutoProgressContentStatus = (s: ContentStatus): boolean =>
  * 종결 상태(rejected·canceled·archived)나 `published`처럼 원래 사람이 다음 홉을 지시하는 상태는
  * 후보가 아니라 여기 들어오지 않는다 — "출구가 없다"와 "멈췄다"는 다르다.
  *
- * 현재: `regenerating` 1종(auto_edit 미구현, 대장 #98). auto_edit이 구동돼 그 엣지들이
- * NOT_WIRED에서 빠지는 순간 이 집합이 비고, 이를 소비하는 UI 판정(경고 톤·조치 필요)이 자동으로
- * 사라진다 — 사람이 되돌릴 것을 기억할 필요가 없다(#29 ④).
+ * 현재: **비어 있다**(2026-08-20, auto_edit Phase 1). 마지막 항목이던 `regenerating`은 대장 #98이
+ * 닫히면서 빠졌다 — 예고대로 UI 판정(경고 톤·조치 필요)이 사람 손 없이 자동으로 사라졌다(#29 ④).
+ * 다시 채워지는 경우는 "자동 진행하기로 한 상태의 구동부를 만들지 않은 채 계약만 넣었을 때"뿐이며,
+ * 그때 이 집합이 비지 않는 것 자체가 경보다.
  */
 export const STALLED_AUTOMATION_CONTENT_STATUSES: readonly ContentStatus[] =
   SYSTEM_DRIVEN_CONTENT_STATUSES.filter((s) => !hasImplementedContentExit(s));

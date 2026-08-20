@@ -35,8 +35,19 @@ import { describeWithDb, e2eDb } from './e2e-db';
 const d = describeWithDb();
 
 const S3_BUCKET = 'gachinol-media';
-const S3_KEY = 'S3RVER';
-const S3_SECRET = 'S3RVER';
+/**
+ * ★ `E2E_S3_ENDPOINT`가 설정되면 s3rver 대신 그 저장소(개발용 MinIO 등)를 쓴다.
+ *
+ * 왜 필요한가: s3rver는 AWS SDK v3의 **스트림 업로드(aws-chunked)를 디코드하지 못해**
+ * 올린 파일을 손상시킨다(실측: 24,453B → 24,497B, +44B의 청크 메타가 본문에 섞임).
+ * 기존 파이프라인은 워커 산출물을 워커가 다시 읽는 경로가 없어(preview·thumbnail 모두
+ * original을 읽었다) 이 한계가 드러나지 않았는데, auto_edit이 만든 `edited_master`를
+ * preview가 읽으면서 처음 노출됐다. MinIO에서는 같은 왕복이 바이트 일치한다(프로덕션 무영향).
+ * 즉 s3rver로는 이 경로를 **원천적으로 검증할 수 없다.**
+ *   실행 예: E2E_S3_ENDPOINT=http://localhost:9000 E2E_S3_KEY=minioadmin E2E_S3_SECRET=minioadmin
+ */
+const S3_KEY = process.env.E2E_S3_KEY ?? 'S3RVER';
+const S3_SECRET = process.env.E2E_S3_SECRET ?? 'S3RVER';
 
 interface Embedded {
   redisUrl: string;
@@ -44,17 +55,35 @@ interface Embedded {
   stop: () => Promise<void>;
 }
 
-/** redis-memory-server + s3rver 기동 — 실패 시 null(테스트가 skip) */
+/**
+ * redis-memory-server + s3rver 기동 — 실패 시 null(테스트가 skip).
+ *
+ * ★ `E2E_REDIS_URL`이 설정돼 있으면 인프로세스 Redis 대신 **그것을 쓴다.**
+ * redis-memory-server는 Redis를 소스에서 빌드하는데 일부 개발 환경(예: 구버전 GNU Make가
+ * 깔린 macOS)에서 그 빌드가 실패해 파이프라인 E2E 전체가 조용히 skip된다 — 인프라 문제로
+ * 검증이 사라지는 것이 가장 나쁘다. 이미 떠 있는 개발용 Redis를 가리키면 그대로 돈다.
+ * 오염 방지를 위해 **전용 DB 번호를 붙일 것**: `E2E_REDIS_URL=redis://localhost:6379/15`
+ */
 async function startEmbedded(): Promise<Embedded | null> {
   try {
-    // 지연 import — devDep 부재 환경에서도 모듈 로드 단계 크래시 방지
-    const { RedisMemoryServer } = await import('redis-memory-server');
     const S3rver = (await import('s3rver')).default;
 
-    const redis = new RedisMemoryServer();
-    const host = await redis.getHost();
-    const port = await redis.getPort();
-    const redisUrl = `redis://${host}:${port}`;
+    let redisUrl = process.env.E2E_REDIS_URL ?? '';
+    let stopRedis: () => Promise<void> = async () => undefined;
+    if (!redisUrl) {
+      // 지연 import — devDep 부재 환경에서도 모듈 로드 단계 크래시 방지
+      const { RedisMemoryServer } = await import('redis-memory-server');
+      const redis = new RedisMemoryServer();
+      const host = await redis.getHost();
+      const port = await redis.getPort();
+      redisUrl = `redis://${host}:${port}`;
+      stopRedis = async () => void (await redis.stop().catch(() => undefined));
+    }
+
+    const external = process.env.E2E_S3_ENDPOINT;
+    if (external) {
+      return { redisUrl, s3Endpoint: external, stop: stopRedis };
+    }
 
     const dir = mkdtempSync(join(tmpdir(), 's3rver-e2e-'));
     const s3port = 9800 + Math.floor(Math.random() * 100);
@@ -67,7 +96,7 @@ async function startEmbedded(): Promise<Embedded | null> {
       s3Endpoint,
       stop: async () => {
         await s3.close().catch(() => undefined);
-        await redis.stop().catch(() => undefined);
+        await stopRedis();
       },
     };
   } catch (e) {
@@ -116,7 +145,8 @@ d('media pipeline (withDb + embedded redis/s3)', () => {
       forcePathStyle: true,
       credentials: { accessKeyId: S3_KEY, secretAccessKey: S3_SECRET },
     });
-    await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }));
+    // 외부 저장소(MinIO)는 버킷이 이미 있을 수 있다 — 중복 생성은 무해 무시
+    await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET })).catch(() => undefined);
 
     // ③ tiny mp4 (testsrc 1.5s 320x240 + 사인파 오디오) — 런타임 생성, 커밋 금지
     const wdir = mkdtempSync(join(tmpdir(), 'media-e2e-'));
@@ -251,16 +281,26 @@ d('media pipeline (withDb + embedded redis/s3)', () => {
     }
     expect(status).toBe('awaiting_reporter_review');
 
-    // ⑤ 자산 4종(original·rendition·preview·thumbnail) ready + storageKey 접두 검증
+    // ⑤ 자산 5종(original·edited_master·rendition·preview·thumbnail) ready + storageKey 접두 검증
     const assets = await prisma!.mediaAsset.findMany({ where: { contentId } });
     const byKind = Object.fromEntries(assets.map((a) => [a.kind, a]));
-    for (const kind of ['original', 'rendition', 'preview', 'thumbnail']) {
+    for (const kind of ['original', 'edited_master', 'rendition', 'preview', 'thumbnail']) {
       expect(byKind[kind]?.status).toBe('ready');
       expect(byKind[kind]?.storageKey.startsWith(`contents/${contentId}/g1/`)).toBe(true);
     }
     expect(byKind.rendition?.renditionLabel).toBe('720p');
     expect(byKind.preview?.renditionLabel).toBe('preview-360p');
     expect(byKind.rendition?.checksumSha256).toMatch(/^[0-9a-f]{64}$/);
+
+    // ⑤-1 ★ auto_edit — 배포 렌디션이 **편집 결과로 교체**됐다(같은 key를 덮어쓰므로 체크섬이 같다)
+    expect(byKind.edited_master?.storageKey).toBe(`contents/${contentId}/g1/edited-master.mp4`);
+    expect(byKind.edited_master?.checksumSha256).toBe(byKind.rendition?.checksumSha256);
+
+    // ⑤-2 ★ 타임라인 항등 — Phase 1은 컷을 하지 않으므로 편집본 길이 == 원본 길이여야 한다.
+    // 이게 깨지면 Scene 시각(원본 기준)과 배포본이 어긋나 구독자 자막이 통째로 밀린다.
+    const content = await prisma!.content.findUnique({ where: { id: contentId } });
+    expect(content?.durationSec).toBeGreaterThan(0);
+    expect(Math.abs((byKind.edited_master?.durationSec ?? 0) - (content?.durationSec ?? 0))).toBeLessThan(0.1);
 
     // ⑥ system 전이 로그 — uploaded→processing→preview_generating→awaiting_reporter_review
     const logs = await prisma!.statusTransitionLog.findMany({
@@ -287,5 +327,72 @@ d('media pipeline (withDb + embedded redis/s3)', () => {
     } catch (e) {
       console.warn(`[media-e2e] preview S3 재확인 skip(s3rver 편차): ${e instanceof Error ? e.message : e}`);
     }
+  }, 120000);
+
+  /**
+   * ★ 재생성 루프 (대장 #98 종결 실증) — 앞 테스트가 남긴 `awaiting_reporter_review` 콘텐츠를 이어 쓴다.
+   *
+   * 검증하는 것:
+   *  ① 수정요청 → `revision_requested`에서 **멈춘다**(자동 연쇄하지 않는다 — 초안 수정 기회 보존)
+   *  ② `POST /regenerate` → `regenerating`(gen=2) → auto_edit → preview → `awaiting_reporter_review` 완주
+   *  ③ 새 세대 산출물이 `g2/` 접두로 생성된다
+   *  ④ 재생성이 미해결 수정요청을 해소한다(resolvedAt·resolvedByJobId)
+   *  ⑤ 재생성 소스가 **직전 세대 edited_master**다(원본 재편집 대비 5배 빠른 경로)
+   */
+  it('수정요청 → 재생성(gen=2) → auto_edit → preview → awaiting_reporter_review 완주', async () => {
+    if (!ready()) {
+      console.warn('[media-e2e] 인프라 미가용 — 재생성 테스트 skip');
+      return;
+    }
+
+    // ① 수정요청 — 여기서 멈춰야 한다(자동 연쇄 금지)
+    await http()
+      .post(`/v1/contents/${contentId}/request-revision`)
+      .set(auth(reporterToken))
+      .send({ note: '중간 부분을 다시 다듬어 주세요' })
+      .expect(200);
+    let row = await prisma!.content.findUnique({ where: { id: contentId } });
+    expect(row?.status).toBe('revision_requested');
+    expect(row?.generation).toBe(1); // 아직 세대는 그대로
+
+    // ② 재생성 시작 — 명시적 트리거
+    await http()
+      .post(`/v1/contents/${contentId}/regenerate`)
+      .set(auth(reporterToken))
+      .expect(200);
+    row = await prisma!.content.findUnique({ where: { id: contentId } });
+    expect(row?.generation).toBe(2); // 세대 +1
+
+    // ③ 완주 대기
+    let status = '';
+    for (let i = 0; i < 60; i++) {
+      const r = await prisma!.content.findUnique({ where: { id: contentId } });
+      status = r?.status ?? '';
+      if (status === 'awaiting_reporter_review') break;
+      if (status === 'regeneration_failed' || status === 'preview_failed') break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    expect(status).toBe('awaiting_reporter_review');
+
+    // ④ 새 세대 산출물 — g2 접두
+    const g2 = await prisma!.mediaAsset.findMany({ where: { contentId, generation: 2 } });
+    const g2Kinds = new Set(g2.map((a) => a.kind));
+    expect(g2Kinds.has('edited_master')).toBe(true);
+    expect(g2Kinds.has('preview')).toBe(true);
+    for (const a of g2) expect(a.storageKey.startsWith(`contents/${contentId}/g2/`)).toBe(true);
+
+    // ⑤ 수정요청 해소 — 재생성 잡 id가 기록된다
+    const revisions = await prisma!.revisionRequest.findMany({ where: { contentId } });
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]!.resolvedAt).toBeTruthy();
+    expect(revisions[0]!.resolvedByJobId).toBe(`auto_edit:${contentId}:g2`);
+
+    // ⑥ 전이 로그 — regenerating을 거쳐 돌아왔다
+    const logs = await prisma!.statusTransitionLog.findMany({ where: { entityId: contentId } });
+    const hops = new Set(logs.map((l) => `${l.fromStatus}->${l.toStatus}`));
+    expect(hops.has('awaiting_reporter_review->revision_requested')).toBe(true);
+    expect(hops.has('revision_requested->regenerating')).toBe(true);
+    expect(hops.has('regenerating->preview_generating')).toBe(true);
+    expect(hops.has('preview_generating->awaiting_reporter_review')).toBe(true);
   }, 120000);
 });

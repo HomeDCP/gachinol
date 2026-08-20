@@ -10,6 +10,7 @@ import { loadWorkerEnv, type WorkerEnv } from '../env';
 import { probe, transcode } from '../ffmpeg';
 import { fileSize } from '../s3';
 import type { S3Io } from '../s3';
+import { processAutoEdit } from './auto-edit';
 import { processPreview } from './preview';
 import { processThumbnail } from './thumbnail';
 import { processTranscode } from './transcode';
@@ -203,4 +204,79 @@ describe('probe (ffprobe-static)', () => {
     expect(meta.height).toBe(240);
     expect(meta.videoCodec).toBeDefined();
   });
+});
+
+describe('processAutoEdit', () => {
+  test('컷 없음(Phase 1 실경로) — edited_master + rendition 2건, 타임라인 항등', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'out-'));
+    const { io, uploaded } = localS3({ [source.key]: tinyMp4 }, outDir);
+    const { job, progress } = fakeJob('auto_edit', {
+      type: 'auto_edit',
+      payload: {
+        contentId: 'c1' as never,
+        sourceAssetId: 'a1' as never,
+        revisionRequestId: null,
+        reanalyze: false,
+        editPlan: null,
+      },
+      generation: 1,
+      source,
+      outputBucket,
+      outputKeyPrefix,
+    } satisfies MediaJobData<'auto_edit'>);
+
+    const result = await processAutoEdit(job, io, env);
+
+    expect(result.assets.map((a) => a.kind).sort()).toEqual(['edited_master', 'rendition']);
+    expect(uploaded).toEqual([
+      'contents/c1/g1/edited-master.mp4',
+      'contents/c1/g1/rendition/720p.mp4',
+    ]);
+    for (const a of result.assets) {
+      expect(a.checksumSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(a.sizeBytes).toBeGreaterThan(0);
+      expect(a.videoCodec).toBe('h264');
+    }
+    // ★ 타임라인 항등 — 이게 깨지면 구독자 자막이 밀린다
+    expect(result.timeline).toHaveLength(1);
+    const [m] = result.timeline;
+    expect(m.sourceStartSec).toBe(m.outputStartSec);
+    expect(Math.abs(m.sourceEndSec - m.outputEndSec)).toBeLessThan(0.05);
+    expect(progress.at(-1)).toBe(100);
+    await rm(outDir, { recursive: true, force: true });
+  }, 60000);
+
+  test('컷 있음 — segments 순서대로 이어붙이고 타임라인이 누적 오프셋을 담는다', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'out-'));
+    const { io } = localS3({ [source.key]: tinyMp4 }, outDir);
+    const { job } = fakeJob('auto_edit', {
+      type: 'auto_edit',
+      payload: {
+        contentId: 'c1' as never,
+        sourceAssetId: 'a1' as never,
+        revisionRequestId: null,
+        reanalyze: false,
+        editPlan: {
+          segments: [
+            { startSec: 0, endSec: 0.4 },
+            { startSec: 0.6, endSec: 1.0 },
+          ],
+        },
+      },
+      generation: 2,
+      source,
+      outputBucket,
+      outputKeyPrefix: 'contents/c1/g2/',
+    } satisfies MediaJobData<'auto_edit'>);
+
+    const result = await processAutoEdit(job, io, env);
+
+    expect(result.timeline).toEqual([
+      { sourceStartSec: 0, sourceEndSec: 0.4, outputStartSec: 0, outputEndSec: 0.4 },
+      { sourceStartSec: 0.6, sourceEndSec: 1.0, outputStartSec: 0.4, outputEndSec: 0.8 },
+    ]);
+    const master = result.assets.find((a) => a.kind === 'edited_master')!;
+    expect(master.durationSec).toBeLessThan(1); // 컷으로 짧아졌다
+    await rm(outDir, { recursive: true, force: true });
+  }, 60000);
 });

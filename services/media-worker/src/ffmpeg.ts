@@ -135,6 +135,67 @@ export function transcode(
   return runWithProgress(command, output, onProgress, opts.timeoutMs);
 }
 
+/**
+ * 자동편집(auto_edit) — 음량 정규화 + 배포 렌디션 규격 + faststart.
+ *
+ * ★ Phase 1은 **`silenceremove`를 쓰지 않는다.** 두 가지 이유가 겹친다:
+ *  ① 효과가 거의 없다 — 2026-08-17 PoC 실측상 야외 촬영본은 환경음이 계속 있어
+ *     검출된 무음이 0.6초 한 곳뿐이었고 제거해도 117.86 → 117.30초였다.
+ *  ② 그런데 타임라인은 바뀐다 — `Scene.startSec`는 원본 기준이고 구독자 피드의 자막
+ *     오버레이가 그 값을 그대로 쓰므로, 0.56초라도 밀리면 **전 콘텐츠 자막이 어긋난다**.
+ * 즉 얻는 것 없이 자막만 깨진다. 컷은 글콘티 기반 `segments`가 생길 때(T-AI 트랙) 들어온다.
+ *
+ * `segments`가 있으면 `filter_complex`로 trim→concat 한다.
+ * ⚠️ PoC 함정: **`-vf`와 `-filter_complex`는 함께 못 쓴다** — 컷 경로에서는 scale도
+ * 필터그래프 안으로 넣어야 한다.
+ */
+export function autoEdit(
+  input: string,
+  output: string,
+  opts: {
+    height: number;
+    vbrKbps: number;
+    /** loudnorm 목표 라우드니스(LUFS). 방송 표준 -16 */
+    loudnormI: number;
+    /** 남길 구간 — 비면 컷 없이 전체 유지(Phase 1) */
+    segments?: readonly { startSec: number; endSec: number }[];
+    timeoutMs?: number;
+  },
+  onProgress?: ProgressFn,
+): Promise<void> {
+  const scale = `scale=-2:'min(ih,${opts.height})'`;
+  const loudnorm = `loudnorm=I=${opts.loudnormI}:TP=-1.5:LRA=11`;
+  const common = [
+    '-preset veryfast',
+    `-b:v ${opts.vbrKbps}k`,
+    `-maxrate ${Math.round(opts.vbrKbps * 1.5)}k`,
+    `-bufsize ${opts.vbrKbps * 2}k`,
+    '-pix_fmt yuv420p',
+    '-movflags +faststart',
+  ];
+
+  const segments = opts.segments ?? [];
+  const command = ffmpeg(input).videoCodec('libx264').audioCodec('aac').audioBitrate('128k');
+
+  if (segments.length === 0) {
+    // 컷 없음 — 타임라인 항등. -vf/-af 단순 경로
+    command.outputOptions([...common, `-vf ${scale}`, `-af ${loudnorm}`]);
+  } else {
+    // 컷 있음 — scale·loudnorm까지 전부 필터그래프 안으로(‑vf와 병용 불가)
+    const parts = segments.map(
+      (s, i) =>
+        `[0:v]trim=${s.startSec}:${s.endSec},setpts=PTS-STARTPTS,${scale}[v${i}];` +
+        `[0:a]atrim=${s.startSec}:${s.endSec},asetpts=PTS-STARTPTS[a${i}]`,
+    );
+    const chain = segments.map((_, i) => `[v${i}][a${i}]`).join('');
+    const graph =
+      `${parts.join(';')};${chain}concat=n=${segments.length}:v=1:a=1[vc][ac];` +
+      `[ac]${loudnorm}[ao]`;
+    command.outputOptions([...common, '-filter_complex', graph, '-map', '[vc]', '-map', '[ao]']);
+  }
+  return runWithProgress(command, output, onProgress, opts.timeoutMs);
+}
+
 /** 저화질 프리뷰 — 낮은 해상도·비트레이트 (기자 승인 확인용). faststart 필수(스트리밍) */
 export function preview(
   input: string,

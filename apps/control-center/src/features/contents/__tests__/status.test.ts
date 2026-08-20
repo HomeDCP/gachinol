@@ -30,7 +30,12 @@ describe('STATUS_BADGE_CENTER — 23종 전수', () => {
     expect(STATUS_DESCRIPTION_CENTER[status].length).toBeGreaterThan(0);
   });
 
-  test('needsCenterAction 정확히 9종 (awaiting_center_review + 6 *_failed + revision_requested·regenerating, 대장 #98 보강)', () => {
+  /* ★ 대장 #98 종결(2026-08-20) — `regenerating`이 빠졌다.
+   * auto_edit 워커가 구동되면서 shared NOT_WIRED에서 regenerating 출구가 제거됐고,
+   * statusBadge가 그 술어에서 파생하므로 "센터 조치 필요" 표시가 **자동으로** 사라졌다
+   * (#29 ④가 예고한 자동 추종 — 사람이 되돌릴 것을 기억할 필요가 없다).
+   * revision_requested는 남는다: 여전히 사람이 "다시 만들기"를 눌러야 진행된다. */
+  test('needsCenterAction 정확히 8종 (awaiting_center_review + 6 *_failed + revision_requested)', () => {
     const flagged = all.filter((s) => statusBadge(s).needsCenterAction === true).sort();
     expect(flagged).toEqual(
       [
@@ -42,7 +47,6 @@ describe('STATUS_BADGE_CENTER — 23종 전수', () => {
         'regeneration_failed',
         'publish_failed',
         'revision_requested',
-        'regenerating',
       ].sort(),
     );
   });

@@ -33,6 +33,7 @@ export * from './content/revision-request';
 export * from './content/dto';
 
 // media
+export * from './media/edit-plan';
 export * from './media/media-asset';
 export * from './media/media-job';
 

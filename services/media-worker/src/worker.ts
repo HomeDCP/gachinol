@@ -3,6 +3,7 @@ import { MEDIA_QUEUE_NAME } from '@gachinol/shared';
 import { Worker } from 'bullmq';
 import type IORedis from 'ioredis';
 import type { WorkerEnv } from './env';
+import { processAutoEdit } from './processors/auto-edit';
 import { processPreview } from './processors/preview';
 import { processThumbnail } from './processors/thumbnail';
 import { processTranscode } from './processors/transcode';
@@ -27,6 +28,8 @@ export function createMediaWorker(
       switch (name) {
         case 'transcode':
           return processTranscode(job, s3, env);
+        case 'auto_edit':
+          return processAutoEdit(job, s3, env);
         case 'preview':
           return processPreview(job, s3, env);
         case 'thumbnail':

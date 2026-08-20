@@ -17,6 +17,7 @@ import {
   createDraft,
   rejectContent,
   requestRevision,
+  regenerateContent,
   retryContent,
   updateCaptions,
   updateDraft,
@@ -118,6 +119,17 @@ export function useCancel(id: ContentId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: CancelContentRequest) => cancelContent(client, id, body),
+    onSuccess: (content) => applyContentResult(queryClient, content),
+    onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/** 다시 만들기 — 초안을 고친 뒤 재생성을 시작한다(대장 #98) */
+export function useRegenerate(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => regenerateContent(client, id),
     onSuccess: (content) => applyContentResult(queryClient, content),
     onError: (err) => handleTransitionError(queryClient, id, err),
   });

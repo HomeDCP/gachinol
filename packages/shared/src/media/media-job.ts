@@ -1,4 +1,5 @@
 import type { JobType, JobPayloadMap } from '../job/job';
+import type { TimelineMapping } from './edit-plan';
 import type { MediaAssetKind } from './media-asset';
 
 /**
@@ -13,9 +14,9 @@ import type { MediaAssetKind } from './media-asset';
 export const MEDIA_QUEUE_NAME = 'media' as const;
 export type MediaQueueName = typeof MEDIA_QUEUE_NAME;
 
-/** 이번 슬라이스에서 미디어 워커가 처리하는 잡 타입 (JobType의 부분집합) */
-export const MEDIA_JOB_TYPES = ['transcode', 'preview', 'thumbnail'] as const;
-export type MediaJobType = Extract<JobType, 'transcode' | 'preview' | 'thumbnail'>;
+/** 미디어 워커가 처리하는 잡 타입 (JobType의 부분집합) */
+export const MEDIA_JOB_TYPES = ['transcode', 'auto_edit', 'preview', 'thumbnail'] as const;
+export type MediaJobType = Extract<JobType, 'transcode' | 'auto_edit' | 'preview' | 'thumbnail'>;
 
 /** S3 오브젝트 좌표 */
 export interface S3ObjectRef {
@@ -34,7 +35,11 @@ export interface MediaJobData<T extends MediaJobType = MediaJobType> {
   payload: JobPayloadMap[T];
   /** enqueue 시점 Content.generation (산출물 세대 정합) */
   generation: number;
-  /** 읽을 원본 좌표 (항상 original 자산) */
+  /**
+   * 읽을 소스 좌표. 1차 처리는 original이지만 **재생성은 현 세대 `edited_master`**다
+   * (실측: 원본 4K HEVC 재편집 5.33초 vs edited_master 720p 1.06초 — 5배). 어느 자산을
+   * 고를지는 api(`QueueProducerService`)가 정하고, worker는 받은 좌표를 그대로 읽는다.
+   */
   source: S3ObjectRef;
   /** 산출물 버킷 */
   outputBucket: string;
@@ -71,11 +76,18 @@ export interface ProducedAsset {
 }
 
 /**
- * MediaJobType별 리턴 계약 (worker→api, job.returnvalue). 이번 슬라이스는 3종만 실사용.
+ * MediaJobType별 리턴 계약 (worker→api, job.returnvalue).
  * transcode는 MVP에서 rendition 1개(720p)이나 다해상도 확장 대비 배열.
  */
 export interface JobResultMap {
   transcode: { assets: readonly ProducedAsset[] };
+  /**
+   * 자동편집 — `edited_master` + 갱신된 `rendition`을 함께 낸다.
+   * `timeline`은 api가 `Scene.startSec/endSec`를 배포본 기준으로 재기입하는 데 쓴다
+   * (worker만이 정확한 오프셋을 안다 — `edit-plan.ts` TimelineMapping 참조).
+   * 컷이 없으면 항등 매핑 1건이 실린다.
+   */
+  auto_edit: { assets: readonly ProducedAsset[]; timeline: readonly TimelineMapping[] };
   preview: { asset: ProducedAsset };
   thumbnail: { asset: ProducedAsset };
 }

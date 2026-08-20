@@ -86,6 +86,14 @@ export const cancelContent = (
   body: CancelContentRequest,
 ): Promise<Content> => c.request<Content>('POST', `/contents/${id}/cancel`, { body });
 
+/**
+ * POST /v1/contents/:id/regenerate — revision_requested에서 자동편집 재생성을 시작한다.
+ * 서버가 커밋 후 auto_edit 잡을 인큐한다(대장 #98). 수정요청과 자동 연쇄하지 않는 이유는
+ * `features/contents/actions.ts`의 canRegenerate 주석 참조.
+ */
+export const regenerateContent = (c: ApiClient, id: ContentId): Promise<Content> =>
+  c.request<Content>('POST', `/contents/${id}/regenerate`);
+
 /** POST /v1/contents/:id/retry — 기자는 upload_failed만 (그 외 403) */
 export const retryContent = (c: ApiClient, id: ContentId): Promise<Content> =>
   c.request<Content>('POST', `/contents/${id}/retry`);

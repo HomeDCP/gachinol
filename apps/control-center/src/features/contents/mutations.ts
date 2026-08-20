@@ -17,6 +17,7 @@ import {
   rejectContent,
   requestRevision,
   retractPublication,
+  regenerateContent,
   retryContent,
   retryPublication,
   transitionContent,
@@ -74,6 +75,17 @@ export function useReject(id: ContentId) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: RejectContentRequest) => rejectContent(client, id, body),
+    onSuccess: (content) => applyContentResult(queryClient, content),
+    onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/** 다시 만들기 — revision_requested에서 auto_edit 재생성 시작(대장 #98). 범용 전이와 달리 잡을 인큐한다 */
+export function useRegenerate(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => regenerateContent(client, id),
     onSuccess: (content) => applyContentResult(queryClient, content),
     onError: (err) => handleTransitionError(queryClient, id, err),
   });

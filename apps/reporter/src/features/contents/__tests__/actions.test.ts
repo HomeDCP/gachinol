@@ -33,7 +33,23 @@ describe('reporterActionsFor', () => {
       canReview: true,
       canCancel: true,
       canEditCaptions: true, // 자막은 published 전까지 언제든 (T-W2-34)
+      canRegenerate: false, // awaiting_reporter_review에서는 regenerating으로 갈 수 없다
     });
+  });
+
+  /* ★ 다시 만들기 (대장 #98) — 수정요청과 자동 연쇄하지 않으므로 이 버튼이 유일한 진행 수단이다.
+   * 상태 판정의 원천은 shared 전이 맵이고, 담당 기자만 누를 수 있다(서버 policyGuard와 동일). */
+  test('담당 + revision_requested → canRegenerate·canEdit (고치고 나서 다시 만든다)', () => {
+    const a = reporterActionsFor(mine('revision_requested'), ME);
+    expect(a.canRegenerate).toBe(true);
+    expect(a.canEdit).toBe(true); // 초안 수정 기회가 함께 열려 있어야 순서가 성립한다
+  });
+
+  test('revision_requested 외에는 canRegenerate가 열리지 않는다 (전이 맵 파생)', () => {
+    for (const status of Object.values(ContentStatus)) {
+      if (status === 'revision_requested' || status === 'regeneration_failed') continue;
+      expect(reporterActionsFor(mine(status), ME).canRegenerate).toBe(false);
+    }
   });
 
   test('비담당은 자막 보강 외 전부 false (지사 동료·live_vod는 열람만)', () => {

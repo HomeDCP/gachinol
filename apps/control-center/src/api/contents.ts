@@ -81,6 +81,13 @@ export const rejectContent = (
 ): Promise<Content> => c.request<Content>('POST', `/contents/${id}/reject`, { body });
 
 /** POST /v1/contents/:id/retry — 센터는 실패 6종 재시도 (목적지는 shared CONTENT_RETRY_TARGET) */
+/**
+ * POST /v1/contents/:id/regenerate — revision_requested에서 자동편집 재생성 시작(대장 #98).
+ * 범용 수동 전이와 다르다: 이 경로만 커밋 후 auto_edit 잡을 인큐한다.
+ */
+export const regenerateContent = (c: ApiClient, id: ContentId): Promise<Content> =>
+  c.request<Content>('POST', `/contents/${id}/regenerate`);
+
 export const retryContent = (c: ApiClient, id: ContentId): Promise<Content> =>
   c.request<Content>('POST', `/contents/${id}/retry`);
 
