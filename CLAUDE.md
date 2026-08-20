@@ -69,7 +69,7 @@
 - **라이브**: RTMP ingest + HLS 배포 = **Cloudflare Stream**(매니지드, 인코딩·다채널 simulcast 무료) 확정. 자체 RTMP/HLS 구축은 라이브 전송비 급증 시 재검토. [docs/infrastructure.md](docs/infrastructure.md) §4-B
 - **모노레포**: pnpm workspaces + Turborepo
 - **런타임**: Node 24 (`.nvmrc`), pnpm 8+
-- **배포/인프라**: 컨테이너(Docker 멀티스테이지, glibc) + GitHub Actions CI/CD. 프로덕션 오케스트레이션 `infra/docker/docker-compose.prod.yml`. AI STT = 리턴제로(RTZR) API(GPU 불요). 서버 = 4vCPU/8GB 단일 VM 시작 → 병목별 확장. 상세 [docs/infrastructure.md](docs/infrastructure.md)
+- **배포/인프라**: 컨테이너(Docker 멀티스테이지, glibc) + GitHub Actions CI/CD. 프로덕션 오케스트레이션 `infra/docker/docker-compose.prod.yml`. AI STT = **로컬 whisper.cpp + Silero VAD**(2026-08-20 결정 — 舊 RTZR API에서 변경, 근거는 비용이 아니라 **데이터 주권**. §12 참조). 서버 = 4vCPU/8GB 단일 VM 시작 → 병목별 확장. 상세 [docs/infrastructure.md](docs/infrastructure.md)
 
 ## 6. 모노레포 구조
 
@@ -98,8 +98,8 @@ gachinol/
    │ 업로드(원본)
    ▼
 ┌──────────────── 제온(192.168.0.101) = 백엔드 + 스토리지 ────────────────┐
-│ [api] ──넣기──> [큐] ──> [media-worker] 트랜스코딩 → ⚠️자동편집(auto_edit) → 저화질 프리뷰
-│    │                         │                        └ **미구현**(대장 #98·#151)
+│ [api] ──넣기──> [큐] ──> [media-worker] 트랜스코딩 → 자동편집(auto_edit) → 저화질 프리뷰
+│    │                         │                        └ 기계편집 완료(2026-08-20) / 글콘티는 T-AI
 │    │                    [ai-worker] 화면(비전)+텍스트(STT/요약) 분석 → 태깅·추천
 │    ▼                         │
 │ [오브젝트 스토리지 = MinIO]   ▼      ← 용량 부족 시 **HDD 증설**
@@ -192,6 +192,16 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
 
 # 라이브+WS E2E (인프로세스 Nest app.listen(0) + 실 socket.io-client 왕복, 댓글 목). Postgres만 필요, Redis 불요
 pnpm --filter @gachinol/api test:e2e -- live-ws
+
+# ⚠️ 파이프라인 E2E는 외부 Redis/S3를 주입해야 확실히 돈다 (2026-08-20)
+#  · redis-memory-server는 Redis를 소스 빌드하는데 구버전 GNU Make 환경(맥)에서 실패 → E2E가 **조용히 skip**된다
+#  · s3rver는 AWS SDK v3 스트림 업로드(aws-chunked)를 디코드하지 못해 **파일을 손상**시킨다
+#    (실측 24,453B→24,497B). 워커 산출물을 워커가 다시 읽는 경로(auto_edit→preview)가 이걸 밟는다.
+#    MinIO는 바이트 일치 — 프로덕션 무영향.
+#  Redis DB 15는 전용으로 쓰고 실행 전 비운다: docker exec gachinol-redis-1 redis-cli -n 15 FLUSHDB
+E2E_REDIS_URL=redis://localhost:6379/15 E2E_S3_ENDPOINT=http://localhost:9000 \
+E2E_S3_KEY=minioadmin E2E_S3_SECRET=minioadmin \
+pnpm --filter @gachinol/api test:e2e -- media-pipeline
 ```
 
 ## 10. 컨벤션
@@ -206,11 +216,40 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
 
 ## 11. 현재 상태 / 로드맵
 
+- **✅ 자동편집 Phase 1 완료 (2026-08-20, PR #54) — 대장 #98 종결**: `auto_edit` 구동부가 0건이라
+  **수정요청이 콘텐츠를 영구 정지**시키던 결함을 닫았다. 핵심 설계는 **auto_edit이 LLM에 의존하지 않는다**는 것 —
+  `editPlan`은 선택적 입력이고 null이면 컷 없이 **기계편집**(음량 정규화 loudnorm·720p 렌디션·faststart)만 하므로
+  **AI·추론 노드가 전혀 없어도 파이프라인이 완주한다**(2026-08-17 PoC 실측: FFmpeg만으로 8.7초·AI 호출 0회).
+  - **새 ContentStatus 0개 · 전이맵 변경 0줄 · api 신규 HTTP 경계 0개.** auto_edit은 `preview_generating` 안에서
+    preview로 순차 체이닝하고, 재생성은 기존 `revision_requested→regenerating` 루프를 탄다.
+  - ⚠️ **`silenceremove`를 쓰지 않는다**: `Scene.startSec`는 원본 기준이고 구독자 피드 자막(`feed.mapper.ts`
+    `scenesToCaptions`)이 그 값을 그대로 쓴다. PoC 실측상 무음 제거 효과는 0.56초로 미미한데(야외는 환경음이
+    계속 있다) 타임라인은 바뀌어 **전 콘텐츠 자막이 밀린다**. Phase 1의 타임라인은 **항등**이며, 항등이 깨지면
+    `PipelineService.warnIfTimelineShifted`가 에러 로그로 드러낸다(컷 도입 시 Scene 재기입을 함께 구현해야 한다).
+  - **재편집 소스 = `edited_master`**(실측: 원본 4K HEVC 5.33초 vs 720p 마스터 **1.06초**, 5배). preview·thumbnail·
+    `durationSec`도 현 세대 edited_master를 우선한다.
+  - **재생성은 자동 연쇄가 아니라 명시 트리거**(`POST /v1/contents/:id/regenerate`) — `revision_requested`는
+    초안 수정이 허용되는 상태라(`EDITABLE_STATUSES`) 자동 연쇄하면 **기자가 자막을 고칠 기회가 사라진다**.
+    기자앱·관제앱에 "이대로 다시 만들기" 버튼을 배선했다.
+  - **대장 #117 동시 해소** — 세대가 오르면 미성년자 동의 확인 무효화. ⚠️ **07 법무 정본 대조 전이라 보수적으로
+    매번 무효화**한다(승인된 완화안 "화면 구성이 바뀐 재생성만"은 대조 후 적용). Phase 1은 `editPlan`이 없어 실질 차이 없음.
+  - `STALLED_AUTOMATION_CONTENT_STATUSES`가 **빈 배열**이 되어 3앱의 "정지 상태" 경고가 자동으로 사라졌다(#29 ④).
+  - ⚠️ **E2E 하네스 함정 2건 발견**: ① redis-memory-server가 구버전 GNU Make 환경에서 소스 빌드에 실패해
+    **파이프라인 E2E가 조용히 skip**되고 있었다. ② **s3rver는 AWS SDK v3 스트림 업로드(aws-chunked)를 디코드하지
+    못해 파일을 손상시킨다**(실측 24,453B → 24,497B). 기존 파이프라인은 워커 산출물을 워커가 다시 읽는 경로가
+    없어 드러나지 않았다. **MinIO는 바이트 일치 — 프로덕션 무영향.** `E2E_REDIS_URL`·`E2E_S3_ENDPOINT` 주입 경로를 추가했다:
+    ```bash
+    E2E_REDIS_URL=redis://localhost:6379/15 E2E_S3_ENDPOINT=http://localhost:9000 \
+    E2E_S3_KEY=minioadmin E2E_S3_SECRET=minioadmin pnpm --filter @gachinol/api test:e2e
+    ```
+  - **Phase 2 이후(맥 추론 노드·실 STT·글콘티 3지선다)는 정본대로 T-AI 트랙 · W2 완료 후**다. 설계는
+    `~/.claude/plans/llm-poc-cheeky-thacker.md`(승인된 계획)에 있다.
 - **🔄 웹 피벗 확정 (2026-08-04, 최우선)**: 네이티브 3앱 → **웹앱 3종 + 통합 쉘 앱** 전환 마스터플랜이
   독립 루브릭 평가 19라운드(11개 영역 전부 9.5/10+, [docs/plan/reviews/](docs/plan/reviews/))를 통과하고 **사용자 승인** 완료.
   다음 실행 = [docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md)의 **W0(기반)→W1(구독자 웹)→W2(기자·관제 웹)→W3(쉘·PWA)→W4(정리)**.
   네이티브 트랙은 승인 즉시 **동결**(버그픽스도 웹에서만). 착수 게이트: 05 §G 운전자금 확인 + 도메인·제온 노출 방식(사용자 결정).
-  테스트 실측 최신치(**2026-08-16**, Wave 8a3 종료, `pnpm --filter <app> test` 재현): **api 907(+e2e 81) · control-center 307 · reporter 265 · subscriber 109 · media-worker 24** (ai-worker는 이번 회차 미실측 — 직전 기록 pytest 11) — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
+  테스트 실측 최신치(**2026-08-20**, auto_edit Phase 1 종료, `pnpm --filter <app> test` 재현): **api 923(+e2e 82) · control-center 308 · reporter 267 · subscriber 289 · media-worker 35** (ai-worker는 이번 회차 미실측 — 로컬에 pytest 미설치. 직전 기록 pytest 11) — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
+  ⚠️ 이번 재실측에서 **subscriber 기록치가 stale이었음이 드러났다**(舊 109 → 실측 289). auto_edit 작업과 무관한 누적 차이이며, 규율이 예고한 그대로다 — 수치를 인용할 때는 반드시 그 자리에서 재실행할 것.
 - **✅ 영상 파이프라인 실증 완료 (2026-08-15)**: 실기 촬영본(iPhone 1080p HEVC 가로 63초·세로 `rotation=-90` 117초)으로
   **촬영본→업로드→트랜스코딩→AI분석→프리뷰→기자승인→(센터승인)→송출→시청** 한 바퀴를 제온 실배포에서 완주했다.
   3건 `published` + 카카오 목 송출 전건 성공 + 구독자 공개 피드 노출·재생(`206 video/mp4`). 회전 처리 정확(세로 406×720)·faststart 확인.
@@ -327,20 +366,24 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
   *"기자 웹 업로드 → **제온**이 수신 → **자동편집** → 미리보기 반환 → **기자 승인 또는 센터 승인** → 송출 →
   웹앱·카톡 채널 알림으로 시청"*으로 확정. 세 가지가 바뀌었다.
   1. **자동편집(`auto_edit`)이 파이프라인 정식 단계로 승격** — 종전에는 `T-AI` 병렬 트랙의 선택 항목이었다.
-     계약(`JobType.AutoEdit`·`MediaAssetKind.EditedMaster`·`regenerating` 3엣지)은 이미 있고 **구동부만 0건**(대장 #98).
-     ⚠️ **작업 범위는 아직 미정** — 사용자가 "AI 기반 편집"을 원해 **제온 로컬 LLM 타당성 조사**를 지시했고(2026-08-17),
-     그 보고를 보고 판단한다. 범위 확정 전에는 착수하지 않는다.
+     → **범위 확정 + Phase 1 구동 완료(2026-08-20, PR #54)**. 로컬 LLM 조사·PoC(2026-08-17)와 맥 스튜디오
+     실측(2026-08-20)을 거쳐 3단계로 쪼갰다: ① 기계편집(완료) ② 글콘티 3지선다(T-AI, W2 후) ③ 아카이브 매칭(펀딩 후).
+     상세는 이 절 최상단 "자동편집 Phase 1 완료" 항목.
   2. **송출 채널 = 카카오톡 + YouTube 2채널**(§3-1·§8). Facebook 이하 전부 스코프 제외(어댑터 코드는 보존).
   3. **제온이 정식 백엔드 겸 스토리지**(§5) — R2는 대기 옵션으로 강등, 용량은 HDD 증설로 확장.
 - **다음 후보 (docs/ROADMAP.md 참고)**:
   1. 댓글 수집 연동 + SNS 확장(YouTube/Meta/X/Threads 어댑터 — 레지스트리에 platform 추가) + 채널 계정 CRUD
      (~~`reporter_only` 자동 송출 후킹~~은 이미 동작 중이며, **센터 송출 지시 UI도 2026-08-15 배선 완료** — 대장 #94)
-  1-1. `auto_edit` 착수 시 `contents.durationSec` 확정 주체 재정리 — 현재는 트랜스코딩 실측이 채우지만
-     (대장 #95) shared 계약은 "편집 완료 후 확정"이라 자동편집 산출물이 원천이 되어야 한다
+  1-1. ~~`auto_edit` 착수 시 `contents.durationSec` 확정 주체 재정리~~ → **해소(2026-08-20)**:
+     `MediaAssetsService.findDurationSec(contentId, generation)`이 현 세대 `edited_master`를 우선한다
+     (shared 계약 "편집 완료 후 확정" 준수). Phase 1은 컷이 없어 값이 같지만 규칙을 먼저 고정했다
   1-2. 세로 영상 썸네일 프로파일 비대칭(`scale=640:-2` 폭 고정 → 세로는 640×1138) — 렌디션·프리뷰의
      높이 기준(`min(ih,H)`)과 어긋난다. 실사용 목록 확인 후 판단(EXEC-DECISIONS #26 ⑤)
-  2. `auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용) · HLS 패키징 · 실시간 WS 진행률 푸시
-  3. ai-worker 실 제공자(OpenAI Whisper/비전) 주입 + 추천 **승인→송출(publishing/published)** 배선 + 주간 자동 생성 스케줄(BullMQ repeatable)
+  2. ~~`auto_edit`(자동편집 마스터·`edited_master`, `regenerating→analyzing` 재분석 재사용)~~ →
+     **Phase 1 완료(§11)**. 남은 것: **글콘티 3지선다·실 STT**(T-AI 트랙, W2 완료 후) · HLS 패키징 ·
+     실시간 WS 진행률 푸시(재생성 대기 가시화에 유효)
+  3. ai-worker 실 제공자 주입(**로컬 whisper.cpp+VAD / 비전** — §12 STT 결정 반영, 舊 "OpenAI Whisper" 표기 정정)
+     + 추천 **승인→송출(publishing/published)** 배선 + 주간 자동 생성 스케줄(BullMQ repeatable)
   4. ~~`infra` 배포 스크립트/IaC~~ → **컨테이너화·CI/CD·프로덕션 compose 완료**. 남은 것: VM 프로비저닝·배포(CD) 워크플로·백업(R2)/마이그레이션 스크립트
   - ~~`apps/reporter` Expo 스캐폴딩 (촬영·업로드 MVP)~~ ✅ 완료
   - ~~업로드 presigned URL + BullMQ 생산자/QueueEvents (api 측)~~ ✅ 완료
@@ -378,8 +421,20 @@ pnpm --filter @gachinol/api test:e2e -- live-ws
 - ~~결제 PG 사~~ → **웹 피벗 계획에서 단계화**(2026-08-04): 커머스 1단계=**링크아웃**(판매·결제는 외부 플랫폼, PG 불요) → 2단계(자체 결제·PG 계약)는 GMV 트리거 충족 시 착수([docs/plan/05-monetization.md](docs/plan/05-monetization.md) §A-1·§G). B2B 미디어 세일즈 유통 방식은 계속 미정(01 §B-3 전략 초안 있음)
 - ~~프로덕션 스토리지(R2 vs 자체)~~ → **확정(2026-08-17)**: **제온 자체 호스팅**(MinIO), 용량은 HDD 증설. R2는 대기 옵션(env 전환). §5·infra §4-C
 - ~~라이브 SNS 채널 범위~~ → **확정(2026-08-17)**: **YouTube 단독**. Facebook/IG/X/Threads 제외(어댑터 코드 보존). §3-1·infra §5-2
-- **자동편집(`auto_edit`)의 작업 범위 — 사용자 판단 대기 (2026-08-17 신설, 최우선)**.
-  파이프라인 정식 단계로 승격은 확정됐으나 *"무엇을 편집하는가"*가 아직 어느 정본에도 없다.
-  사용자가 **AI 기반 편집**을 희망하며 **제온 로컬 LLM 구동 타당성 조사**를 지시 → 보고 후 범위 확정.
-  ⚠️ 범위 확정 전 착수 금지(계약만 있고 구동부 0건인 상태를 임의 구현으로 메우지 않는다 — 대장 #98·#151)
+- ~~자동편집(`auto_edit`)의 작업 범위~~ → **확정·Phase 1 완료(2026-08-20)**. 범위는 3단계로 쪼갰다:
+  **① 기계편집**(음량 정규화·렌디션, AI 0회) = **완료** · **② 글콘티 3지선다**(구성방향/구간/자막 문구) = T-AI 트랙 ·
+  **③ 아카이브 B-roll 매칭** = 펀딩 후. 서비스 목적은 처리량이 아니라 **시니어의 진입장벽 제거**이며
+  (사용자 정의: *"이 기능을 얼마나 잘 구현하는지가 서비스의 성패를 판가름"*), 그래서 MVP 물량(주 5건)과 무관하게 우선한다. §11
+- **STT 제공자 — 로컬 확정 (2026-08-20 사용자 결정, 정본 변경)**. 정본은 RTZR API였고 비용도 산정돼
+  있었으나(infra §4 — MVP ~$5/월), **개인정보·보안**을 근거로 로컬(whisper.cpp)로 바꾼다:
+  *"우리가 촬영한 원본에서 오디오를 추출하여 외부 서비스에 맡기는 건 보안·개인정보보호 측면에서 문제"*.
+  마을 촬영본에 주민 실명·목소리가 담기고 07이 미성년자 동의를 최상위 블로커로 다루는 것과 일관된다.
+  ⚠️ **비용은 로컬로 갈 이유가 아니었다**(월 $5) — 이 결정의 근거는 **오직 데이터 주권**이다.
+  - **인식률 실측(2026-08-20)**: 개선 시도 4가지 중 **1개만 유효**. ✅ **Silero VAD**(환각 소멸, 정상본 회귀 0,
+    34.7배 실시간) / ❌ 도메인 어휘 프롬프트(**VAD 모드에서 무시됨** — 564자 그대로) / ❌ `large-v3` full
+    (turbo 대비 8배 느린데 정확도는 더 낮다) / ⚠️ LLM 후처리(긴 입력에서 스키마 붕괴 — "교정"이 아니라 **"의심 표시"**로 전환).
+  - ⚠️ **정답 전사(ground truth) 미확보** — 지금까지의 비교는 전부 대리 지표(글자수·키워드)다. 작업지를
+    사용자에게 전달했으며, 확보 전에는 설정 튜닝이 감에 의존한다.
+  - **입력 품질이 알고리즘보다 효과적일 수 있다** — 무선 핀마이크 도입 검토(사용자 결정). 실측 음량 -19.8·-26.2dB.
+- 도메인·제온 외부 노출 방식(Cloudflare Tunnel 권장/포트 개방) — **W0 착수 전 사용자 결정 필요**([docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md) §E 1번)
 - 도메인·제온 외부 노출 방식(Cloudflare Tunnel 권장/포트 개방) — **W0 착수 전 사용자 결정 필요**([docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md) §E 1번)
