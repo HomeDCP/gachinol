@@ -4,6 +4,7 @@ import {
   ContentStatus,
   ReviewPolicy,
   afterReporterApproval,
+  canTransitionContent,
   isAutoProgressContentStatus,
   isFailureStatus,
   isMinorConsentPending,
@@ -45,6 +46,16 @@ export interface CenterActions {
    * 빈 배열 = 버튼 미노출. 열리는 상태의 판정은 `centerActionsFor` 주석 참조(상태 이름 비교 0).
    */
   manualTransitionTargets: readonly ContentStatus[];
+  /**
+   * ★ 다시 만들기 — `revision_requested`에서 auto_edit 재생성을 시작한다(대장 #98).
+   *
+   * 전용 액션으로 뽑는 이유: auto_edit이 구동되면서 `regenerating`이 자동 진행 상태가 됐고,
+   * 그 결과 아래 `manualTransitionTargets`의 ③ 조건("나가는 길 끝에 자동 진행 상태가 없다")에
+   * 걸려 범용 수동 전이 탈출구가 **자동으로 닫힌다**. 그런데 범용 전이(`POST /transitions`)는
+   * auto_edit 잡을 인큐하지 않으므로 그 길로 가면 또 멈춘다 — 진짜 경로는 전용 엔드포인트
+   * `POST /v1/contents/:id/regenerate`(커밋 후 인큐)뿐이고, 이 플래그가 그 버튼을 연다.
+   */
+  canRegenerate: boolean;
 }
 
 /**
@@ -83,9 +94,13 @@ export function centerActionsFor(c: Pick<Content, 'status'>): CenterActions {
   const canDecide = c.status === ContentStatus.AwaitingCenterReview;
   const canRetry = isFailureStatus(c.status);
   const canDistribute = c.status === ContentStatus.CenterApproved;
+  // 상태 규칙의 원천은 shared 전이 맵(사본 금지) — regeneration_failed는 canRetry가 담당한다
+  const canRegenerate =
+    c.status === ContentStatus.RevisionRequested &&
+    canTransitionContent(c.status, ContentStatus.Regenerating);
 
   const exits: readonly ContentStatus[] = CONTENT_STATUS_TRANSITIONS[c.status];
-  const dedicatedActionExists = canDecide || canRetry || canDistribute;
+  const dedicatedActionExists = canDecide || canRetry || canDistribute || canRegenerate;
   const someoneElseDrivesIt =
     isAutoProgressContentStatus(c.status) || exits.some((to) => isAutoProgressContentStatus(to));
 
@@ -97,6 +112,7 @@ export function centerActionsFor(c: Pick<Content, 'status'>): CenterActions {
     canRetry,
     canDistribute,
     canArchive: manualTransitionTargets.includes(ContentStatus.Archived),
+    canRegenerate,
     manualTransitionTargets,
   };
 }

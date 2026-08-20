@@ -53,6 +53,7 @@ import {
   useReject,
   useRequestRevision,
   useRetractPublication,
+  useRegenerate,
   useRetry,
   useRetryPublication,
   useTransitionContent,
@@ -377,6 +378,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const requestRevision = useRequestRevision(contentId);
   const reject = useReject(contentId);
   const retry = useRetry(contentId);
+  const regenerate = useRegenerate(contentId);
   const distribute = useDistribute(contentId);
   const retryPublication = useRetryPublication(contentId);
   const retractPublication = useRetractPublication(contentId);
@@ -912,6 +914,20 @@ export default function ContentDetailScreen(): React.JSX.Element {
             loading={distribute.isPending}
             disabled={anyPending}
           />
+        ) : actions.canRegenerate ? (
+          // ★ 대장 #98 — auto_edit 구동으로 regenerating이 자동 진행 상태가 되면서 범용 수동 전이
+          // 탈출구가 자동으로 닫혔다. 범용 전이는 잡을 인큐하지 않으므로 진짜 경로는 이 버튼뿐이다.
+          <>
+            <Text style={styles.metaText}>
+              기자가 초안을 고칠 수 있는 상태입니다. 지금 다시 만들면 현재 초안으로 재생성합니다.
+            </Text>
+            <Button
+              label="이대로 다시 만들기"
+              onPress={() => regenerate.mutate()}
+              loading={regenerate.isPending}
+              disabled={anyPending}
+            />
+          </>
         ) : actions.canRetry ? (
           <Button label="재시도" onPress={() => void confirmRetry()} loading={retry.isPending} />
         ) : actions.canArchive ? (
@@ -934,14 +950,6 @@ export default function ContentDetailScreen(): React.JSX.Element {
             onPress={() => openSheet('manual-transition')}
             disabled={anyPending}
           />
-        ) : content.status === 'regenerating' ? (
-          // regenerating 전용 폴백(대장 #98 보강) — 아래 공용 폴백("기자·파이프라인 소관")은 이 상태에서
-          // 거짓이다. 기자도 편집할 수 없고(reporterActionsFor.canEdit는 draft·revision_requested만)
-          // 파이프라인도 진행시키지 않는다(auto_edit 미구현) — manualTransitionTargets도 빈 배열이라
-          // 이 앱에는 버튼이 아예 없다.
-          <Text style={styles.metaText}>
-            기자·파이프라인 모두 이 상태를 진행시키지 않습니다. 관리자의 직접 개입이 필요합니다.
-          </Text>
         ) : !isTerminalStatus(content.status) ? (
           <Text style={styles.metaText}>지금은 대기 단계입니다 (기자·파이프라인 소관).</Text>
         ) : null}

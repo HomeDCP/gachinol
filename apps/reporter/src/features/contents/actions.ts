@@ -17,6 +17,15 @@ export interface ReporterActions {
    * 상태 조건만 남는다. 상태 규칙의 원천은 shared `isCaptionEditableStatus` 하나다(사본 금지).
    */
   canEditCaptions: boolean;
+  /**
+   * 다시 만들기 — `revision_requested`에서 auto_edit 재생성을 시작한다(대장 #98).
+   *
+   * 수정요청과 **자동 연쇄하지 않는** 이유가 이 버튼의 존재 이유다: `revision_requested`는
+   * 초안 수정이 허용되는 상태라(위 `canEdit`) 자동으로 재생성하면 자막을 고칠 기회가 사라진다.
+   * 실제 순서는 "지적을 읽고 → 고치고 → 다시 만들기"이며 마지막 단계를 사람이 누른다.
+   * 서버 대응: `POST /v1/contents/:id/regenerate`(커밋 후 auto_edit 인큐).
+   */
+  canRegenerate: boolean;
 }
 
 /**
@@ -43,5 +52,8 @@ export function reporterActionsFor(
     canCancel: mine && canTransitionContent(content.status, ContentStatus.Canceled),
     // ★ mine을 곱하지 않는다 — 위 인터페이스 주석 참조(T-W2-34)
     canEditCaptions: isCaptionEditableStatus(content.status),
+    // 상태 규칙의 원천은 shared 전이 맵(사본 금지). 담당 기자만 — 서버 policyGuard와 같은 판정.
+    canRegenerate:
+      mine && canTransitionContent(content.status, ContentStatus.Regenerating),
   };
 }

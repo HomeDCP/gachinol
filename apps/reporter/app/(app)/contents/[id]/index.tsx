@@ -18,7 +18,7 @@ import { useReporter } from '../../../../src/auth/auth-context';
 import { reporterActionsFor } from '../../../../src/features/contents/actions';
 import { formatDateTime, formatDuration } from '../../../../src/features/contents/format';
 import { CATEGORY_LABEL, CULTURE_TOPIC_LABEL } from '../../../../src/features/contents/labels';
-import { useCancel, useRetry } from '../../../../src/features/contents/mutations';
+import { useCancel, useRegenerate, useRetry } from '../../../../src/features/contents/mutations';
 import { useContentDetail, useTransitionLogs } from '../../../../src/features/contents/queries';
 import {
   STATUS_BADGE,
@@ -101,6 +101,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const logs = useTransitionLogs(contentId);
   const cancel = useCancel(contentId);
   const retry = useRetry(contentId);
+  const regenerate = useRegenerate(contentId);
 
   const [logsOpen, setLogsOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -136,6 +137,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const hasAnyAction =
     actions.canReview ||
     actions.canEdit ||
+    actions.canRegenerate ||
     actions.canEditCaptions ||
     actions.canStartMockUpload ||
     actions.canRetryUpload ||
@@ -285,6 +287,23 @@ export default function ContentDetailScreen(): React.JSX.Element {
             label="초안 수정"
             variant="secondary"
             onPress={() => router.push(`/contents/${contentId}/edit`)}
+          />
+        ) : null}
+        {/* ★ 다시 만들기 (대장 #98) — 초안을 고친 뒤 누른다. 수정요청과 자동 연쇄하지 않는 이유는
+            actions.ts canRegenerate 주석 참조. 서버가 커밋 후 auto_edit을 인큐한다. */}
+        {actions.canRegenerate ? (
+          <Button
+            label="이대로 다시 만들기"
+            loading={regenerate.isPending}
+            onPress={() =>
+              regenerate.mutate(undefined, {
+                onError: (err) => {
+                  if (!(isApiClientError(err) && err.status === 409)) {
+                    showToast(userMessageForError(err));
+                  }
+                },
+              })
+            }
           />
         ) : null}
         {/* 자막 보강 — 담당 기자가 아니어도 보인다(T-W2-34). 자막 유무로 문구만 갈린다 */}

@@ -20,6 +20,7 @@ describe('centerActionsFor', () => {
       canDecide: true,
       canRetry: false,
       canDistribute: false,
+      canRegenerate: false,
       canArchive: false,
       manualTransitionTargets: [],
     });
@@ -39,6 +40,7 @@ describe('centerActionsFor', () => {
       canDecide: false,
       canRetry: false,
       canDistribute: true,
+      canRegenerate: false,
       canArchive: false,
       manualTransitionTargets: [],
     });
@@ -57,6 +59,7 @@ describe('centerActionsFor', () => {
       canDecide: false,
       canRetry: false,
       canDistribute: false,
+      canRegenerate: false,
       canArchive: false,
       manualTransitionTargets: [],
     });
@@ -90,15 +93,17 @@ describe('centerActionsFor', () => {
  * shared CONTENT_STATUS_TRANSITIONS에서 파생(사본 금지) — 서버 맵이 바뀌면 이 테스트가 실측한다.
  */
 describe('centerActionsFor — manualTransitionTargets', () => {
-  test('revision_requested → shared CONTENT_STATUS_TRANSITIONS.revision_requested와 정확히 동일', () => {
-    expect(centerActionsFor({ status: 'revision_requested' }).manualTransitionTargets).toEqual(
-      CONTENT_STATUS_TRANSITIONS.revision_requested,
-    );
-    // 실측 고정 — 맵이 조용히 바뀌면(예: canceled 제거) 이 단언이 잡는다
-    expect(centerActionsFor({ status: 'revision_requested' }).manualTransitionTargets).toEqual([
-      'regenerating',
-      'canceled',
-    ]);
+  /* ★ 대장 #98 종결 후 — revision_requested의 탈출구는 **전용 액션으로 옮겨갔다**.
+   * auto_edit 구동으로 regenerating이 자동 진행 상태가 되면서 ③ 조건("나가는 길 끝에 자동 진행
+   * 상태가 없다")에 걸려 범용 수동 전이가 닫혔고, 그 자리를 canRegenerate가 채운다.
+   * 이것이 옳은 이유: 범용 전이(POST /transitions)는 auto_edit 잡을 **인큐하지 않아** 그 길로
+   * 가면 또 멈춘다. 진짜 경로는 POST /regenerate뿐이다. */
+  test('revision_requested → 범용 탈출구는 닫히고 canRegenerate가 연다 (auto_edit 구동 후)', () => {
+    const a = centerActionsFor({ status: 'revision_requested' });
+    expect(a.manualTransitionTargets).toEqual([]);
+    expect(a.canRegenerate).toBe(true);
+    // 전이 맵상 regenerating은 여전히 합법 — 닫힌 것은 '범용 전이 노출'이지 전이 자체가 아니다
+    expect(CONTENT_STATUS_TRANSITIONS.revision_requested).toContain('regenerating');
   });
 
   /** ★ 대장 #124 — published에서 보관 경로가 실제로 나온다(등재 시 0건이었다) */
@@ -121,13 +126,14 @@ describe('centerActionsFor — manualTransitionTargets', () => {
     expect(withArchive).toEqual([ContentStatus.Published]);
   });
 
-  test('revision_requested·published 외 21종은 전부 빈 배열 — 다른 정지 상태는 canRetry/canDecide가 이미 진행 경로를 제공', () => {
+  test('published 외 22종은 전부 빈 배열 — 나머지는 전용 액션(canRetry·canDecide·canRegenerate)이 담당', () => {
     const open: string[] = [];
     for (const status of Object.values(ContentStatus)) {
       const targets = centerActionsFor({ status }).manualTransitionTargets;
       if (targets.length > 0) open.push(status);
     }
-    expect(open.sort()).toEqual([ContentStatus.Published, ContentStatus.RevisionRequested].sort());
+    // revision_requested는 auto_edit 구동 후 canRegenerate로 옮겨갔다(대장 #98)
+    expect(open).toEqual([ContentStatus.Published]);
   });
 
   /**
@@ -154,13 +160,23 @@ describe('centerActionsFor — manualTransitionTargets', () => {
     }
   });
 
-  test('manualTransitionTargets가 있으면 canDecide·canRetry·canDistribute는 전부 false (탈출구 중복 없음)', () => {
-    for (const status of [ContentStatus.RevisionRequested, ContentStatus.Published] as const) {
+  test('manualTransitionTargets가 있으면 전용 액션은 전부 false (탈출구 중복 없음)', () => {
+    for (const status of [ContentStatus.Published] as const) {
       const a = centerActionsFor({ status });
       expect(a.manualTransitionTargets.length).toBeGreaterThan(0);
       expect(a.canDecide).toBe(false);
       expect(a.canRetry).toBe(false);
       expect(a.canDistribute).toBe(false);
+      expect(a.canRegenerate).toBe(false);
+    }
+  });
+
+  test('역도 성립 — 전용 액션이 있으면 범용 탈출구는 닫힌다 (revision_requested 포함)', () => {
+    for (const status of Object.values(ContentStatus)) {
+      const a = centerActionsFor({ status });
+      if (a.canDecide || a.canRetry || a.canDistribute || a.canRegenerate) {
+        expect(a.manualTransitionTargets).toEqual([]);
+      }
     }
   });
 });
