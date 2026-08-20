@@ -5,6 +5,7 @@ import type {
   ContentStatus,
   JobResultMap,
   MediaJobData,
+  TimelineMapping,
 } from '@gachinol/shared';
 import { ContentOrigin } from '@gachinol/shared';
 import type { Job, Queue, QueueEvents } from 'bullmq';
@@ -281,6 +282,11 @@ export class PipelineService implements OnModuleInit {
     else if (type === 'preview') {
       this.logger.debug(`preview active (contentId=${contentId})`);
     }
+    // auto_edit active: 무동작. 이 잡은 preview_generating·regenerating 두 상태 안에서 도는데
+    // 어느 쪽도 active 시점에 전이하지 않는다(진입 전이는 인큐-애프터-커밋이 이미 보장).
+    else if (type === 'auto_edit') {
+      this.logger.debug(`auto_edit active (contentId=${contentId})`);
+    }
   }
 
   private async onCompleted(queue: Queue, jobId: string): Promise<void> {
@@ -326,9 +332,53 @@ export class PipelineService implements OnModuleInit {
             jobId,
           );
           if (hop.applied && content) {
-            await this.producer.enqueuePreview(content);
+            // ★ preview_generating 진입 = auto_edit부터. 프리뷰는 편집 결과에서 떠야 한다.
+            await this.producer.enqueueAutoEdit(content);
             await this.producer.enqueueThumbnail(content);
           }
+        }
+        return;
+      }
+      case 'auto_edit': {
+        const result = job.returnvalue as JobResultMap['auto_edit'];
+        for (const asset of result.assets) {
+          await this.assets.upsertOutput(contentId, generation, jobId, asset);
+        }
+        // 편집 결과가 길이의 원천(shared: "편집 완료 후 확정")
+        await this.syncContentDuration(contentId, generation);
+        this.warnIfTimelineShifted(contentId, result.timeline);
+
+        const content = await this.loadContentRow(contentId);
+        if (!content) return; // 콘텐츠가 사라졌으면 전이 대상 없음(자산 upsert는 이미 멱등 반영)
+
+        if (content.status === 'regenerating') {
+          // 재생성 경로 — reanalyze로 목적지가 갈린다(payload가 원천).
+          const p = payload as MediaJobData<'auto_edit'>['payload'];
+          const reanalyze = p.reanalyze && this.analysisProducer.enabled;
+          const to = reanalyze ? 'analyzing' : 'preview_generating';
+          const hop = await this.workflow.applySystemTransition(
+            contentId,
+            'regenerating',
+            to,
+            jobId,
+          );
+          if (hop.applied) {
+            if (reanalyze) await this.analysisProducer.enqueueAnalysis(content);
+            else await this.producer.enqueuePreview(content);
+          }
+          // 재생성이 끝났으므로 이 콘텐츠의 미해결 수정요청을 해소한다.
+          // ★ payload.revisionRequestId가 아니라 **contentId 기준**이다 — 재시도 경로
+          // (requeueForStatus)는 그 id를 싣지 못해 payload를 원천으로 삼으면 유실된다.
+          await this.workflow.resolveRevisionRequests(contentId, jobId);
+        } else if (content.status === 'preview_generating') {
+          // 정상 경로 — 같은 상태 안에서 preview로 체이닝(전이 없음).
+          // ★ 상태 확인이 곧 재렌더 가드다: 부팅 리컨사일이 완료 잡을 재처리해도 이미
+          // awaiting_*_review로 넘어갔으면 preview가 다시 인큐되지 않는다.
+          await this.producer.enqueuePreview(content);
+        } else {
+          this.logger.debug(
+            `auto_edit 완료했으나 상태가 이미 진행됨 — 후속 인큐 생략 (contentId=${contentId}, status=${content.status})`,
+          );
         }
         return;
       }
@@ -378,6 +428,27 @@ export class PipelineService implements OnModuleInit {
         jobId,
         lastError,
       );
+    } else if (type === 'auto_edit') {
+      // auto_edit은 두 상태 안에서 돈다 — 실패 목적지도 현재 상태가 정한다.
+      // (재생성 실패를 preview_failed로 보내면 재시도가 auto_edit이 아니라 preview로 가버린다.)
+      const content = await this.loadContentRow(contentId);
+      if (content?.status === 'regenerating') {
+        await this.workflow.applySystemTransition(
+          contentId,
+          'regenerating',
+          'regeneration_failed',
+          jobId,
+          lastError,
+        );
+      } else {
+        await this.workflow.applySystemTransition(
+          contentId,
+          'preview_generating',
+          'preview_failed',
+          jobId,
+          lastError,
+        );
+      }
     } else if (type === 'preview') {
       await this.workflow.applySystemTransition(
         contentId,
@@ -423,7 +494,8 @@ export class PipelineService implements OnModuleInit {
     );
     if (hop.applied) {
       const content = await this.loadContentRow(contentId);
-      if (content) await this.producer.enqueuePreview(content); // 프리뷰는 여기서(임계경로)
+      // ★ preview_generating 진입 = auto_edit부터(임계경로). auto_edit 완료가 preview를 이어 인큐한다.
+      if (content) await this.producer.enqueueAutoEdit(content);
     }
   }
 
@@ -614,9 +686,33 @@ export class PipelineService implements OnModuleInit {
    * 실패해도 파이프라인을 멈추지 않는다: 길이는 표시용 비정규화 값이고, 여기서 throw하면
    * 트랜스코딩이 끝났는데도 상태가 processing에 갇힌다.
    */
-  private async syncContentDuration(contentId: string): Promise<void> {
+  /**
+   * ★ 미구동 계약 경보 — 컷이 실제로 들어왔는데 `Scene` 시각을 재기입하지 않으면
+   * 구독자 앱의 자막 오버레이(`feed.mapper.ts` `scenesToCaptions`)가 통째로 밀린다.
+   *
+   * Phase 1은 `silenceremove`를 쓰지 않아 타임라인이 **항등**이므로 재기입이 불필요하고,
+   * 그래서 재기입 코드를 만들지 않았다(쓰이지 않는 계약을 미리 구현하지 않는다는 이 리포의 규율).
+   * 대신 항등이 깨지는 순간 **로그로 드러나게** 한다 — 컷을 도입하는 슬라이스(T-AI)가
+   * 이 경고를 보고 재기입을 함께 구현해야 한다. 조용히 자막이 어긋나는 것이 최악이다.
+   */
+  private warnIfTimelineShifted(contentId: string, timeline: readonly TimelineMapping[]): void {
+    const shifted = timeline.some(
+      (m) =>
+        Math.abs(m.sourceStartSec - m.outputStartSec) > 0.05 ||
+        Math.abs(m.sourceEndSec - m.outputEndSec) > 0.05,
+    );
+    if (shifted || timeline.length > 1) {
+      this.logger.error(
+        `auto_edit 타임라인이 항등이 아니다 — Scene 시각 재기입이 필요하지만 아직 구현되지 않았다. ` +
+          `구독자 자막이 어긋난다 (contentId=${contentId}, segments=${timeline.length})`,
+      );
+    }
+  }
+
+  private async syncContentDuration(contentId: string, generation?: number): Promise<void> {
     try {
-      const durationSec = await this.assets.findDurationSec(contentId);
+      // generation을 넘기면 그 세대 edited_master가 원천이 된다(shared 계약: "편집 완료 후 확정").
+      const durationSec = await this.assets.findDurationSec(contentId, generation);
       if (durationSec == null) return;
       await this.prisma.content.update({ where: { id: contentId }, data: { durationSec } });
     } catch (err) {

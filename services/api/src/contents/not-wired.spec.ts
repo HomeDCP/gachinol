@@ -110,16 +110,20 @@ describe('UI 파생 — 자동 진행 / 정지 (#29 ④)', () => {
   });
 
   /**
-   * 현재 등재 상태의 결과 고정 — auto_edit(대장 #98)이 구현돼 regenerating 3엣지가 레지스트리에서
-   * 빠지면 이 테스트가 레드가 되어 "UI가 이미 자동으로 따라왔다"를 알린다(박제 방지).
+   * ★ 정지 상태 0 — auto_edit Phase 1(2026-08-20)이 대장 #98을 닫으면서 마지막 항목이던
+   * `regenerating`이 빠졌다. 이 단정이 깨진다면 둘 중 하나다:
+   *  ① 자동 진행하기로 한 상태의 구동부를 만들지 않고 계약만 넣었다(그 자체가 경보)
+   *  ② auto_edit 구동부가 회귀했다
+   * 어느 쪽이든 3앱의 "정지 상태" 경고 UI가 되살아나므로 즉시 알아야 한다.
    */
-  test('현재는 regenerating 1종만 정지 — auto_edit 구현 시 이 단정이 깨진다', () => {
-    expect(STALLED_AUTOMATION_CONTENT_STATUSES).toEqual(['regenerating']);
-    expect(isAutoProgressContentStatus('regenerating')).toBe(false);
-    expect(hasImplementedContentExit('regenerating')).toBe(false);
+  test('정지 상태는 없다 — 자동 진행 후보 전부가 구현된 출구를 갖는다', () => {
+    expect(STALLED_AUTOMATION_CONTENT_STATUSES).toEqual([]);
+    expect(isStalledAutomationContentStatus('regenerating')).toBe(false);
+    expect(isAutoProgressContentStatus('regenerating')).toBe(true);
+    expect(hasImplementedContentExit('regenerating')).toBe(true);
   });
 
-  test('regenerating 외 후보 7종은 자동 진행이다 (회귀 방지)', () => {
+  test('자동 진행 후보 8종 전부가 자동 진행이다 (회귀 방지)', () => {
     for (const s of [
       'uploading',
       'uploaded',
@@ -128,6 +132,7 @@ describe('UI 파생 — 자동 진행 / 정지 (#29 ④)', () => {
       'preview_generating',
       'publishing',
       'reporter_approved',
+      'regenerating',
     ] as const) {
       expect(isAutoProgressContentStatus(s)).toBe(true);
     }

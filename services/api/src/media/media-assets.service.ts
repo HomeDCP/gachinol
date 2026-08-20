@@ -150,10 +150,43 @@ export class MediaAssetsService {
   }
 
   /**
-   * 실측 durationSec 조회 — 트랜스코딩 산출물이 프로브해 저장한 값(원본 자산엔 없음, 항상 null).
-   * 분석 인큐가 duration 힌트를 채우는 데 쓴다. durationSec은 세대 불변이라 세대 무관 최신값을 취한다.
+   * 현 세대 자동편집 마스터(`edited_master`) 조회.
+   * 세 곳이 이것을 **원본보다 우선**해서 쓴다:
+   *  · preview·thumbnail 인큐 — 기자가 확인하는 것은 편집 결과여야 한다
+   *  · 재생성(auto_edit) 소스 — 원본 4K 재편집 5.33초 vs 이 720p 마스터 1.06초(실측 5배)
+   *  · durationSec 확정 — shared 계약이 "편집 완료 후 확정"이라 규정한다
+   * 없으면 호출측이 original로 폴백한다(auto_edit 이전 세대·긴급 패스트트랙).
    */
-  async findDurationSec(contentId: string): Promise<number | null> {
+  async findEditedMaster(contentId: string, generation: number): Promise<MediaAssetRow | null> {
+    return this.prisma.mediaAsset.findFirst({
+      where: { contentId, kind: 'edited_master', generation, status: { not: 'failed' } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * 실측 durationSec 조회 — 트랜스코딩·자동편집 산출물이 프로브해 저장한 값(원본 자산엔 없음).
+   *
+   * ★ `edited_master`가 있으면 **그것이 원천**이다(shared `Content.durationSec` = "편집 완료 후
+   * 확정"). 컷이 들어가면 렌디션·원본과 길이가 달라지므로 최신 createdAt만으로는 부족하다 —
+   * 같은 auto_edit 잡이 edited_master와 rendition을 같은 시각에 만들기 때문이다.
+   * (Phase 1은 컷이 없어 두 값이 같지만, 규칙을 여기서 고정해 둬야 컷이 들어올 때 사각이 없다.)
+   */
+  async findDurationSec(contentId: string, generation?: number): Promise<number | null> {
+    if (generation != null) {
+      const edited = await this.prisma.mediaAsset.findFirst({
+        where: {
+          contentId,
+          generation,
+          kind: 'edited_master',
+          durationSec: { not: null },
+          status: { not: 'failed' },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { durationSec: true },
+      });
+      if (edited?.durationSec != null) return edited.durationSec;
+    }
     const row = await this.prisma.mediaAsset.findFirst({
       where: { contentId, durationSec: { not: null } },
       orderBy: { createdAt: 'desc' },

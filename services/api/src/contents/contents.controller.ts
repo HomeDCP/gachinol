@@ -200,6 +200,22 @@ export class ContentsController {
     return toContent(await this.workflow.requestRevision(id, user, body));
   }
 
+  @Post(':id/regenerate')
+  @HttpCode(200)
+  @Roles('reporter', 'center_operator')
+  @ApiOperation({
+    summary: '재생성 시작 — revision_requested→regenerating. 초안을 고친 뒤 누른다',
+    description:
+      '수정 요청과 자동 연쇄하지 않는다: revision_requested는 초안 수정이 허용되는 상태라 ' +
+      '자동으로 재생성하면 자막을 고칠 기회가 사라진다. 커밋 후 auto_edit 잡을 인큐한다.',
+  })
+  async regenerate(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
+    const updated = await this.workflow.regenerate(id, user);
+    // 인큐-애프터-커밋. Redis 미설정 시 무동작(상태는 regenerating으로 남고 센터가 재시도 가능).
+    await this.producer.enqueueAutoEdit(updated);
+    return toContent(updated);
+  }
+
   @Post(':id/reject')
   @HttpCode(200)
   @Roles('reporter', 'center_operator')

@@ -1,6 +1,8 @@
 import type { JobPayloadMap } from '@gachinol/shared';
 import { loadWorkerEnv } from './env';
 import {
+  autoEditProfile,
+  editedMasterKey,
   previewKey,
   previewProfile,
   renditionKey,
@@ -74,6 +76,30 @@ describe('profiles', () => {
     expect(renditionKey(prefix, '720p')).toBe('contents/c1/g1/rendition/720p.mp4');
     expect(previewKey(prefix)).toBe('contents/c1/g1/preview.mp4');
     expect(thumbnailKey(prefix)).toBe('contents/c1/g1/thumbnail.jpg');
+    expect(editedMasterKey(prefix)).toBe('contents/c1/g1/edited-master.mp4');
+  });
+
+  test('autoEditProfile — 렌디션과 같은 규격(배포본을 덮어쓰기 위함) + loudnorm 목표', () => {
+    expect(autoEditProfile(env)).toEqual({
+      height: 720,
+      vbrKbps: 2500,
+      loudnormI: -16,
+      renditionLabel: '720p',
+    });
+  });
+
+  test('autoEditProfile — auto_edit 렌디션 key가 transcode와 동일해야 배포본이 교체된다', () => {
+    const prefix = 'contents/c1/g2/';
+    const p = autoEditProfile(env);
+    expect(renditionKey(prefix, p.renditionLabel)).toBe(
+      renditionKey(prefix, renditionProfile(env, { renditionLabels: [] } as never).label),
+    );
+  });
+
+  test('MEDIA_LOUDNORM_I — 음수 기본값(-16)이 검증을 통과하고 override도 된다', () => {
+    expect(env.MEDIA_LOUDNORM_I).toBe(-16);
+    const custom = loadWorkerEnv({ ...baseEnv, MEDIA_LOUDNORM_I: '-23' } as NodeJS.ProcessEnv);
+    expect(autoEditProfile(custom).loudnormI).toBe(-23);
   });
 
   test('env override — MEDIA_RENDITION_HEIGHT/MEDIA_PREVIEW_HEIGHT 반영', () => {

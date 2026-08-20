@@ -583,4 +583,80 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
       expect(prisma.content.updateMany).toHaveBeenCalled();
     });
   });
+
+  /* ★ auto_edit 재생성 루프 (대장 #98 종결) — regenerating 3엣지를 **실 applyHop으로** 밟는다.
+   * 이 테스트가 없으면 배선 계측이 엣지를 미관측으로 보고 not-wired 레지스트리가 그대로 남는다
+   * (구현했는데 "미구동"으로 등재된 채 UI가 경고 톤을 유지하는 상태). */
+  describe('재생성 루프 (auto_edit)', () => {
+    it('regenerate: revision_requested→regenerating + 세대 +1 (전용 구동부)', async () => {
+      const row = contentRow({ status: 'revision_requested', generation: 1 });
+      const { prisma, service } = setup(row);
+
+      await service.regenerate(row.id, centerOperatorUser());
+
+      const upd = prisma.content.updateMany.mock.calls[0][0];
+      expect(upd.where).toEqual({ id: row.id, status: 'revision_requested' });
+      expect(upd.data).toMatchObject({ status: 'regenerating', generation: { increment: 1 } });
+    });
+
+    it('★ 대장 #117 — 세대가 오르면 미성년자 동의 확인이 무효화된다 (다른 영상이므로 재확인 필요)', async () => {
+      const row = contentRow({
+        status: 'revision_requested',
+        generation: 1,
+        hasMinorSubject: true,
+        minorConsentConfirmedByUserId: 'u-center',
+        minorConsentConfirmedAt: new Date(),
+      });
+      const { prisma, service } = setup(row);
+
+      await service.regenerate(row.id, centerOperatorUser());
+
+      expect(prisma.content.updateMany.mock.calls[0][0].data).toMatchObject({
+        minorConsentConfirmedByUserId: null,
+        minorConsentConfirmedAt: null,
+      });
+    });
+
+    it('미성년자 플래그가 없으면 동의 필드를 건드리지 않는다 (무관한 콘텐츠 무영향)', async () => {
+      const row = contentRow({ status: 'revision_requested', hasMinorSubject: false });
+      const { prisma, service } = setup(row);
+
+      await service.regenerate(row.id, centerOperatorUser());
+
+      const data = prisma.content.updateMany.mock.calls[0][0].data;
+      expect(data).not.toHaveProperty('minorConsentConfirmedAt');
+    });
+
+    it.each([
+      ['analyzing', 'reanalyze=true 분기'],
+      ['preview_generating', 'reanalyze=false 분기'],
+      ['regeneration_failed', '잡 소진'],
+    ])('auto_edit 워커가 regenerating→%s 를 구동한다 (%s)', async (to) => {
+      const row = contentRow({ status: 'regenerating', generation: 2 });
+      const { prisma, service } = setup(row);
+
+      const res = await service.applySystemTransition(row.id, 'regenerating', to as never, 'auto_edit:c-1:g2');
+
+      expect(res.applied).toBe(true);
+      expect(prisma.content.updateMany.mock.calls[0][0]).toMatchObject({
+        where: { id: row.id, status: 'regenerating' },
+        data: { status: to },
+      });
+      const log = prisma.statusTransitionLog.create.mock.calls[0][0].data;
+      expect(log).toMatchObject({ actorType: 'system', jobId: 'auto_edit:c-1:g2', toStatus: to });
+    });
+
+    it('resolveRevisionRequests: contentId 기준으로 미해결 건을 일괄 해소한다 (재시도에도 유실 없음)', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'regenerating' }));
+      prisma.revisionRequest.updateMany.mockResolvedValue({ count: 2 });
+
+      const n = await service.resolveRevisionRequests('c-1', 'auto_edit:c-1:g2');
+
+      expect(n).toBe(2);
+      expect(prisma.revisionRequest.updateMany).toHaveBeenCalledWith({
+        where: { targetKind: 'content', contentId: 'c-1', resolvedAt: null },
+        data: expect.objectContaining({ resolvedByJobId: 'auto_edit:c-1:g2' }),
+      });
+    });
+  });
 });

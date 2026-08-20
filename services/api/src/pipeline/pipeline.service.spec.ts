@@ -36,7 +36,10 @@ const setup = (
 ) => {
   const analysisEnabled = opts.analysisEnabled ?? false;
   const queue = { getJob: jest.fn() };
-  const workflow = { applySystemTransition: jest.fn().mockResolvedValue({ applied: true }) };
+  const workflow = {
+    applySystemTransition: jest.fn().mockResolvedValue({ applied: true }),
+    resolveRevisionRequests: jest.fn().mockResolvedValue(0),
+  };
   const assets = {
     upsertOutput: jest.fn().mockResolvedValue(undefined),
     // null을 '길이 없음'으로 전달할 수 있어야 하므로 ??가 아니라 키 존재로 판정한다
@@ -45,6 +48,7 @@ const setup = (
       .mockResolvedValue('durationSec' in opts ? opts.durationSec : 63),
   };
   const producer = {
+    enqueueAutoEdit: jest.fn().mockResolvedValue(undefined),
     enqueuePreview: jest.fn().mockResolvedValue(undefined),
     enqueueThumbnail: jest.fn().mockResolvedValue(undefined),
   };
@@ -112,7 +116,7 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     expect(workflow.applySystemTransition).toHaveBeenCalledWith('c-1', 'uploaded', 'processing', 'transcode:c-1:g1');
   });
 
-  it('transcode completed + AI 비활성: rendition upsert → processing→preview_generating → preview·thumbnail 인큐(직행 폴백)', async () => {
+  it('transcode completed + AI 비활성: rendition upsert → processing→preview_generating → auto_edit·thumbnail 인큐(직행 폴백)', async () => {
     const { queue, workflow, assets, producer, analysisProducer, service } = setup({ analysisEnabled: false });
     queue.getJob.mockResolvedValue(
       makeJob({
@@ -125,7 +129,7 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     expect(assets.upsertOutput).toHaveBeenCalledWith('c-1', 1, 'transcode:c-1:g1', asset('rendition'));
     expect(workflow.applySystemTransition).toHaveBeenNthCalledWith(1, 'c-1', 'uploaded', 'processing', 'transcode:c-1:g1');
     expect(workflow.applySystemTransition).toHaveBeenNthCalledWith(2, 'c-1', 'processing', 'preview_generating', 'transcode:c-1:g1');
-    expect(producer.enqueuePreview).toHaveBeenCalled();
+    expect(producer.enqueueAutoEdit).toHaveBeenCalled();
     expect(producer.enqueueThumbnail).toHaveBeenCalled();
     expect(analysisProducer.enqueueAnalysis).not.toHaveBeenCalled();
   });
@@ -140,7 +144,9 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     );
     await (service as any).onCompleted(queue, 'transcode:c-1:g1');
 
-    expect(assets.findDurationSec).toHaveBeenCalledWith('c-1');
+    // transcode 시점에는 edited_master가 있을 수 없어 세대를 넘기지 않는다(불필요한 쿼리 회피).
+    // auto_edit 완료 시에만 세대를 넘겨 편집 결과를 길이의 원천으로 삼는다.
+    expect(assets.findDurationSec).toHaveBeenCalledWith('c-1', undefined);
     expect(prisma.content.update).toHaveBeenCalledWith({
       where: { id: 'c-1' },
       data: { durationSec: 117 },
@@ -178,7 +184,7 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
       'preview_generating',
       'transcode:c-1:g1',
     );
-    expect(producer.enqueuePreview).toHaveBeenCalled();
+    expect(producer.enqueueAutoEdit).toHaveBeenCalled();
   });
 
   it('transcode completed + AI 활성·normal: processing→analyzing → enqueueAnalysis + thumbnail (preview 아님)', async () => {
@@ -195,7 +201,7 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     expect(workflow.applySystemTransition).toHaveBeenNthCalledWith(2, 'c-1', 'processing', 'analyzing', 'transcode:c-1:g1');
     expect(analysisProducer.enqueueAnalysis).toHaveBeenCalled();
     expect(producer.enqueueThumbnail).toHaveBeenCalled();
-    expect(producer.enqueuePreview).not.toHaveBeenCalled();
+    expect(producer.enqueueAutoEdit).not.toHaveBeenCalled();
   });
 
   it('transcode completed + urgent(AI 활성이어도): 패스트트랙 processing→preview_generating', async () => {
@@ -212,7 +218,7 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     await (service as any).onCompleted(queue, 'transcode:c-1:g1');
 
     expect(workflow.applySystemTransition).toHaveBeenNthCalledWith(2, 'c-1', 'processing', 'preview_generating', 'transcode:c-1:g1');
-    expect(producer.enqueuePreview).toHaveBeenCalled();
+    expect(producer.enqueueAutoEdit).toHaveBeenCalled();
     expect(analysisProducer.enqueueAnalysis).not.toHaveBeenCalled();
   });
 
@@ -223,7 +229,109 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
       makeJob({ returnvalue: { assets: [asset('rendition')] } }),
     );
     await (service as any).onCompleted(queue, 'transcode:c-1:g1');
+    expect(producer.enqueueAutoEdit).not.toHaveBeenCalled();
+  });
+
+  /* ★ auto_edit — 두 상태 안에서 도는 잡이라 후속 동작이 현재 상태로 갈린다.
+   * · preview_generating … 정상 흐름. 전이 없이 preview로 체이닝
+   * · regenerating       … 재생성. reanalyze로 목적지가 갈리고 수정요청을 해소한다 */
+  const autoEditJob = (over: Record<string, unknown> = {}) =>
+    makeJob({
+      data: {
+        type: 'auto_edit',
+        payload: { contentId: 'c-1', reanalyze: false, revisionRequestId: null, editPlan: null },
+        generation: 1,
+        ...over,
+      },
+      returnvalue: {
+        assets: [asset('edited_master'), asset('rendition')],
+        timeline: [
+          { sourceStartSec: 0, sourceEndSec: 63, outputStartSec: 0, outputEndSec: 63 },
+        ],
+      },
+    });
+
+  it('auto_edit completed(preview_generating): 자산 2건 upsert → 전이 없이 preview 인큐', async () => {
+    const { queue, workflow, assets, producer, service } = setup({
+      content: contentRow({ status: 'preview_generating' }),
+    });
+    queue.getJob.mockResolvedValue(autoEditJob());
+    await (service as any).onCompleted(queue, 'auto_edit:c-1:g1');
+
+    expect(assets.upsertOutput).toHaveBeenCalledWith('c-1', 1, 'auto_edit:c-1:g1', asset('edited_master'));
+    expect(assets.upsertOutput).toHaveBeenCalledWith('c-1', 1, 'auto_edit:c-1:g1', asset('rendition'));
+    expect(assets.findDurationSec).toHaveBeenCalledWith('c-1', 1); // 편집 결과가 길이의 원천
+    expect(producer.enqueuePreview).toHaveBeenCalled();
+    expect(workflow.applySystemTransition).not.toHaveBeenCalled(); // 같은 상태 안에서 체이닝
+  });
+
+  it('★ auto_edit completed: 상태가 이미 진행됐으면 preview를 재인큐하지 않는다 (부팅 리컨사일 재렌더 가드)', async () => {
+    const { queue, producer, service } = setup({
+      content: contentRow({ status: 'awaiting_reporter_review' }),
+    });
+    queue.getJob.mockResolvedValue(autoEditJob());
+    await (service as any).onCompleted(queue, 'auto_edit:c-1:g1');
     expect(producer.enqueuePreview).not.toHaveBeenCalled();
+  });
+
+  it('auto_edit completed(regenerating, reanalyze=false): regenerating→preview_generating + preview 인큐 + 수정요청 해소', async () => {
+    const { queue, workflow, producer, service } = setup({
+      content: contentRow({ status: 'regenerating', generation: 2 }),
+    });
+    queue.getJob.mockResolvedValue(autoEditJob({ generation: 2 }));
+    await (service as any).onCompleted(queue, 'auto_edit:c-1:g2');
+
+    expect(workflow.applySystemTransition).toHaveBeenCalledWith(
+      'c-1',
+      'regenerating',
+      'preview_generating',
+      'auto_edit:c-1:g2',
+    );
+    expect(producer.enqueuePreview).toHaveBeenCalled();
+    expect(workflow.resolveRevisionRequests).toHaveBeenCalledWith('c-1', 'auto_edit:c-1:g2');
+  });
+
+  it('auto_edit completed(regenerating, reanalyze=true·AI 활성): regenerating→analyzing + 분석 인큐', async () => {
+    const { queue, workflow, producer, analysisProducer, service } = setup({
+      analysisEnabled: true,
+      content: contentRow({ status: 'regenerating', generation: 2 }),
+    });
+    queue.getJob.mockResolvedValue(
+      autoEditJob({
+        generation: 2,
+        payload: { contentId: 'c-1', reanalyze: true, revisionRequestId: 'r-1', editPlan: null },
+      }),
+    );
+    await (service as any).onCompleted(queue, 'auto_edit:c-1:g2');
+
+    expect(workflow.applySystemTransition).toHaveBeenCalledWith(
+      'c-1',
+      'regenerating',
+      'analyzing',
+      'auto_edit:c-1:g2',
+    );
+    expect(analysisProducer.enqueueAnalysis).toHaveBeenCalled();
+    expect(producer.enqueuePreview).not.toHaveBeenCalled();
+  });
+
+  it('auto_edit completed(regenerating, reanalyze=true·AI 비활성): 재분석 불가 → preview_generating으로', async () => {
+    const { queue, workflow, service } = setup({
+      analysisEnabled: false,
+      content: contentRow({ status: 'regenerating', generation: 2 }),
+    });
+    queue.getJob.mockResolvedValue(
+      autoEditJob({
+        generation: 2,
+        payload: { contentId: 'c-1', reanalyze: true, revisionRequestId: null, editPlan: null },
+      }),
+    );
+    await (service as any).onCompleted(queue, 'auto_edit:c-1:g2');
+    expect(workflow.applySystemTransition).toHaveBeenCalledWith(
+      'c-1',
+      'regenerating',
+      'preview_generating',
+      'auto_edit:c-1:g2',
+    );
   });
 
   it('preview completed: preview upsert → preview_generating→awaiting_reporter_review', async () => {
@@ -297,7 +405,7 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     expect(workflow.applySystemTransition).not.toHaveBeenCalled();
   });
 
-  it('analysis completed: ai_analyses upsert → analyzing→preview_generating → enqueuePreview', async () => {
+  it('analysis completed: ai_analyses upsert → analyzing→preview_generating → enqueueAutoEdit', async () => {
     const { queue, workflow, aiAnalyses, producer, service } = setup({ analysisEnabled: true });
     const resp = { vision: { shots: [], labels: [] }, text: { transcript: [], summary: '', keywords: [], tags: [] } };
     queue.getJob.mockResolvedValue(
@@ -313,10 +421,10 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
     const calls = workflow.applySystemTransition.mock.calls;
     expect(calls).toContainEqual(['c-1', 'processing', 'analyzing', 'analysis:c-1:g1']);
     expect(calls).toContainEqual(['c-1', 'analyzing', 'preview_generating', 'analysis:c-1:g1']);
-    expect(producer.enqueuePreview).toHaveBeenCalled();
+    expect(producer.enqueueAutoEdit).toHaveBeenCalled();
   });
 
-  it('analysis completed에서 preview_generating 홉 미적용이면 enqueuePreview 안 함', async () => {
+  it('analysis completed에서 preview_generating 홉 미적용이면 enqueueAutoEdit 안 함', async () => {
     const { queue, workflow, producer, service } = setup({ analysisEnabled: true });
     // preview_generating 홉만 applied=false
     workflow.applySystemTransition.mockImplementation(async (_id: string, _f: string, to: string) => ({
@@ -326,7 +434,7 @@ describe('PipelineService — 잡이벤트→상태전이 매핑', () => {
       makeJob({ data: { payload: { contentId: 'c-1' }, generation: 1 }, returnvalue: {} }),
     );
     await (service as any).onAnalysisCompleted(queue, 'analysis:c-1:g1');
-    expect(producer.enqueuePreview).not.toHaveBeenCalled();
+    expect(producer.enqueueAutoEdit).not.toHaveBeenCalled();
   });
 
   it('analysis failed 소진: analyzing→analysis_failed(+lastError)', async () => {

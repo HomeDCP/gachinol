@@ -186,6 +186,51 @@ export class ContentWorkflowService {
     return this.load(contentId);
   }
 
+  /**
+   * 재생성 시작 — `revision_requested → regenerating` (대장 #98 종결).
+   *
+   * ★ **수정요청과 자동 연쇄하지 않는 이유**: `revision_requested`는 서버가 초안 수정을 허용하는
+   * 상태다(`ContentsService.EDITABLE_STATUSES`). 수정요청과 동시에 재생성이 돌면 기자가 자막·제목을
+   * 고칠 기회가 사라진다 — 실제 작업 순서는 "지적을 읽고 → 고치고 → 다시 만들기"다.
+   * 그래서 자동 체인이 아니라 **명시적 트리거**로 둔다.
+   *
+   * 잡 인큐는 커밋 후 컨트롤러가 수행한다(인큐-애프터-커밋). 세대 +1과 미성년자 동의 무효화는
+   * `applyHop`의 `to === 'regenerating'` 효과가 담당한다.
+   */
+  async regenerate(contentId: string, user: User): Promise<ContentRow> {
+    const content = await this.load(contentId);
+    const from = content.status as ContentStatus;
+    const to: ContentStatus = 'regenerating';
+    const actor: TransitionActor = { type: 'user', user };
+
+    this.policyGuard(content, from, to, actor);
+    this.assertAllowed(from, to);
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.applyHop(tx, content, from, to, actor, {});
+    });
+    return this.load(contentId);
+  }
+
+  /**
+   * 재생성 완료 시 이 콘텐츠의 **미해결 수정요청을 전부** 해소한다.
+   *
+   * ★ `contentId` 기준인 이유(payload의 revisionRequestId가 아니라): 재시도 경로
+   * (`QueueProducerService.requeueForStatus`)는 그 id를 실을 방법이 없어 payload를 원천으로 삼으면
+   * 재시도 한 번에 해소 레코드가 유실된다. 추천 도메인이 같은 함정을 겪고 같은 결론에 도달했다.
+   * 여러 건이 쌓여 있었다면 재생성 1회가 전부를 닫는 것이 맞다 — 산출물이 하나뿐이기 때문이다.
+   */
+  async resolveRevisionRequests(contentId: string, jobId: string): Promise<number> {
+    const res = await this.prisma.revisionRequest.updateMany({
+      where: { targetKind: 'content', contentId, resolvedAt: null },
+      data: { resolvedAt: new Date(), resolvedByJobId: jobId },
+    });
+    if (res.count > 0) {
+      this.logger.log(`수정요청 ${res.count}건 해소 (contentId=${contentId}, jobId=${jobId})`);
+    }
+    return res.count;
+  }
+
   /** 재시도 — 목적지는 shared CONTENT_RETRY_TARGET이 유일 원천. Job 재큐는 큐 단계 훅 */
   async retry(contentId: string, user: User): Promise<ContentRow> {
     const content = await this.load(contentId);
@@ -527,7 +572,23 @@ export class ContentWorkflowService {
     const data: Prisma.ContentUncheckedUpdateManyInput = { status: to, ...(opts.mutate ?? {}) };
     // 상태별 효과 (shared 규약)
     if (to === 'published' && !content.publishedAt) data.publishedAt = now; // 비정규화: 최초 송출 시각
-    if (to === 'regenerating') data.generation = { increment: 1 }; // 산출물 세대 +1
+    if (to === 'regenerating') {
+      data.generation = { increment: 1 }; // 산출물 세대 +1
+      // ★ 대장 #117 — 미성년자 동의 확인은 generation-scoped가 아니다.
+      // 세대가 올라가면 그것은 **다른 영상**이고 센터는 그 영상의 동의서를 본 적이 없다.
+      // 등재 당시 "재생성 워커가 미구동이라 잠복"이라 적혀 있었는데, auto_edit 구동으로
+      // 그 잠복 조건이 사라지므로 같은 슬라이스에서 닫는다.
+      //
+      // ⚠️ 지금은 **보수적으로 매번 무효화**한다. 승인된 계획(§5-D)은 "화면 구성(editPlan)이
+      // 실제로 바뀐 재생성만 무효화"라는 완화안이지만, 07 법무가 이 게이트를 최상위 블로커로
+      // 다루므로 **정본 대조 전에는 좁히지 않는다**. 대조 후 조건을 좁히는 것이 안전한 순서다.
+      // (Phase 1은 editPlan이 항상 null이라 완화안을 적용해도 결과가 같다 — 실질 차이는
+      //  컷이 들어오는 T-AI 트랙부터 생긴다.)
+      if (content.hasMinorSubject) {
+        data.minorConsentConfirmedByUserId = null;
+        data.minorConsentConfirmedAt = null;
+      }
+    }
 
     const res = await tx.content.updateMany({ where: { id: content.id, status: from }, data });
     if (res.count === 0) {

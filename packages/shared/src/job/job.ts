@@ -9,6 +9,7 @@ import type {
   WeeklyRecommendationId,
 } from '../common/id';
 import type { ISODateOnlyString, ISODateString } from '../common/time';
+import type { EditPlan } from '../media/edit-plan';
 
 export const JobType = {
   /** 트랜스코딩 */
@@ -84,6 +85,11 @@ export interface JobPayloadMap {
     revisionRequestId: RevisionRequestId | null;
     /** 재생성 후 AI 재분석 여부 — regenerating → analyzing vs preview_generating 분기 결정 */
     reanalyze: boolean;
+    /**
+     * 편집 지시 — **선택적**이다. null이면 컷 없이 기계편집(음량 정규화·렌디션·faststart)만 한다.
+     * 이 성질이 "AI가 없어도 영상은 나온다"를 보장한다 (`media/edit-plan.ts` 참조).
+     */
+    editPlan: EditPlan | null;
   };
   preview: {
     contentId: ContentId;

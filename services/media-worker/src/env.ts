@@ -36,6 +36,9 @@ export const workerEnvSchema = z.object({
   // 트랜스코딩 렌디션 (720p·2500kbps 기본)
   MEDIA_RENDITION_HEIGHT: z.coerce.number().int().positive().default(720),
   MEDIA_RENDITION_VBR_KBPS: z.coerce.number().int().positive().default(2500),
+  // 자동편집 — 음량 정규화 목표 라우드니스(LUFS). 방송 표준 -16.
+  // 음수라 positive()를 쓸 수 없다(그러면 -16이 검증에서 튕긴다).
+  MEDIA_LOUDNORM_I: z.coerce.number().default(-16),
   // 프리뷰 (360p·600kbps) — payload가 우선하나 미지정 시 기본값
   MEDIA_PREVIEW_HEIGHT: z.coerce.number().int().positive().default(360),
   MEDIA_PREVIEW_BITRATE_KBPS: z.coerce.number().int().positive().default(600),
