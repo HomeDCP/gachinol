@@ -1,7 +1,12 @@
 import { useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
-import { ProgramCategory } from '@gachinol/shared';
+import {
+  MAX_PRODUCT_CARDS_PER_SESSION,
+  PRODUCT_CARD_NAME_MAX,
+  PRODUCT_CARD_PRICE_LABEL_MAX,
+  ProgramCategory,
+} from '@gachinol/shared';
 import type { ChannelAccountId, LiveSession } from '@gachinol/shared';
 import { userMessageForError } from '../../../src/api/errors';
 import { CATEGORY_LABEL } from '../../../src/features/contents/labels';
@@ -10,8 +15,10 @@ import {
   LIVE_STATUS_TONE,
 } from '../../../src/features/live/labels';
 import {
+  emptyProductCardDraft,
   validateCreateLiveSession,
   type CreateLiveSessionErrors,
+  type ProductCardDraft,
 } from '../../../src/features/live/validation';
 import { useCreateLiveSession, useLiveSessions } from '../../../src/live/queries';
 import { Badge } from '../../../src/ui/badge';
@@ -42,14 +49,97 @@ function nextWeekendSlot(from: Date = new Date()): string {
   return d.toISOString();
 }
 
+/**
+ * 라이브커머스 상품 카드 입력 — 1단계(링크아웃) 전용.
+ *
+ * ★ 판매·결제·재고 입력이 없는 것이 의도다(05 §A-1: 가치놀은 거래 비당사자).
+ *   가격은 **표시용 문자열**이라 숫자 키패드를 쓰지 않는다 — "3kg 35,000원~" 같은 판매자 표기를 그대로 옮긴다.
+ */
+function ProductCardsField({
+  cards,
+  errors,
+  onChange,
+}: {
+  cards: readonly ProductCardDraft[];
+  errors?: Record<number, string>;
+  onChange: (next: ProductCardDraft[]) => void;
+}): React.JSX.Element {
+  const update = (i: number, patch: Partial<ProductCardDraft>): void =>
+    onChange(cards.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+
+  return (
+    <FormField
+      label="소개 상품 (선택)"
+      hint="판매자의 기존 판매처로 연결됩니다. 결제는 그쪽에서 진행됩니다"
+    >
+      {cards.map((card, i) => (
+        <View key={i} style={styles.productRow}>
+          <View style={styles.productRowHead}>
+            <Text style={styles.productRowLabel}>상품 {i + 1}</Text>
+            <Pressable onPress={() => onChange(cards.filter((_, idx) => idx !== i))} hitSlop={8}>
+              <Text style={styles.productRemove}>삭제</Text>
+            </Pressable>
+          </View>
+          <TextInput
+            style={styles.input}
+            value={card.name}
+            onChangeText={(v) => update(i, { name: v })}
+            placeholder="상품명 (예: 한라봉 5kg)"
+            placeholderTextColor={colors.textMuted}
+            maxLength={PRODUCT_CARD_NAME_MAX}
+          />
+          <TextInput
+            style={styles.input}
+            value={card.url}
+            onChangeText={(v) => update(i, { url: v })}
+            placeholder="판매 링크 (https://smartstore.naver.com/...)"
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            keyboardType="url"
+          />
+          <TextInput
+            style={styles.input}
+            value={card.priceLabel}
+            onChangeText={(v) => update(i, { priceLabel: v })}
+            placeholder="가격 표기 (선택 — 예: 25,000원)"
+            placeholderTextColor={colors.textMuted}
+            maxLength={PRODUCT_CARD_PRICE_LABEL_MAX}
+          />
+          <TextInput
+            style={styles.input}
+            value={card.imageUrl}
+            onChangeText={(v) => update(i, { imageUrl: v })}
+            placeholder="사진 주소 (선택 — https://...)"
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            keyboardType="url"
+          />
+          {errors?.[i] ? <Text style={styles.productError}>{errors[i]}</Text> : null}
+        </View>
+      ))}
+      {cards.length < MAX_PRODUCT_CARDS_PER_SESSION ? (
+        <Pressable onPress={() => onChange([...cards, emptyProductCardDraft()])} hitSlop={6}>
+          <Text style={styles.prefill}>+ 상품 추가</Text>
+        </Pressable>
+      ) : (
+        <Text style={styles.productError}>
+          상품은 최대 {MAX_PRODUCT_CARDS_PER_SESSION}개까지 등록할 수 있습니다
+        </Text>
+      )}
+    </FormField>
+  );
+}
+
 function CreateSessionForm(): React.JSX.Element {
   const [type, setType] = useState<ProgramCategory>('news');
   const [title, setTitle] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
+  const [productCards, setProductCards] = useState<ProductCardDraft[]>([]);
   const [errors, setErrors] = useState<CreateLiveSessionErrors>({});
   const create = useCreateLiveSession();
 
   const isEmergency = type === ProgramCategory.Emergency;
+  const isCommerce = type === ProgramCategory.LiveCommerce;
 
   const submit = (): void => {
     const result = validateCreateLiveSession({
@@ -57,6 +147,8 @@ function CreateSessionForm(): React.JSX.Element {
       title,
       scheduledAt: isEmergency ? null : scheduledAt.trim() || null,
       targetChannelAccountIds: [] as ChannelAccountId[],
+      // 커머스가 아니면 입력이 노출되지 않으므로 값도 보내지 않는다(유형 전환 시 잔재 방지)
+      productCards: isCommerce ? productCards : [],
     });
     if (!result.ok || !result.request) {
       setErrors(result.errors);
@@ -67,6 +159,7 @@ function CreateSessionForm(): React.JSX.Element {
       onSuccess: (session) => {
         setTitle('');
         setScheduledAt('');
+        setProductCards([]);
         showToast('라이브 세션을 생성했습니다');
         router.push(`/live/${session.id}`);
       },
@@ -125,6 +218,14 @@ function CreateSessionForm(): React.JSX.Element {
           </Pressable>
         </FormField>
       )}
+
+      {isCommerce ? (
+        <ProductCardsField
+          cards={productCards}
+          errors={errors.productCards}
+          onChange={setProductCards}
+        />
+      ) : null}
 
       <Button
         label="생성"
@@ -221,6 +322,18 @@ const styles = StyleSheet.create({
   },
   prefill: { fontSize: typo.caption, color: colors.primary, marginTop: spacing.sm },
   emergencyHint: { fontSize: typo.caption, color: colors.warning, marginBottom: spacing.lg },
+  productRow: {
+    gap: spacing.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  productRowHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  productRowLabel: { fontSize: typo.caption, color: colors.textMuted },
+  productRemove: { fontSize: typo.caption, color: colors.danger },
+  productError: { fontSize: typo.caption, color: colors.danger },
   card: {
     backgroundColor: colors.card,
     borderRadius: radii.md,

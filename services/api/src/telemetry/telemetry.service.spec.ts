@@ -401,6 +401,10 @@ describe('TelemetryRollup', () => {
       const rollup = new TelemetryRollup();
       rollup.record({ name: TelemetryEventName.PlaybackStart, contentId: 'c-1' });
       rollup.record({ name: TelemetryEventName.WizardStepEnter, sessionId: 's1' });
+      rollup.record({
+        name: TelemetryEventName.CommerceLinkoutClick,
+        payload: { liveSessionId: 'ls-1', productCardId: 'pc-1' },
+      });
 
       expect(rollup.toSummary().capacityDrops).toEqual({
         viewCountsByContent: 0,
@@ -408,7 +412,56 @@ describe('TelemetryRollup', () => {
         sessionsResumedUpload: 0,
         sessionsCompletedUpload: 0,
         captionSessionStates: 0,
+        linkoutClicksByProductCard: 0,
+        linkoutClicksByLiveSession: 0,
       });
+    });
+  });
+
+  describe('T-W2-12 라이브커머스 링크아웃 클릭 집계(02 §E-19 서버분)', () => {
+    it('총계 + 상품카드별 + 라이브세션별로 집계한다', () => {
+      const rollup = new TelemetryRollup();
+      const click = (liveSessionId: string, productCardId: string) =>
+        rollup.record({
+          name: TelemetryEventName.CommerceLinkoutClick,
+          payload: { liveSessionId, productCardId },
+        });
+
+      expect(click('ls-1', 'pc-a')).toBe('known');
+      click('ls-1', 'pc-a');
+      click('ls-1', 'pc-b');
+      click('ls-2', 'pc-a');
+
+      const { commerceLinkout } = rollup.toSummary();
+      expect(commerceLinkout.clickCount).toBe(4);
+      expect(commerceLinkout.clickCountsByProductCard).toEqual({ 'pc-a': 3, 'pc-b': 1 });
+      expect(commerceLinkout.clickCountsByLiveSession).toEqual({ 'ls-1': 3, 'ls-2': 1 });
+    });
+
+    it('payload가 없어도 총계는 오른다 — 상관 불가가 곧 미발생은 아니다', () => {
+      const rollup = new TelemetryRollup();
+      expect(rollup.record({ name: TelemetryEventName.CommerceLinkoutClick })).toBe('known');
+
+      const { commerceLinkout } = rollup.toSummary();
+      expect(commerceLinkout.clickCount).toBe(1);
+      expect(commerceLinkout.clickCountsByProductCard).toEqual({});
+      expect(commerceLinkout.clickCountsByLiveSession).toEqual({});
+    });
+
+    it('상한을 넘으면 드롭 카운터가 오르고 총계는 정확하게 유지된다', () => {
+      const rollup = new TelemetryRollup(2);
+      for (let i = 0; i < 5; i += 1) {
+        rollup.record({
+          name: TelemetryEventName.CommerceLinkoutClick,
+          payload: { liveSessionId: `ls-${i}`, productCardId: `pc-${i}` },
+        });
+      }
+
+      const summary = rollup.toSummary();
+      expect(summary.commerceLinkout.clickCount).toBe(5); // 원시 총계는 상한과 무관
+      expect(Object.keys(summary.commerceLinkout.clickCountsByProductCard)).toHaveLength(2);
+      expect(summary.capacityDrops.linkoutClicksByProductCard).toBe(3);
+      expect(summary.capacityDrops.linkoutClicksByLiveSession).toBe(3);
     });
   });
 });

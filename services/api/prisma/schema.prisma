@@ -333,7 +333,12 @@ model LiveSession {
   hlsPlaybackUrl          String?   @map("hls_playback_url") // env 플레이스홀더
   targetChannelAccountIds String[]  @default([]) @map("target_channel_account_ids") // FK 없음
   weeklyRecommendationId  String?   @map("weekly_recommendation_id") // FK 없음(테이블 미도입)
-  productIds              String[]  @default([]) @map("product_ids") // FK 없음(커머스 미도입)
+  productIds              String[]  @default([]) @map("product_ids") // ⚠️ 2단계(자체결제)용·미구동 — products 테이블 없음
+  // 1단계(링크아웃) 상품 카드. 표시용 최소 정보만(id·name·url·imageUrl?·priceLabel?) — shared ProductCard가 단일 원천.
+  // ★ 별도 테이블을 만들지 않는 것이 요점이다: 정본 05 §A-1이 "가치놀은 상품·주문·결제 데이터를
+  //   보관·처리하지 않는다"고 못박아, 조인·집계 대상이 되는 순간 거래 당사자성이 생긴다.
+  //   세션에 종속된 표시 자산이라 수명도 세션과 같다.
+  productCards            Json      @default("[]") @map("product_cards")
   vodContentId            String?   @map("vod_content_id") // FK 없음(예약)
   createdByUserId         String    @map("created_by_user_id") // FK→users Restrict
   createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)

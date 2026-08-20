@@ -20,6 +20,8 @@ export type LiveSessionId = Brand<string, 'LiveSessionId'>;
 export type LiveCommentId = Brand<string, 'LiveCommentId'>;
 export type ChatMessageId = Brand<string, 'ChatMessageId'>;
 export type ProductId = Brand<string, 'ProductId'>;
+/** 라이브커머스 1단계(링크아웃) 카드 — `ProductId`와 별개다(commerce/product-card.ts 주석 참조) */
+export type ProductCardId = Brand<string, 'ProductCardId'>;
 export type OrderId = Brand<string, 'OrderId'>;
 export type MediaSaleId = Brand<string, 'MediaSaleId'>;
 export type ForecastId = Brand<string, 'ForecastId'>;

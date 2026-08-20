@@ -22,12 +22,15 @@
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * 3트랙 이벤트 이름 카탈로그 — 02 §E-16 원문 3트랙(소비·업로드퍼널·모드선택)의 단일 원천.
+ * 4트랙 이벤트 이름 카탈로그 — 02 §E-16 원문 3트랙(소비·업로드퍼널·모드선택)
+ * **+ §E-19 라이브커머스 링크아웃**(T-W2-11·12에서 추가)의 단일 원천.
  *
- * ⚠️ 카탈로그에 있다고 해서 누군가 보내고 있다는 뜻은 아니다(2026-08-16 실측):
+ * ⚠️ 카탈로그에 있다고 해서 누군가 보내고 있다는 뜻은 아니다(2026-08-21 실측):
  *   - 기자 웹이 실제로 보내는 것: `upload_wizard_step_*`·`upload_start`·`upload_resume`·`upload_complete` 5종
+ *   - **구독자 웹**이 보내는 것: `commerce_linkout_click` 1종 — 구독자 앱 **최초의 계측 발신자**다
+ *     (그 전까지 `apps/subscriber`에 계측 코드가 0줄이었다 — 대장 #131)
  *   - 아무도 보내지 않는 것: `playback_start`·`playback_progress`·`large_caption_mode_toggle`
- *     (구독자 웹 소비 트랙 미배선 — 대장 #131)
+ *     (구독자 웹 **소비** 트랙은 여전히 미배선 — 대장 #131의 잔여분, T-W1-07a/Wave 12 소유)
  *   `mode_selected`는 한때 발신이 제거돼 있었다(대장 #123 — 간단 모드가 정밀 모드와 항등이라
  *   존재하지 않는 선택지의 채택률을 재고 있었다). **T-W2-34가 간단 모드를 실제로 구현하면서 재도입했다**
  *   (2026-08-16) — 이제 기자 웹이 다시 보내며 KPI도 의미를 갖는다. payload 값(`'simple'`/`'precise'`)은
@@ -46,6 +49,19 @@ export const TelemetryEventName = {
   LargeCaptionToggle: 'large_caption_mode_toggle',
   // ③ 모드 선택 (발신 중단 — 위 주석 참고)
   ModeSelected: 'mode_selected',
+  /**
+   * ④ 라이브커머스 링크아웃 클릭 (T-W2-11·12, 02 §E-19)
+   *
+   * payload: `{ liveSessionId: string; productCardId: string }`
+   * — `TelemetryEventEnvelope.contentId`는 VOD 콘텐츠용이라 라이브 세션을 담지 못해 payload로 보낸다.
+   *
+   * ⚠️ **이 이벤트는 사용자가 페이지를 떠나는 순간 발생한다** — 일반 `fetch`는 문서 언로드와 함께
+   * 취소되어 조용히 유실된다. 송신자는 `navigator.sendBeacon` 또는 `fetch(..., {keepalive:true})`를
+   * 써야 한다(구독자 앱 `src/telemetry/send-events.ts`가 그 경로다).
+   * 05 §A-1의 2단계 트리거("링크아웃 GMV" / "전환 손실 계측 입증")가 이 수치를 근거로 삼으므로,
+   * 유실은 지표 부정확이 아니라 **사업 판단의 근거 상실**이다.
+   */
+  CommerceLinkoutClick: 'commerce_linkout_click',
 } as const;
 export type TelemetryEventName = (typeof TelemetryEventName)[keyof typeof TelemetryEventName];
 

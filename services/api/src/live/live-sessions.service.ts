@@ -63,6 +63,9 @@ export class LiveSessionsService {
         scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
         targetChannelAccountIds: [...dto.targetChannelAccountIds],
         productIds: dto.productIds ? [...dto.productIds] : [],
+        // 카드 id는 **서버가 발급한다** — 클릭 계측의 상관자라 클라이언트가 정하면 중복·충돌 시
+        // 과거 지표가 다른 상품에 붙는다(집계는 시간을 거슬러 정정되지 않는다).
+        productCards: (dto.productCards ?? []).map((card) => ({ ...card, id: uuidv7() })),
         createdByUserId: user.id,
       },
     });

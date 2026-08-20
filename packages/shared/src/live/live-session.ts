@@ -8,6 +8,7 @@ import type {
   WeeklyRecommendationId,
 } from '../common/id';
 import type { ISODateString, Timestamps } from '../common/time';
+import type { ProductCard } from '../commerce/product-card';
 import { ProgramCategory } from '../content/category';
 
 export const LiveSessionStatus = {
@@ -69,8 +70,17 @@ export interface LiveSession extends Timestamps {
   targetChannelAccountIds: readonly ChannelAccountId[];
   /** type='news'(주간뉴스)의 소재 추천 링크 */
   weeklyRecommendationId: WeeklyRecommendationId | null;
-  /** type='live_commerce'의 판매 상품 */
+  /**
+   * ⚠️ **커머스 2단계(자체 결제)용이며 현재 아무도 채우지 않는다** — `products` 테이블이 없고
+   * (Prisma `product_ids`는 `FK 없음(커머스 미도입)`) 이 id로 조회할 대상도 없다.
+   * 1단계(링크아웃)가 쓰는 것은 아래 `productCards`다. 2단계 트리거 충족 시 되살린다.
+   */
   productIds: readonly ProductId[];
+  /**
+   * type='live_commerce'의 외부 판매 채널 링크 카드 — **1단계(링크아웃)의 실사용 필드**.
+   * 저장 위치는 `live_sessions.product_cards`(JSONB). 상세는 commerce/product-card.ts 주석.
+   */
+  productCards: readonly ProductCard[];
   /**
    * 종료 후 녹화본을 Content로 전환 시 연결.
    * 해당 Content는 origin='live_vod'·reporterId=null로 'uploaded' 상태 진입하며,
@@ -102,6 +112,12 @@ export interface LiveSessionPublic {
   /** 엔티티(LiveSession.hlsPlaybackUrl)와 동일하게 부재를 null로 표현 — live 상태에서 non-null */
   hlsUrl: string | null;
   viewerCount: number;
+  /**
+   * 외부 판매 채널 링크 카드(1단계 링크아웃). live_commerce가 아니면 빈 배열.
+   * **화이트리스트 투영이므로 여기 없으면 구독자 화면에 상품이 영영 뜨지 않는다** — 이 필드가
+   * 없어서 T-W2-11의 상품 카드가 렌더할 데이터를 못 받는 상태였다(2026-08-21 착수 전 확인).
+   */
+  productCards: readonly ProductCard[];
 }
 
 /** 관제: 라이브 생성·편성 요청 */
@@ -116,6 +132,14 @@ export interface CreateLiveSessionRequest {
   /** 생략 시 센터 */
   hostStationId?: StationId;
   targetChannelAccountIds: readonly ChannelAccountId[];
-  /** live_commerce 전용 */
+  /** ⚠️ 2단계용·미구동(엔티티 주석 참조). 1단계는 아래 `productCards`를 쓴다 */
   productIds?: readonly ProductId[];
+  /**
+   * live_commerce 전용 — 외부 판매 채널 링크 카드.
+   * `id`는 서버가 발급한다(관제는 나머지 4필드만 보낸다 — `ProductCardInput`).
+   */
+  productCards?: readonly ProductCardInput[];
 }
+
+/** 관제 입력 몫 — `id`는 서버 발급이라 클라이언트가 보내지 않는다 */
+export type ProductCardInput = Omit<ProductCard, 'id'>;
