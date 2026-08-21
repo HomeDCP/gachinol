@@ -67,7 +67,12 @@ export function useLinkoutClick(
     () => deps.sender ?? createTelemetrySender({ baseUrl: getApiBaseUrl() }),
     [deps.sender],
   );
-  const openUrl = deps.openUrl ?? ((url: string) => Linking.openURL(url));
+  // 기본값을 인라인으로 두면 매 렌더 새 함수가 되어 아래 useCallback이 매번 무효화된다
+  // (react-hooks/exhaustive-deps가 실제로 잡았다 — 대장 #122로 규칙이 켜지며 드러남).
+  const openUrl = useMemo(
+    () => deps.openUrl ?? ((url: string) => Linking.openURL(url)),
+    [deps.openUrl],
+  );
 
   return useCallback(
     (card: ProductCard): boolean => performLinkoutClick(card, { liveSessionId, sender, openUrl }),

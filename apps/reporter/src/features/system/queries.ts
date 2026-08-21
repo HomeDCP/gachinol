@@ -39,5 +39,9 @@ export function useHoldReleaseToast(state: ProcessingState | undefined): void {
       showToast('영상 처리가 시작되었습니다.');
     }
     wasHolding.current = Boolean(state?.enabled && state.holding);
+    // `state` 객체 전체를 deps에 넣지 않는다: `shouldAnnounceRelease`가 읽는 것은 `enabled`·`holding`
+    // 둘뿐인데(processing-hold.ts), 폴링이 매번 새 객체를 만들어 내려주므로 객체를 deps에 넣으면
+    // 값이 그대로여도 매 응답마다 이펙트가 재실행된다. 아래 두 값이 실질적으로 완전한 의존이다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.enabled, state?.holding]);
 }

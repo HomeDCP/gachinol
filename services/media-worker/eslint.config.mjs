@@ -1,14 +1,6 @@
 // @ts-check
-import tseslint from 'typescript-eslint';
+// 공통 프리셋만 소비한다 — 규칙은 packages/config/eslint/base.mjs가 단일 원천(대장 #122).
+// 舊: 이 파일이 tseslint 설정을 직접 들고 있었고 media-worker가 같은 내용을 복제했다.
+import base from '@gachinol/config/eslint';
 
-/** 최소 lint — 규칙 확장은 packages/config 공유 프리셋 도입 시(로드맵) */
-export default tseslint.config(
-  { ignores: ['dist/**', 'coverage/**', 'node_modules/**'] },
-  ...tseslint.configs.recommended,
-  {
-    rules: {
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      '@typescript-eslint/no-explicit-any': 'off',
-    },
-  },
-);
+export default base;

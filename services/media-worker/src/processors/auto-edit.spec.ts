@@ -12,7 +12,7 @@ describe('buildTimeline', () => {
   });
 
   test('컷 없음 — 출력 길이를 우선 쓴다(인코딩으로 미세하게 달라질 수 있다)', () => {
-    const [m] = buildTimeline([], 63.8, 63.9);
+    const m = buildTimeline([], 63.8, 63.9)[0]!;
     expect(m.sourceEndSec).toBe(63.9);
     expect(m.outputEndSec).toBe(63.9);
   });
@@ -46,7 +46,7 @@ describe('buildTimeline', () => {
 
   test('컷 있음 — 역전 구간은 길이 0으로 흡수(음수 누적 방지)', () => {
     const t = buildTimeline([{ startSec: 30, endSec: 20 }, { startSec: 0, endSec: 5 }], 60, 5);
-    expect(t[0].outputEndSec).toBe(0);
+    expect(t[0]!.outputEndSec).toBe(0);
     expect(t[1]).toEqual({
       sourceStartSec: 0,
       sourceEndSec: 5,

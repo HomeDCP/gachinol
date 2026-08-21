@@ -1,0 +1,25 @@
+{
+  "name": "@gachinol/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint/base.mjs",
+    "./eslint/react": "./eslint/react.mjs"
+  },
+  "files": [
+    "eslint"
+  ],
+  "peerDependencies": {
+    "eslint": "^9",
+    "typescript-eslint": "^8"
+  },
+  "devDependencies": {
+    "eslint": "^9",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript-eslint": "^8"
+  },
+  "scripts": {
+    "lint": "eslint ."
+  }
+}
