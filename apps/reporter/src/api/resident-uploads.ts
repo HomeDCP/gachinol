@@ -47,6 +47,17 @@ export const listResidentUploads = (
   });
 
 /**
+ * GET /v1/resident-uploads/:id — 검수 단건 조회(대장 #120).
+ *
+ * 상세 화면이 목록 캐시에만 기대던 것을 걷어낸다 — 캐시가 비는 **새로고침·북마크·URL 공유**에서도
+ * 열려야 한다. 항목을 route param에 실어 해결하면 검수자 전용 PII(`uploaderContact`)가 주소창·
+ * 히스토리에 남으므로(T-W2-25b가 실 URL 558자로 실증) 그 길은 막혀 있다.
+ * 미존재 404 · 타 지사 403(목록·승인·반려와 같은 경계).
+ */
+export const getResidentUpload = (c: ApiClient, id: string): Promise<ResidentUploadReviewItem> =>
+  c.request<ResidentUploadReviewItem>('GET', `/resident-uploads/${id}`);
+
+/**
  * POST /v1/resident-uploads/:id/approve — 정식 파이프라인 진입(트랜스코딩 인큐). 되돌릴 수 없다.
  * 멱등: 이미 approved인 건을 다시 호출해도 200 — 잡 유실 복구용 재인큐가 일어날 수 있다.
  */

@@ -240,6 +240,22 @@ export class ResidentReviewsService {
   }
 
   /**
+   * 검수 단건 조회 (대장 #120).
+   *
+   * ★ 새 로직이 없다 — `loadForReview`(존재·지사 경계)와 `toReviewItem`(화이트리스트 투영)을 조합할 뿐이다.
+   *   그래서 목록·승인·반려와 **경계 규칙이 갈라질 수 없다**. 단건 조회를 위해 별도 쿼리를 쓰면
+   *   `stationId` 검사나 투영이 한쪽만 바뀌어도 아무도 눈치채지 못한다(이 리포가 반복해 밟은 사본 문제).
+   *
+   * ★ 왜 필요했나: 상세 화면이 목록 캐시에만 의존해 **웹 새로고침·북마크·URL 공유로 재진입하면
+   *   열리지 않았다.** 최초 구현은 항목 전체를 route param에 실어 회피했으나 그 방식은 검수자 전용
+   *   PII(`uploaderContact`)를 주소창·히스토리에 평문 노출시켜 철회됐다(T-W2-25b, 실 URL 558자 실증).
+   *   즉 **PII를 지키려면 새로고침 생존을 포기해야 하는 구조**였고, 그 근인이 단건 조회 부재였다.
+   */
+  async findOne(user: User, uploadId: string): Promise<ResidentUploadReviewItem> {
+    return toReviewItem(await this.loadForReview(user, uploadId));
+  }
+
+  /**
    * 대상 로드 + 지사 경계. 미존재는 404, 타 지사는 403 —
    * `ContentsService.loadReadable`의 순서(존재 → 경계)를 그대로 따른다.
    */

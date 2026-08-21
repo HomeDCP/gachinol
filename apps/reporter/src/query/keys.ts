@@ -60,6 +60,15 @@ function normalizeResidentUploadFilter(filter: ResidentUploadListFilter): Record
 export const residentUploadKeys = {
   /** prefix 앵커 — invalidate 대상 */
   all: ['resident-uploads'] as const,
+  /**
+   * 목록 전용 앵커 — **`all`과 구분되어야 한다.**
+   * 캐시를 직접 훑는 코드(`findResidentUploadInCache`)가 `all`로 조회하면 `detail` 엔트리까지
+   * 걸려 들어와 단건 객체를 `InfiniteData`로 오인한다(`data.pages is not iterable`로 실제 크래시).
+   * 형태가 다른 캐시가 같은 prefix를 공유하기 시작하면 prefix 조회는 안전하지 않다.
+   */
+  lists: () => ['resident-uploads', 'list'] as const,
   list: (filter: ResidentUploadListFilter) =>
     ['resident-uploads', 'list', normalizeResidentUploadFilter(filter)] as const,
+  /** 단건 조회(대장 #120) — `all` 아래라 승인·반려 후 invalidate가 목록과 함께 무효화한다 */
+  detail: (id: string) => ['resident-uploads', 'detail', id] as const,
 };

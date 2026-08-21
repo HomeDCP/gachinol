@@ -59,7 +59,11 @@ jest.mock('../../../api/media', () => ({
 
 const mockApprove = jest.fn();
 const mockReject = jest.fn();
+// ⚠️ `getResidentUpload`가 이 목에 없으면 조회가 조용히 깨진 채로 테스트가 통과한다 —
+// initialData(목록 캐시 시드)가 화면을 그려주기 때문이다. 신규 API는 반드시 여기에 함께 등재한다.
+const mockGetOne = jest.fn();
 jest.mock('../../../api/resident-uploads', () => ({
+  getResidentUpload: (...args: unknown[]) => mockGetOne(...args),
   approveResidentUpload: (...args: unknown[]) => mockApprove(...args),
   rejectResidentUpload: (...args: unknown[]) => mockReject(...args),
 }));
@@ -161,12 +165,16 @@ afterEach(() => {
   for (const c of clientsToCleanup.splice(0)) c.unmount();
 });
 
-async function renderScreen(item: ResidentUploadReviewItem) {
+async function renderScreen(
+  item: ResidentUploadReviewItem,
+  opts: { seedCache?: boolean } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   clientsToCleanup.push(client);
-  primeResidentUploadCache(client, item);
+  // seedCache=false = 새로고침·북마크·URL 공유 진입(목록을 거치지 않아 캐시가 비어 있다)
+  if (opts.seedCache !== false) primeResidentUploadCache(client, item);
   const result = await render(
     <QueryClientProvider client={client}>
       <ResidentUploadDetailScreen />
@@ -244,5 +252,56 @@ describe('ResidentUploadDetailScreen — 승인은 확인 다이얼로그를 경
     await fireEvent.press(approveButton);
 
     await waitFor(() => expect(mockApprove).toHaveBeenCalledWith(expect.anything(), 'ru-1'));
+  });
+});
+
+describe('ResidentUploadDetailScreen — 새로고침 생존 (대장 #120)', () => {
+  it('★ 목록 캐시가 비어도 서버 단건 조회로 상세가 열린다 — 새로고침·북마크·URL 공유 진입', async () => {
+    const item = buildItem();
+    mockGetOne.mockResolvedValue(item);
+
+    const rendered = await renderScreen(item, { seedCache: false });
+    const { queryByText } = rendered;
+
+    // 상태 배지는 item 하나만 있으면 그려진다 — 다른 쿼리(원본 조회) 상태에 좌우되지 않는 신호다.
+    // 舊 구현은 여기서 "검수 항목 정보를 찾을 수 없습니다"로 목록에 되돌렸다.
+    // 상태 배지는 item 하나만 있으면 그려진다 — 다른 쿼리(원본 조회) 상태에 좌우되지 않는 신호다.
+    // 舊 구현은 여기서 "검수 항목 정보를 찾을 수 없습니다"로 목록에 되돌렸다.
+    await rendered.findByText('검수 대기');
+    expect(queryByText('검수 항목 정보를 찾을 수 없습니다.')).toBeNull();
+    expect(mockGetOne).toHaveBeenCalledWith(expect.anything(), item.id);
+  });
+
+  it('★ URL에는 id만 실린다 — 항목 원문을 route param으로 나르지 않는다(PII 노출 차단)', async () => {
+    const item = buildItem();
+    mockGetOne.mockResolvedValue(item);
+
+    await renderScreen(item, { seedCache: false });
+
+    // 조회 인자에 연락처가 섞여 들어가지 않는다(경로 파라미터는 식별자뿐)
+    const [, ...args] = mockGetOne.mock.calls[0];
+    expect(args).toEqual([item.id]);
+    expect(JSON.stringify(args)).not.toContain(item.uploaderContact ?? '@@none@@');
+  });
+
+  it('조회가 실패하면 목록으로 쫓아내지 않고 재시도를 준다', async () => {
+    const item = buildItem();
+    mockGetOne.mockRejectedValue(new Error('network down'));
+
+    const { findByText } = await renderScreen(item, { seedCache: false });
+
+    await findByText('다시 시도');
+  });
+
+  it('시드가 있으면 즉시 그리고 서버 값으로 갱신한다 — 낡은 캐시가 사실로 굳지 않는다', async () => {
+    const stale = buildItem({ status: 'awaiting_branch_review' });
+    const fresh = buildItem({ status: 'approved' });
+    mockGetOne.mockResolvedValue(fresh);
+
+    const { findByText } = await renderScreen(stale);
+
+    // 서버가 approved라고 답하면 화면은 검수 완료 안내로 바뀐다
+    await findByText('이미 검수가 완료된 건입니다.');
+    expect(mockGetOne).toHaveBeenCalled();
   });
 });

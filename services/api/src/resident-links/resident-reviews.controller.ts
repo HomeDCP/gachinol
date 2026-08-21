@@ -47,6 +47,23 @@ export class ResidentReviewsController {
     return this.reviews.listQueue(user, query);
   }
 
+  @Get(':id')
+  @Roles('reporter', 'admin')
+  @ApiOperation({
+    summary: '검수 단건 조회 (지사 담당자) — 기자는 자기 지사만',
+    description:
+      '목록과 동일한 화이트리스트 투영·지사 경계를 그대로 쓴다(같은 서비스 조각 재사용). ' +
+      '상세 화면이 목록 캐시에 의존하던 것을 걷어내기 위한 경로다 — 캐시가 비는 새로고침·북마크·' +
+      'URL 공유에서도 상세가 열려야 하고, 그렇다고 항목을 route param에 실으면 검수자 전용 PII가 ' +
+      '주소창·히스토리에 남는다(대장 #120). 미존재 404 · 타 지사 403.',
+  })
+  findOne(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<ResidentUploadReviewItem> {
+    return this.reviews.findOne(user, id);
+  }
+
   @Post(':id/approve')
   @HttpCode(200)
   @Roles('reporter', 'admin')
