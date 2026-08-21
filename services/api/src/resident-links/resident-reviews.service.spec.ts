@@ -158,6 +158,47 @@ describe('ResidentReviewsService.listQueue (AC1)', () => {
 
 /* ───────────────────── AC2. 승인·반려 기록 ───────────────────── */
 
+describe('ResidentReviewsService.findOne — 검수 단건 조회 (대장 #120)', () => {
+  it('목록과 동일한 화이트리스트로 투영한다 — 내부 좌표(storageKey·linkId)는 나가지 않는다', async () => {
+    const { service } = setup();
+
+    const item = (await service.findOne(reporterUser(), 'ru-1')) as unknown as Record<string, unknown>;
+
+    expect(item.id).toBe('ru-1');
+    expect(item.status).toBe('awaiting_branch_review');
+    expect(item.stationId).toBe('s-aewol');
+    // 검수 판단 재료는 실린다(이 화면에서만 쓰이는 PII — 무인증 표면에는 없다)
+    expect(item.uploaderContact).toBe('010-1234-5678');
+    expect(item.consentAgreedAt).not.toBeNull();
+    // BigInt는 직렬화 불가라 경계에서 number로 내려야 한다
+    expect(item.sizeBytes).toBe(2048);
+    // 내부 좌표 차단
+    expect(item.storageKey).toBeUndefined();
+    expect(item.linkId).toBeUndefined();
+  });
+
+  it('타 지사는 403, 미존재는 404 — 승인·반려와 같은 경계를 쓴다', async () => {
+    const { prisma, service } = setup();
+
+    await rejectsWith(
+      service.findOne(reporterUser({ stationId: 's-jeju' as never }), 'ru-1'),
+      'forbidden',
+    );
+
+    prisma.residentUpload.findUnique.mockResolvedValue(null);
+    await rejectsWith(service.findOne(reporterUser(), 'ru-1'), 'not_found');
+  });
+
+  it('조회는 아무 것도 기록하지 않는다(읽기 전용)', async () => {
+    const { prisma, producer, service } = setup();
+
+    await service.findOne(reporterUser(), 'ru-1');
+
+    expect(prisma.residentUpload.updateMany).not.toHaveBeenCalled();
+    expect(producer.enqueueTranscode).not.toHaveBeenCalled();
+  });
+});
+
 describe('ResidentReviewsService.approve / reject (AC2)', () => {
   it('★ 승인은 status=approved + 검수자·시각을 기록한다(#86 — 지금까지 0건이던 쓰기)', async () => {
     const { prisma, service } = setup();

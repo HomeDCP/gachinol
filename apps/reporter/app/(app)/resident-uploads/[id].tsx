@@ -17,13 +17,14 @@ import {
   useApproveResidentUpload,
   useRejectResidentUpload,
 } from '../../../src/features/resident-uploads/mutations';
-import { useResidentUploadFromCache } from '../../../src/features/resident-uploads/queries';
+import { useResidentUpload } from '../../../src/features/resident-uploads/queries';
 import { isConsentMissing } from '../../../src/features/resident-uploads/review';
 import { contentKeys } from '../../../src/query/keys';
 import { Badge } from '../../../src/ui/badge';
 import { Button } from '../../../src/ui/button';
 import { confirmDialog } from '../../../src/ui/feedback';
 import { ErrorView } from '../../../src/ui/error-view';
+import { LoadingView } from '../../../src/ui/loading-view';
 import { Screen } from '../../../src/ui/screen';
 import { colors, radii, spacing, typo } from '../../../src/ui/theme';
 import { showToast } from '../../../src/ui/toast';
@@ -44,17 +45,20 @@ function OriginalVideoPlayer({ sourceUrl }: { sourceUrl: string | null }): React
 /**
  * ② 검수 상세 — 원본 재생 + 판단 재료(업로더 연락처·동의 여부) + 승인/반려
  *
- * 항목 데이터는 라우트 파라미터가 아니라 **목록 쿼리 캐시**에서 온다(`useResidentUploadFromCache`).
- * 서버에 단건 조회 엔드포인트가 없어(list·approve·reject 3종뿐) 처음엔 항목 전체를 라우트 파라미터로
- * 실었는데, expo-router가 그걸 URL 쿼리스트링으로 직렬화해 "검수자 전용·무인증 표면 노출 금지"인
- * `uploaderContact`가 브라우저 주소창·히스토리에 평문으로 남는 결함이 됐다(qa-verifier 결함①,
- * 웹 피벗 확정 — 웹이 주 실행 환경). 캐시 조회는 URL에 아무 것도 안 싣는다. 캐시에 없으면(새로고침·
- * 딥링크·북마크) null — 부분 필드만 복구하는 타협 없이 상세를 열지 않고 목록으로 안내한다.
+ * 항목 데이터는 **서버 단건 조회**(`useResidentUpload` → `GET /v1/resident-uploads/:id`)에서 오고,
+ * 목록 캐시는 첫 페인트 시드로만 쓴다. URL에는 `id`만 싣는다.
+ *
+ * ★ 이 조합이 나온 경위(대장 #120): 처음엔 항목 전체를 라우트 파라미터로 실었는데 expo-router가
+ * 그걸 쿼리스트링으로 직렬화해 "검수자 전용·무인증 표면 노출 금지"인 `uploaderContact`가 브라우저
+ * 주소창·히스토리에 평문으로 남았다(실 URL 558자로 실증). 그래서 캐시 조회로 바꿨더니 이번엔
+ * **새로고침·북마크·URL 공유로 재진입하면 열리지 않았다** — PII를 지키려면 새로고침 생존을 포기해야
+ * 하는 구조였고, 근인은 단건 조회 엔드포인트 부재였다. 그 엔드포인트가 생기며 둘 다 해소됐다.
  */
 export default function ResidentUploadDetailScreen(): React.JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>();
   const client = useApiClient();
-  const item = useResidentUploadFromCache(id ?? '');
+  const detail = useResidentUpload(id ?? '');
+  const item = detail.data ?? null;
 
   // 원본 재생 경로: contentId → GET /v1/contents/:id 상세(assets) → original 자산 → 서명 GET URL.
   // (착수 전 확인 ③ — loadReadable은 stationId 기준이라 reporterId=null인 주민 업로드도 자기 지사면 열람 가능)
@@ -80,14 +84,26 @@ export default function ResidentUploadDetailScreen(): React.JSX.Element {
   const reject = useRejectResidentUpload(id ?? '');
   const anyPending = approve.isPending || reject.isPending;
 
+  // 시드(목록 캐시)가 없는 진입 — 새로고침·북마크·URL 공유 — 은 서버 응답을 기다린다.
+  if (!item && detail.isPending) {
+    return (
+      <Screen>
+        <Stack.Screen options={{ title: '검수 상세' }} />
+        <LoadingView />
+      </Screen>
+    );
+  }
+
+  // 404(삭제됨)·403(타 지사)·네트워크 실패. 목록으로 되돌리는 대신 **재시도**를 준다 —
+  // 일시적 오류에서 목록으로 쫓아내면 검수자가 방금 하던 일을 잃는다.
   if (!item) {
     return (
       <Screen>
         <Stack.Screen options={{ title: '검수 상세' }} />
         <ErrorView
-          message="검수 항목 정보를 찾을 수 없습니다. 목록에서 다시 들어와 주세요."
-          retryLabel="목록으로"
-          onRetry={() => router.replace('/resident-uploads')}
+          message={detail.error ? userMessageForError(detail.error) : '검수 항목을 찾을 수 없습니다.'}
+          retryLabel="다시 시도"
+          onRetry={() => void detail.refetch()}
         />
       </Screen>
     );
