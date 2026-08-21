@@ -102,7 +102,7 @@ describe('live.mapper', () => {
     });
 
     it('부적격 imageUrl은 카드를 버리지 않고 이미지만 뺀다', () => {
-      const [card] = toProductCards([{ ...good, imageUrl: 'javascript:alert(1)' }]);
+      const card = toProductCards([{ ...good, imageUrl: 'javascript:alert(1)' }])[0]!;
       expect(card.imageUrl).toBeUndefined();
       expect(card.name).toBe('한라봉 5kg');
     });

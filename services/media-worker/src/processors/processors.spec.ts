@@ -239,7 +239,7 @@ describe('processAutoEdit', () => {
     }
     // ★ 타임라인 항등 — 이게 깨지면 구독자 자막이 밀린다
     expect(result.timeline).toHaveLength(1);
-    const [m] = result.timeline;
+    const m = result.timeline[0]!;
     expect(m.sourceStartSec).toBe(m.outputStartSec);
     expect(Math.abs(m.sourceEndSec - m.outputEndSec)).toBeLessThan(0.05);
     expect(progress.at(-1)).toBe(100);

@@ -112,7 +112,7 @@ self.addEventListener('fetch', function (event) {
   var url;
   try {
     url = new URL(request.url);
-  } catch (error) {
+  } catch {
     return;
   }
 

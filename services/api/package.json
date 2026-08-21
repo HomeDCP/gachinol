@@ -7,7 +7,7 @@
     "build": "prisma generate && nest build",
     "dev": "prisma generate && nest start --watch",
     "start": "node dist/main.js",
-    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "lint": "eslint .",
     "typecheck": "prisma generate && tsc --noEmit",
     "test": "jest",
     "test:e2e": "jest --config test/jest-e2e.json",
@@ -47,6 +47,7 @@
     "zod": "^3.25"
   },
   "devDependencies": {
+    "@gachinol/config": "workspace:*",
     "@gachinol/media-worker": "workspace:*",
     "@nestjs/cli": "^11",
     "@nestjs/testing": "^11",

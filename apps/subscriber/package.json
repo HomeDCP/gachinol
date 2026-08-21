@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "doctor": "expo-doctor",
-    "clean": "rm -rf .expo dist"
+    "clean": "rm -rf .expo dist",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
@@ -37,12 +38,15 @@
     "workbox-window": "^7.4.1"
   },
   "devDependencies": {
+    "@gachinol/config": "workspace:*",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29",
     "@types/react": "~19.1.0",
+    "eslint": "^9",
     "jest": "~29.7.0",
     "jest-expo": "~54.0.0",
     "test-renderer": "1.1.0",
-    "typescript": "~5.9.0"
+    "typescript": "~5.9.0",
+    "typescript-eslint": "^8"
   }
 }

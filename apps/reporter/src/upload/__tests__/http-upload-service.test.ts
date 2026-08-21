@@ -11,7 +11,6 @@ jest.mock('expo-file-system/legacy', () => ({
   createUploadTask: jest.fn(),
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const FileSystem = require('expo-file-system/legacy') as {
   createUploadTask: jest.Mock;
   FileSystemUploadType: { BINARY_CONTENT: string };

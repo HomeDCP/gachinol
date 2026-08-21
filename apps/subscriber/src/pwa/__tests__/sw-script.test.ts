@@ -112,7 +112,7 @@ function loadServiceWorker(): Harness {
     clients: { claim },
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+  // 실 sw.js 소스를 격리 스코프에서 평가한다(테스트 전용 — 프로덕션 경로 아님)
   const factory = new Function('self', 'caches', 'fetch', 'Response', SW_SOURCE);
   factory(swSelf, cacheStorage, fetchMock, { error: () => response(0, 'network-error') });
 

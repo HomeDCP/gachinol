@@ -19,7 +19,6 @@ import {
   revokeSessionAndClear,
 } from '../auth-context';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { showToast } = jest.requireMock('../../ui/toast') as { showToast: jest.Mock };
 
 const reporter: ReporterUser = {

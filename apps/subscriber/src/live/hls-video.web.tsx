@@ -70,7 +70,7 @@ export function HlsVideo({ sourceUrl, onFatalError }: HlsVideoProps): React.JSX.
       container.removeChild(videoEl);
     };
     // sourceUrl 변경 시에만 재구성 — onFatalError는 ref로 우회해 매 렌더 재부착을 피한다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // (ref 우회 덕에 deps가 실제로 완전하므로 exhaustive-deps 예외가 필요 없다)
   }, [sourceUrl]);
 
   return <View ref={containerRef} style={styles.wrap} />;

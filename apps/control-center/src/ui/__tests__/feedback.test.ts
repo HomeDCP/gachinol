@@ -6,7 +6,7 @@
  * 그래서 여기서 고정하는 불변식은 **confirmDialog가 반드시 결정된다(settle)**는 것이다.
  * 렌더 트리(FeedbackHost)는 테스트 라이브러리 의존성을 늘리지 않기 위해 범위 밖으로 둔다.
  */
-import { Alert, Platform, ToastAndroid } from 'react-native';
+import { Alert, ToastAndroid } from 'react-native';
 
 type AlertButton = { text?: string; style?: string; onPress?: () => void };
 
