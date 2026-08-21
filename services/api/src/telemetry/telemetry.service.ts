@@ -143,12 +143,29 @@ export interface TelemetrySummary {
    * 성공률·자막 활성 비율)가 실제보다 과소추정될 수 있다는 신호다(과대추정은 없음 — 드롭된 세션은
    * 분자·분모 어디에도 들어가지 않는다). 원시 총계(카운터)는 상한과 무관하게 항상 정확하다.
    */
+  /**
+   * ④ 라이브커머스 링크아웃 (T-W2-12, 02 §E-19 서버분).
+   *
+   * ⚠️ **이것이 05 §A-1 2단계 트리거의 유일한 자체 측정치다.** 트리거는 "링크아웃 GMV 월 300만원
+   * 3개월 연속" 또는 "전환 손실 계측 입증"인데, 우리는 거래 비당사자라 **GMV도 구매 완주도 볼 수 없다**
+   * — 판매자가 외부 채널 실적을 알려줘야 그 절반이 채워진다. 여기서 나오는 클릭 수는 그 대조군이며,
+   * 클릭 대비 실적이 판정의 재료다. 그래서 유실이 곧 판단 근거 상실이다(shared 카탈로그 주석 참조).
+   */
+  commerceLinkout: {
+    clickCount: number;
+    /** 상품 카드별 클릭 — 어떤 상품이 반응을 얻는지 */
+    clickCountsByProductCard: Record<string, number>;
+    /** 라이브 회차별 클릭 — 방송 성과 비교의 단위 */
+    clickCountsByLiveSession: Record<string, number>;
+  };
   capacityDrops: {
     viewCountsByContent: number;
     sessionsEnteredWizard: number;
     sessionsResumedUpload: number;
     sessionsCompletedUpload: number;
     captionSessionStates: number;
+    linkoutClicksByProductCard: number;
+    linkoutClicksByLiveSession: number;
   };
 }
 
@@ -190,6 +207,11 @@ export class TelemetryRollup {
     p100: 0,
   };
   private readonly viewCountsByContent = new Map<string, number>();
+  private linkoutClickCount = 0;
+  private readonly linkoutClicksByProductCard = new Map<string, number>();
+  private readonly linkoutClicksByLiveSession = new Map<string, number>();
+  private linkoutClicksByProductCardDropped = 0;
+  private linkoutClicksByLiveSessionDropped = 0;
   private viewCountsByContentDropped = 0;
 
   private wizardStepEnterCount = 0;
@@ -351,6 +373,30 @@ export class TelemetryRollup {
         return 'known';
       }
 
+      // 링크아웃 클릭(02 §E-19). payload = { liveSessionId, productCardId }.
+      // ⚠️ 원시 총계(clickCount)는 **payload 유무와 무관하게** 올린다 — 상관자가 없어도 "클릭이
+      // 일어났다"는 사실 자체가 2단계 트리거 판정의 분자다. 상관 가능한 것만 Map에 넣는다.
+      case TelemetryEventName.CommerceLinkoutClick: {
+        this.linkoutClickCount += 1;
+        const cardId = event.payload?.productCardId;
+        if (typeof cardId === 'string' && cardId.length > 0) {
+          this.bumpCappedMapCount(
+            this.linkoutClicksByProductCard,
+            cardId,
+            () => (this.linkoutClicksByProductCardDropped += 1),
+          );
+        }
+        const sessionId = event.payload?.liveSessionId;
+        if (typeof sessionId === 'string' && sessionId.length > 0) {
+          this.bumpCappedMapCount(
+            this.linkoutClicksByLiveSession,
+            sessionId,
+            () => (this.linkoutClicksByLiveSessionDropped += 1),
+          );
+        }
+        return 'known';
+      }
+
       default:
         this.unknownEventCount += 1;
         return 'unknown';
@@ -395,12 +441,19 @@ export class TelemetryRollup {
         preciseCount: this.preciseCount,
         simpleAdoptionRate: ratio(this.simpleCount, this.simpleCount + this.preciseCount),
       },
+      commerceLinkout: {
+        clickCount: this.linkoutClickCount,
+        clickCountsByProductCard: Object.fromEntries(this.linkoutClicksByProductCard),
+        clickCountsByLiveSession: Object.fromEntries(this.linkoutClicksByLiveSession),
+      },
       capacityDrops: {
         viewCountsByContent: this.viewCountsByContentDropped,
         sessionsEnteredWizard: this.sessionsEnteredWizardDropped,
         sessionsResumedUpload: this.sessionsResumedUploadDropped,
         sessionsCompletedUpload: this.sessionsCompletedUploadDropped,
         captionSessionStates: this.captionSessionStatesDropped,
+        linkoutClicksByProductCard: this.linkoutClicksByProductCardDropped,
+        linkoutClicksByLiveSession: this.linkoutClicksByLiveSessionDropped,
       },
     };
   }

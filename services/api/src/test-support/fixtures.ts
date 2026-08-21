@@ -153,6 +153,7 @@ export const liveSessionRow = (over: Partial<LiveSessionRow> = {}): LiveSessionR
   targetChannelAccountIds: [],
   weeklyRecommendationId: null,
   productIds: [],
+  productCards: [],
   vodContentId: null,
   createdByUserId: 'u-center',
   createdAt: NOW,

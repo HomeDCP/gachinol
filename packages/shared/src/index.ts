@@ -62,6 +62,7 @@ export * from './live/live-comment';
 export * from './live/chat-message';
 
 // commerce
+export * from './commerce/product-card';
 export * from './commerce/product';
 export * from './commerce/order';
 export * from './commerce/media-sale';

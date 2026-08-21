@@ -12,7 +12,11 @@ import {
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { toId } from '@gachinol/shared';
-import type { ChatMessage, LiveSessionId } from '@gachinol/shared';
+import type {
+  ChatMessage,
+  LiveSessionId,
+  ProductCard as ProductCardModel,
+} from '@gachinol/shared';
 import { colors, radii, spacing, typo } from '@gachinol/ui';
 import { isApiClientError, userMessageForError } from '../../src/api/errors';
 import { getLiveFallbackYoutubeUrl, getSupportTelHref } from '../../src/config/env';
@@ -23,7 +27,9 @@ import {
   isOnAir,
   LIVE_STATUS_LABEL,
 } from '../../src/live/format';
+import { ProductCardList } from '../../src/live/ProductCard';
 import { useLiveSession } from '../../src/live/queries';
+import { useLinkoutClick } from '../../src/live/use-linkout-click';
 import { useLiveChat } from '../../src/live/use-live-chat';
 import { isValidNickname, NICKNAME_MAX_LEN, sanitizeNickname } from '../../src/live/nickname';
 import { ErrorView } from '../../src/ui/error-view';
@@ -141,16 +147,24 @@ function LiveChatRoom({
   liveSessionId,
   nickname,
   title,
+  fallbackProductCards,
 }: {
   liveSessionId: LiveSessionId;
   nickname: string;
   title: string;
+  /**
+   * REST 초기 조회분 — WS `live.join` ack이 도착하기 전(또는 소켓이 끊긴 동안)에도 상품을 보여준다.
+   * 라이브커머스에서 상품 카드가 "연결될 때까지 안 보임"이면 방송 진행자가 말하는 시점과 어긋난다.
+   */
+  fallbackProductCards: readonly ProductCardModel[];
 }): React.JSX.Element {
   const { messages, session, viewerCount, connected, send, sendError, sending } = useLiveChat({
     liveSessionId,
     nickname,
   });
   const [draft, setDraft] = useState('');
+  const onLinkoutPress = useLinkoutClick(liveSessionId);
+  const productCards = session?.productCards ?? fallbackProductCards;
 
   const status = session?.status ?? 'preparing';
   const onAir = isOnAir(status);
@@ -189,6 +203,9 @@ function LiveChatRoom({
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <ChatRow item={item} />}
         contentContainerStyle={styles.chatList}
+        ListHeaderComponent={
+          <ProductCardList cards={productCards} onPressCard={onLinkoutPress} />
+        }
         ListEmptyComponent={
           <Text style={styles.chatEmpty}>
             {connected ? '첫 채팅을 남겨보세요' : '채팅에 연결하는 중…'}
@@ -267,6 +284,7 @@ export default function LiveDetailScreen(): React.JSX.Element {
           liveSessionId={liveSessionId}
           nickname={nickname}
           title={initial.data.title}
+          fallbackProductCards={initial.data.productCards}
         />
       )}
     </Screen>
