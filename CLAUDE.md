@@ -231,8 +231,9 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   - **재생성은 자동 연쇄가 아니라 명시 트리거**(`POST /v1/contents/:id/regenerate`) — `revision_requested`는
     초안 수정이 허용되는 상태라(`EDITABLE_STATUSES`) 자동 연쇄하면 **기자가 자막을 고칠 기회가 사라진다**.
     기자앱·관제앱에 "이대로 다시 만들기" 버튼을 배선했다.
-  - **대장 #117 동시 해소** — 세대가 오르면 미성년자 동의 확인 무효화. ⚠️ **07 법무 정본 대조 전이라 보수적으로
-    매번 무효화**한다(승인된 완화안 "화면 구성이 바뀐 재생성만"은 대조 후 적용). Phase 1은 `editPlan`이 없어 실질 차이 없음.
+  - **대장 #117 동시 해소** — 세대가 오르면 미성년자 동의 확인 무효화. **07 정본 대조 완료(2026-08-23)**:
+    §3-3에 **재생성·세대에 관한 문언이 없어** 완화안("화면 구성이 바뀐 재생성만")을 지지할 근거가 없다
+    → **매번 무효화 확정**(정본의 침묵은 완화 허가가 아니다). 완화하려면 07 §3-3에 세대 문언이 먼저 필요하다.
   - `STALLED_AUTOMATION_CONTENT_STATUSES`가 **빈 배열**이 되어 3앱의 "정지 상태" 경고가 자동으로 사라졌다(#29 ④).
   - ⚠️ **E2E 하네스 함정 2건 발견**: ① redis-memory-server가 구버전 GNU Make 환경에서 소스 빌드에 실패해
     **파이프라인 E2E가 조용히 skip**되고 있었다. ② **s3rver는 AWS SDK v3 스트림 업로드(aws-chunked)를 디코드하지
@@ -248,7 +249,9 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   독립 루브릭 평가 19라운드(11개 영역 전부 9.5/10+, [docs/plan/reviews/](docs/plan/reviews/))를 통과하고 **사용자 승인** 완료.
   다음 실행 = [docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md)의 **W0(기반)→W1(구독자 웹)→W2(기자·관제 웹)→W3(쉘·PWA)→W4(정리)**.
   네이티브 트랙은 승인 즉시 **동결**(버그픽스도 웹에서만). 착수 게이트: 05 §G 운전자금 확인 + 도메인·제온 노출 방식(사용자 결정).
-  테스트 실측 최신치(**2026-08-20**, auto_edit Phase 1 종료, `pnpm --filter <app> test` 재현): **api 923(+e2e 82) · control-center 308 · reporter 267 · subscriber 289 · media-worker 35** (ai-worker는 이번 회차 미실측 — 로컬에 pytest 미설치. 직전 기록 pytest 11) — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
+  테스트 실측 최신치(**api는 2026-08-23** 미성년자 게이트 슬라이스 종료 실측 / 나머지는 2026-08-20, `pnpm --filter <app> test` 재현): **api 942(+e2e 89)** · control-center 308 · reporter 267 · subscriber 289 · media-worker 35
+  ⚠️ **api 기록치 923은 이번에 실측하니 936이었다**(작업 전 기준선). 이번 슬라이스가 +6/+7 했다. 舊 923은 기록 시점 이후 누적 차이가 반영되지 않은 stale 값이며, 아래 원칙이 예고한 그대로다.
+  ⚠️ **shared dist가 stale이면 api 유닛이 5건 실패한다**(`isSafeLinkoutUrl is not a function`) — 코드 결함이 아니라 빌드 산출물 문제이므로 `pnpm --filter @gachinol/shared build`를 선행할 것. 기준선을 재기 전에 이걸 모르면 없는 회귀를 쫓게 된다. (ai-worker는 이번 회차 미실측 — 로컬에 pytest 미설치. 직전 기록 pytest 11) — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
   ⚠️ 이번 재실측에서 **subscriber 기록치가 stale이었음이 드러났다**(舊 109 → 실측 289). auto_edit 작업과 무관한 누적 차이이며, 규율이 예고한 그대로다 — 수치를 인용할 때는 반드시 그 자리에서 재실행할 것.
 - **✅ 영상 파이프라인 실증 완료 (2026-08-15)**: 실기 촬영본(iPhone 1080p HEVC 가로 63초·세로 `rotation=-90` 117초)으로
   **촬영본→업로드→트랜스코딩→AI분석→프리뷰→기자승인→(센터승인)→송출→시청** 한 바퀴를 제온 실배포에서 완주했다.
