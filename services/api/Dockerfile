@@ -22,6 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 # 1) 매니페스트만 먼저 복사 → frozen-lockfile 정합 + 설치 레이어 캐시
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY packages/shared/package.json packages/shared/
+# packages/config는 소스가 아니라 **매니페스트만** 필요하다 — api의 devDependency(공유 eslint 프리셋)라
+# 빌드에 쓰이지 않지만, `pnpm install`(--prod 아님)이 workspace: 링크를 해석하려면 그 패키지가
+# 워크스페이스에 실재해야 한다. 없으면 ERR_PNPM_WORKSPACE_PKG_NOT_FOUND로 install이 죽는다.
+COPY packages/config/package.json packages/config/
 COPY services/api/package.json services/api/
 COPY services/media-worker/package.json services/media-worker/
 COPY apps/reporter/package.json apps/reporter/
