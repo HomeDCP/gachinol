@@ -62,6 +62,22 @@ sudo systemctl daemon-reload && sudo mount -a
 mountpoint /mnt/gachinol-backup   # ← 여기서 확인되어야 다음으로 간다
 ```
 
+> ⚠️ **`x-systemd.automount`는 fstab에 쓰는 것만으로 켜지지 않는다**(2026-08-23 실측).
+> `daemon-reload`는 `mnt-gachinol\x2dbackup.automount` 유닛을 **생성만** 하고 `inactive (dead)`로 둔다.
+> 그 상태에서 마운트를 해제하면 **접근해도 다시 붙지 않는다** — 빈 디렉터리를 읽고 지나간다.
+> 최초 1회 명시적으로 시작해야 한다(재부팅 후에는 `WantedBy=remote-fs.target`이라 자동으로 뜬다):
+>
+> ```bash
+> sudo systemctl start 'mnt-gachinol\x2dbackup.automount'
+> systemctl is-active 'mnt-gachinol\x2dbackup.automount'   # → active
+> ```
+>
+> **검증**: 마운트를 해제한 뒤 백업을 돌려 automount가 붙이는지 본다.
+> 이것이 재부팅 후 시나리오의 정확한 재현이다.
+> ```bash
+> sudo umount /mnt/gachinol-backup && sudo systemctl start gachinol-backup
+> ```
+
 ### ③ 타이머 등록
 
 ```bash
