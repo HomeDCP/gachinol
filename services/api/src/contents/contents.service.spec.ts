@@ -422,10 +422,11 @@ describe('ContentsService', () => {
 
       const result = await service.confirmMinorConsent(centerOperatorUser(), 'c-1');
 
-      const data = prisma.content.update.mock.calls[0][0].data;
+      const data = prisma.content.updateMany.mock.calls[0][0].data;
       expect(data.minorConsentConfirmedByUserId).toBe('u-center');
       expect(data.minorConsentConfirmedAt).toBeInstanceOf(Date);
       expect(result.minorConsentConfirmedByUserId).toBe('u-center');
+      expect(result.minorConsentConfirmedAt).toBeTruthy();
     });
 
     it('hasMinorSubject=false → validation_failed 거부(선확인 후 플래그 우회 차단)', async () => {
@@ -435,7 +436,7 @@ describe('ContentsService', () => {
       await expect(
         service.confirmMinorConsent(centerOperatorUser(), 'c-1'),
       ).rejects.toMatchObject({ code: 'validation_failed' });
-      expect(prisma.content.update).not.toHaveBeenCalled();
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
     });
 
     it('이미 확인됨 → 멱등 200, 기존 확인자·시각을 유지하고 덮어쓰지 않는다', async () => {
@@ -454,7 +455,7 @@ describe('ContentsService', () => {
         'c-1',
       );
 
-      expect(prisma.content.update).not.toHaveBeenCalled();
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
       expect(result.minorConsentConfirmedByUserId).toBe('u-first-confirmer');
       expect(result.minorConsentConfirmedAt).toBe(confirmedAt.toISOString());
     });
@@ -465,6 +466,68 @@ describe('ContentsService', () => {
         code: 'forbidden',
       });
       expect(prisma.content.findUnique).not.toHaveBeenCalled();
+    });
+
+    /* ★ 대장 #116 ⓐ — 확인의 경합 안전성.
+     * 조기반환은 **읽은 시점**의 스냅샷 판정이라, 두 센터 운영자가 동시에 확인하면 둘 다 미확인을
+     * 보고 통과해 두 번째 쓰기가 최초 확인자를 덮어쓴다. 이건 데이터 파손이 아니라 **귀속 오류**이고,
+     * 법적 감사 기록에서 "누가 확인했나"가 흔들리면 안 되므로 일반 경합보다 무게가 있다.
+     * 방어의 실체는 `minorConsentConfirmedAt: null` CAS다(트랜잭션이 아니다 — 아래 주석 참조). */
+    it('#116 경합: 읽기 후 다른 확인자가 선점 → 최초 확인자를 덮어쓰지 않고 멱등 200', async () => {
+      const { prisma, service } = setup();
+      const firstAt = new Date('2026-08-01T00:00:00.000Z');
+      prisma.content.findUnique
+        // ① 최초 조회 — 아직 미확인으로 보인다(여기서 조기반환 판정이 통과한다)
+        .mockResolvedValueOnce(contentRow({ hasMinorSubject: true, minorConsentConfirmedAt: null }))
+        // ② CAS 실패 후 재조회 — 그 사이 다른 운영자가 확인을 마쳤다
+        .mockResolvedValueOnce(
+          contentRow({
+            hasMinorSubject: true,
+            minorConsentConfirmedByUserId: 'u-first-confirmer',
+            minorConsentConfirmedAt: firstAt,
+          }),
+        );
+      prisma.content.updateMany.mockResolvedValue({ count: 0 }); // 조건부 CAS 미적중 = 선점당함
+
+      const result = await service.confirmMinorConsent(
+        centerOperatorUser({ id: 'u-second-confirmer' } as never),
+        'c-1',
+      );
+
+      expect(result.minorConsentConfirmedByUserId).toBe('u-first-confirmer');
+      expect(result.minorConsentConfirmedAt).toBe(firstAt.toISOString());
+    });
+
+    it('#116 경합: 확인 쓰기는 미확인 조건 CAS로 나간다 (read-then-write 창 제거)', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({ hasMinorSubject: true, minorConsentConfirmedAt: null }),
+      );
+
+      await service.confirmMinorConsent(centerOperatorUser(), 'c-1');
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith({
+        where: { id: 'c-1', hasMinorSubject: true, minorConsentConfirmedAt: null },
+        data: {
+          minorConsentConfirmedByUserId: 'u-center',
+          minorConsentConfirmedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it('#116 경합: 읽기 후 플래그가 내려가면(D3) CAS가 막고 validation_failed', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique
+        .mockResolvedValueOnce(contentRow({ hasMinorSubject: true, minorConsentConfirmedAt: null }))
+        // 재조회 — 그 사이 기자가 플래그를 내렸다(확인 기록도 D3로 지워진 상태)
+        .mockResolvedValueOnce(
+          contentRow({ hasMinorSubject: false, minorConsentConfirmedAt: null }),
+        );
+      prisma.content.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.confirmMinorConsent(centerOperatorUser(), 'c-1'),
+      ).rejects.toMatchObject({ code: 'validation_failed' });
     });
   });
 
@@ -480,11 +543,13 @@ describe('ContentsService', () => {
       );
       prisma.statusTransitionLog.findFirst.mockResolvedValue(null);
 
-      await service.withdrawMinorConsent(centerOperatorUser(), 'c-1');
+      const result = await service.withdrawMinorConsent(centerOperatorUser(), 'c-1');
 
-      const data = prisma.content.update.mock.calls[0][0].data;
+      const data = prisma.content.updateMany.mock.calls[0][0].data;
       expect(data.minorConsentConfirmedByUserId).toBeNull();
       expect(data.minorConsentConfirmedAt).toBeNull();
+      expect(result.minorConsentConfirmedAt).toBeNull(); // 투영에도 반영된다(재조회 없이)
+      expect(result.minorConsentConfirmedByUserId).toBeNull();
     });
 
     it('미확인 상태 → conflict 거부(철회할 대상 없음, 로그 조회 자체를 생략)', async () => {
@@ -494,7 +559,7 @@ describe('ContentsService', () => {
       await expect(
         service.withdrawMinorConsent(centerOperatorUser(), 'c-1'),
       ).rejects.toMatchObject({ code: 'conflict' });
-      expect(prisma.content.update).not.toHaveBeenCalled();
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
       expect(prisma.statusTransitionLog.findFirst).not.toHaveBeenCalled();
     });
 
@@ -527,7 +592,7 @@ describe('ContentsService', () => {
             toStatus: 'center_approved',
           },
         });
-        const data = prisma.content.update.mock.calls[0][0].data;
+        const data = prisma.content.updateMany.mock.calls[0][0].data;
         expect(data.minorConsentConfirmedByUserId).toBeNull();
         expect(data.minorConsentConfirmedAt).toBeNull();
       },
@@ -555,7 +620,7 @@ describe('ContentsService', () => {
       await expect(
         service.withdrawMinorConsent(centerOperatorUser(), 'c-1'),
       ).rejects.toMatchObject({ code: 'conflict' });
-      expect(prisma.content.update).not.toHaveBeenCalled();
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
     });
 
     it('reporter_only + 기자 승인 완료(awaiting_reporter_review→reporter_approved 로그 있음) → conflict 거부', async () => {
@@ -588,7 +653,7 @@ describe('ContentsService', () => {
           toStatus: 'reporter_approved',
         },
       });
-      expect(prisma.content.update).not.toHaveBeenCalled();
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
     });
 
     it('reporter는 forbidden (센터 전용)', async () => {
@@ -597,6 +662,71 @@ describe('ContentsService', () => {
         code: 'forbidden',
       });
       expect(prisma.content.findUnique).not.toHaveBeenCalled();
+    });
+
+    /* ★ 대장 #116 ⓑ — 철회의 경합 안전성.
+     * 게이트 로그 조회와 쓰기 사이에 승인이 끼어들면 "승인됐는데 철회 성공"이 되어, D5가 막으려던
+     * 거짓 안심("철회했는데 왜 송출되지?")이 그 창에서 되살아난다.
+     * 방어는 **status CAS**다 — 승인은 반드시 status를 바꾸므로(awaiting_*→*_approved), 읽은 status가
+     * 그대로일 때만 쓰기가 적중한다. `applyHop`·`beginPublishing`과 동형이다. */
+    it('#116 경합: 로그 조회 후 승인이 끼어들면(status 변경) 철회가 409로 실패', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({
+          reviewPolicy: 'reporter_then_center',
+          status: 'awaiting_center_review',
+          hasMinorSubject: true,
+          minorConsentConfirmedByUserId: 'u-center',
+          minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
+        }),
+      );
+      prisma.statusTransitionLog.findFirst.mockResolvedValue(null); // 조회 시점엔 게이트 미통과
+      prisma.content.updateMany.mockResolvedValue({ count: 0 }); // 그 사이 승인 → status CAS 미적중
+
+      await expect(
+        service.withdrawMinorConsent(centerOperatorUser(), 'c-1'),
+      ).rejects.toMatchObject({ code: 'conflict' });
+    });
+
+    it('#116 경합: 철회 쓰기는 읽은 status + 확인됨 조건 CAS로 나간다', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({
+          reviewPolicy: 'reporter_then_center',
+          status: 'awaiting_center_review',
+          hasMinorSubject: true,
+          minorConsentConfirmedByUserId: 'u-center',
+          minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
+        }),
+      );
+      prisma.statusTransitionLog.findFirst.mockResolvedValue(null);
+
+      await service.withdrawMinorConsent(centerOperatorUser(), 'c-1');
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'c-1',
+          status: 'awaiting_center_review',
+          minorConsentConfirmedAt: { not: null },
+        },
+        data: { minorConsentConfirmedByUserId: null, minorConsentConfirmedAt: null },
+      });
+    });
+
+    it('#116: 게이트 로그 조회와 철회 쓰기가 한 트랜잭션 경계 안에서 일어난다', async () => {
+      const { prisma, service } = setup();
+      prisma.content.findUnique.mockResolvedValue(
+        contentRow({
+          hasMinorSubject: true,
+          minorConsentConfirmedByUserId: 'u-center',
+          minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
+        }),
+      );
+      prisma.statusTransitionLog.findFirst.mockResolvedValue(null);
+
+      await service.withdrawMinorConsent(centerOperatorUser(), 'c-1');
+
+      expect(prisma.$transaction).toHaveBeenCalled();
     });
   });
 

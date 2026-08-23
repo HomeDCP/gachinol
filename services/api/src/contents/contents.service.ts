@@ -344,6 +344,13 @@ export class ContentsService {
    * 게이트가 요구하는 사실을 기록하는 쓰기 경로다).
    * hasMinorSubject=false인 콘텐츠는 거부 — 미리 확인해 두고 나중에 플래그를 켜는 우회를 막는다.
    * 이미 확인된 콘텐츠는 멱등 200이며 기존 확인자·시각을 유지한다(최초 확인자가 감사 기록의 원천).
+   *
+   * ★ 대장 #116 ⓐ — 조기반환만으로는 그 "최초 확인자 보존"이 경합에서 깨진다. 위 두 판정은 **읽은
+   * 시점의 스냅샷**이라, 두 센터 운영자가 동시에 들어오면 둘 다 미확인을 보고 통과해 두 번째 쓰기가
+   * 최초 확인자를 덮어쓴다. 데이터 파손은 아니지만 **법적 감사 기록의 귀속 오류**라 일반 경합보다
+   * 무겁다. 그래서 쓰기를 `minorConsentConfirmedAt: null` 조건부 `updateMany`로 바꿔 판정과 쓰기를
+   * 한 원자 연산에 합친다(`applyHop`·`beginPublishing`과 동형 — 이 2메서드만 예외였다).
+   * 미적중(count=0)은 실패가 아니라 **경합했다는 사실**이므로, 재조회해서 그 결과로 판정한다.
    */
   async confirmMinorConsent(user: User, id: string): Promise<Content> {
     this.requireCenterActor(user);
@@ -357,11 +364,24 @@ export class ContentsService {
     if (row.minorConsentConfirmedAt) {
       return toContent(row); // 멱등 — 기존 확인자·시각을 덮어쓰지 않는다
     }
-    const updated = await this.prisma.content.update({
-      where: { id },
-      data: { minorConsentConfirmedByUserId: user.id, minorConsentConfirmedAt: new Date() },
+
+    const confirmedAt = new Date();
+    const res = await this.prisma.content.updateMany({
+      where: { id, hasMinorSubject: true, minorConsentConfirmedAt: null },
+      data: { minorConsentConfirmedByUserId: user.id, minorConsentConfirmedAt: confirmedAt },
     });
-    return toContent(updated);
+    if (res.count === 0) {
+      // 읽기 이후 상태가 움직였다 — 다른 확인자가 선점했거나(멱등 유지) 플래그가 내려갔다(D3).
+      const fresh = await this.loadOwned(user, id);
+      if (!fresh.hasMinorSubject) {
+        throw new DomainException(
+          'validation_failed',
+          'hasMinorSubject가 꺼져 있는 콘텐츠는 동의를 확인할 수 없습니다',
+        );
+      }
+      return toContent(fresh); // 최초 확인자·시각 그대로 — 우리 쓰기는 적용되지 않았다
+    }
+    return toContent({ ...row, minorConsentConfirmedByUserId: user.id, minorConsentConfirmedAt: confirmedAt });
   }
 
   /**
@@ -378,6 +398,13 @@ export class ContentsService {
    * 판정이 파생된다. 행이 있으면 게이트를 이미 통과했으므로 철회해도 송출을 막지 못해 409로 거부한다
    * ("철회했는데 왜 송출되지?"라는 거짓 안심을 만들지 않는다). 사유 바디는 받지 않는다
    * (저장할 컬럼이 없다 — T-W2-24 주민 검수 반려 API 선례).
+   *
+   * ★ 대장 #116 ⓑ — 그 판정과 쓰기 사이에 승인이 끼어들면 "승인됐는데 철회 성공"이 되어, D5가
+   * 막으려던 거짓 안심이 정확히 그 창에서 되살아난다. 방어의 실체는 **status CAS**다: 승인은 반드시
+   * status를 바꾸므로(awaiting_*→*_approved), 읽은 status가 그대로일 때만 쓰기가 적중한다.
+   * ⚠️ 트랜잭션은 이 경합을 **혼자서는 막지 못한다** — Read Committed에서 다른 트랜잭션이 그 사이
+   * 커밋한 로그 INSERT는 우리 SELECT에 안 보이기 때문이다. 여기서 `$transaction`은 조회와 쓰기의
+   * 원자 경계일 뿐이고, 경합을 실제로 잡는 것은 where 절의 status·확인여부 조건이다.
    */
   async withdrawMinorConsent(user: User, id: string): Promise<Content> {
     this.requireCenterActor(user);
@@ -392,25 +419,38 @@ export class ContentsService {
       row.reviewPolicy === 'reporter_only'
         ? { fromStatus: 'awaiting_reporter_review', toStatus: 'reporter_approved' }
         : { fromStatus: 'awaiting_center_review', toStatus: 'center_approved' };
-    const gatePassed = await this.prisma.statusTransitionLog.findFirst({
-      where: {
-        entityType: 'content',
-        entityId: id,
-        fromStatus: gateEdge.fromStatus,
-        toStatus: gateEdge.toStatus,
-      },
+
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      const gatePassed = await tx.statusTransitionLog.findFirst({
+        where: {
+          entityType: 'content',
+          entityId: id,
+          fromStatus: gateEdge.fromStatus,
+          toStatus: gateEdge.toStatus,
+        },
+      });
+      if (gatePassed) return 'gate_passed' as const;
+      const res = await tx.content.updateMany({
+        where: { id, status: row.status, minorConsentConfirmedAt: { not: null } },
+        data: { minorConsentConfirmedByUserId: null, minorConsentConfirmedAt: null },
+      });
+      return res.count === 1 ? ('withdrawn' as const) : ('raced' as const);
     });
-    if (gatePassed) {
+
+    if (outcome === 'gate_passed') {
       throw new DomainException(
         'conflict',
         '이미 승인된 콘텐츠는 동의 확인을 철회할 수 없습니다',
       );
     }
-    const updated = await this.prisma.content.update({
-      where: { id },
-      data: { minorConsentConfirmedByUserId: null, minorConsentConfirmedAt: null },
-    });
-    return toContent(updated);
+    if (outcome === 'raced') {
+      // status가 움직였다 = 조회 이후 승인·전이가 끼어들었다. 철회했다고 답하면 거짓 안심이 된다.
+      throw new DomainException(
+        'conflict',
+        '조회 이후 콘텐츠 상태가 바뀌었습니다 — 재조회 후 다시 시도하세요',
+      );
+    }
+    return toContent({ ...row, minorConsentConfirmedByUserId: null, minorConsentConfirmedAt: null });
   }
 
   async transitionLogs(
