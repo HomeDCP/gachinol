@@ -98,11 +98,20 @@ verify_latest() {
 
   if [[ -d "$MINIO_DATA_DIR" && -d "$NAS_MOUNT/minio" ]]; then
     local src dst
-    src="$(find "$MINIO_DATA_DIR" -type f 2>/dev/null | wc -l)"
-    dst="$(find "$NAS_MOUNT/minio" -type f 2>/dev/null | wc -l)"
-    log "미디어 파일 수: 원본 $src / 사본 $dst"
-    # 원본이 더 많으면 아직 안 돈 것(경고), 사본이 많으면 삭제분 보존(정상)
-    [[ "$dst" -ge "$src" ]] || log "⚠ 사본이 원본보다 적다 — 마지막 동기화 이후 추가분이 있다"
+    # ★ `.minio.sys`를 세지 않는다(2026-08-23 첫 운영에서 드러남).
+    #   MinIO 내부 메타·임시 항목은 수시로 생기고 사라지는데 `--delete`를 쓰지 않으므로 사본에만
+    #   누적된다 — 첫 실행 직후 실측이 원본 18 / 사본 42였다. 전체 파일 수로 대조하면 그 노이즈가
+    #   **실제 콘텐츠의 누락을 가려버린다**(같은 시점 콘텐츠 객체는 28/28로 정확히 일치했다).
+    #   검증 지표는 우리가 지키려는 것 — **버킷 안의 실제 객체** — 만 센다.
+    src="$(find "$MINIO_DATA_DIR" -type f -not -path '*/.minio.sys/*' 2>/dev/null | wc -l)"
+    dst="$(find "$NAS_MOUNT/minio" -type f -not -path '*/.minio.sys/*' 2>/dev/null | wc -l)"
+    log "미디어 객체 수(.minio.sys 제외): 원본 $src / 사본 $dst"
+    if [[ "$dst" -lt "$src" ]]; then
+      log "⚠ 사본이 원본보다 적다 — 이번 동기화가 일부 누락됐거나 직후에 새 객체가 생겼다"
+    elif [[ "$dst" -gt "$src" ]]; then
+      # 정상이다: 원본에서 지워진 객체를 사본은 보존한다(--delete 미사용의 의도된 결과)
+      log "  (사본이 $((dst - src))건 많다 — 원본에서 삭제된 객체를 보존 중)"
+    fi
   fi
 }
 
