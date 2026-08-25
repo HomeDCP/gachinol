@@ -38,6 +38,11 @@ export interface ClassifyFormValue {
   description: string;
   category?: ProgramCategory;
   cultureTopics: readonly CultureTopic[];
+  /**
+   * 피촬영자 만 14세 미만 여부 (T-W2-14 — 대장 #118 · 07 §3-3 · 02 §E-20).
+   * 기본 false = "아니오". 체크해도 저장은 막지 않는다(03 §C-2-1 — 게이트는 승인 단계).
+   */
+  hasMinorSubject: boolean;
 }
 
 export const emptyClassifyForm = (): ClassifyFormValue => ({
@@ -45,6 +50,7 @@ export const emptyClassifyForm = (): ClassifyFormValue => ({
   description: '',
   category: undefined,
   cultureTopics: [],
+  hasMinorSubject: false,
 });
 
 // 원천: services/api/src/auth/schemas/auth.schemas.ts — email ≤320 / password 1..200
@@ -162,6 +168,9 @@ export function validateClassify(
       ...(description ? { description } : {}),
       category: form.category,
       ...(form.cultureTopics.length > 0 ? { cultureTopics: form.cultureTopics } : {}),
+      // 값과 무관하게 항상 포함 — PATCH 재사용 경로(edit.tsx)에서 키 생략='변경 없음'이라
+      // 생략하면 true→false 해제(서버 fail-closed 무효화)가 전달되지 않는다 (T-W2-14)
+      hasMinorSubject: form.hasMinorSubject,
     },
   };
 }

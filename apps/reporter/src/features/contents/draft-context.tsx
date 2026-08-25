@@ -79,6 +79,7 @@ export function DraftProvider({ children }: PropsWithChildren): React.JSX.Elemen
       classify.title.trim().length > 0 ||
       classify.description.trim().length > 0 ||
       classify.category !== undefined ||
+      classify.hasMinorSubject ||
       scenes.some((s) => s.caption.trim() || s.description.trim() || s.startSec || s.endSec)
     );
   }, [media, scenes, classify, savedContentId]);

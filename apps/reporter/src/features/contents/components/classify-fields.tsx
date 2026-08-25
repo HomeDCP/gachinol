@@ -95,6 +95,25 @@ export function ClassifyFields({
           </View>
         </FormField>
       ) : null}
+      <FormField label="피촬영자 만 14세 미만 여부">
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: value.hasMinorSubject }}
+          style={styles.minorRow}
+          onPress={() => onChange({ hasMinorSubject: !value.hasMinorSubject })}
+        >
+          <View style={[styles.minorBox, value.hasMinorSubject && styles.minorBoxChecked]}>
+            {value.hasMinorSubject ? <Text style={styles.minorCheck}>✓</Text> : null}
+          </View>
+          <Text style={styles.minorLabel}>촬영본에 만 14세 미만 아동이 나옵니다</Text>
+        </Pressable>
+        {value.hasMinorSubject ? (
+          <Text style={styles.minorGuide}>
+            법정대리인 동의서를 준비해 주세요. 지금 업로드는 그대로 진행되지만, 센터가 동의서를
+            확인하기 전에는 승인·송출되지 않습니다.
+          </Text>
+        ) : null}
+      </FormField>
     </View>
   );
 }
@@ -124,4 +143,24 @@ const styles = StyleSheet.create({
   chipLabel: { fontSize: typo.caption, color: colors.text },
   chipLabelSelected: { color: '#FFFFFF', fontWeight: '600' },
   help: { fontSize: typo.caption, color: colors.textMuted, marginTop: spacing.xs },
+  minorRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  minorBox: {
+    width: 22,
+    height: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  minorBoxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
+  minorCheck: { color: '#FFFFFF', fontSize: typo.caption, fontWeight: '700' },
+  minorLabel: { fontSize: typo.body, color: colors.text, flexShrink: 1 },
+  minorGuide: {
+    fontSize: typo.caption,
+    color: colors.warning,
+    lineHeight: 18,
+    marginTop: spacing.xs,
+  },
 });
