@@ -121,6 +121,7 @@ describe('validateCreateDraft — 정상 입력 → CreateContentDraftRequest �
         description: '수확 현장',
         category: ProgramCategory.Culture,
         cultureTopics: [CultureTopic.Farmer, CultureTopic.Producer],
+        hasMinorSubject: false,
       },
       [scene({ caption: '인트로', startSec: '0', endSec: '12' }), scene({ caption: '인터뷰' })],
       UploadMode.Precise,
@@ -132,11 +133,31 @@ describe('validateCreateDraft — 정상 입력 → CreateContentDraftRequest �
         description: '수확 현장',
         category: 'culture',
         cultureTopics: ['farmer', 'producer'],
+        hasMinorSubject: false,
         scenes: [
           { order: 0, caption: '인트로', startSec: 0, endSec: 12 },
           { order: 1, caption: '인터뷰', startSec: null, endSec: null },
         ],
       });
+    }
+  });
+  test('★ hasMinorSubject는 값과 무관하게 항상 명시적으로 실린다 (T-W2-14 — 대장 #118)', () => {
+    // PATCH 재사용 경로(edit.tsx)에서 키 생략='변경 없음'이므로, 폼 값이 false여도 생략하면
+    // true→false 해제가 서버에 전달되지 않는다 — 항상 포함이 계약이다.
+    expect(emptyClassifyForm().hasMinorSubject).toBe(false);
+    for (const flag of [true, false]) {
+      const r = validateCreateDraft(
+        {
+          ...emptyClassifyForm(),
+          title: '애월 포구 아침',
+          category: ProgramCategory.News,
+          hasMinorSubject: flag,
+        },
+        [],
+        UploadMode.Simple,
+      );
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.value.hasMinorSubject).toBe(flag);
     }
   });
   test('분류·장면 에러 병합', () => {
@@ -163,6 +184,7 @@ describe('validateCreateDraft — 모드 분기', () => {
     description: '',
     category: ProgramCategory.News,
     cultureTopics: [],
+    hasMinorSubject: false,
   };
 
   test('간단 모드는 자막 없이도 통과하고 scenes를 빈 배열로 저장한다', () => {

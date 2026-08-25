@@ -22,5 +22,6 @@ export function toClassifyFormValue(content: Content): ClassifyFormValue {
     description: content.description ?? '',
     category: content.category,
     cultureTopics: content.cultureTopics ?? [],
+    hasMinorSubject: content.hasMinorSubject,
   };
 }
