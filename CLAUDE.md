@@ -249,7 +249,7 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   독립 루브릭 평가 19라운드(11개 영역 전부 9.5/10+, [docs/plan/reviews/](docs/plan/reviews/))를 통과하고 **사용자 승인** 완료.
   다음 실행 = [docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md)의 **W0(기반)→W1(구독자 웹)→W2(기자·관제 웹)→W3(쉘·PWA)→W4(정리)**.
   네이티브 트랙은 승인 즉시 **동결**(버그픽스도 웹에서만). 착수 게이트: 05 §G 운전자금 확인 + 도메인·제온 노출 방식(사용자 결정).
-  테스트 실측 최신치(**api는 2026-08-23** 미성년자 게이트 슬라이스 종료 실측 / 나머지는 2026-08-20, `pnpm --filter <app> test` 재현): **api 942(+e2e 89)** · control-center 308 · reporter 267 · subscriber 289 · media-worker 35
+  테스트 실측 최신치(**api는 2026-08-23** 미성년자 게이트 슬라이스 종료 실측 / **reporter는 2026-08-26** T-W2-14 종료 실측 / 나머지는 2026-08-20, `pnpm --filter <app> test` 재현): **api 942(+e2e 89)** · control-center 308 · **reporter 281**(T-W2-14 +14) · subscriber 289 · media-worker 35
   ⚠️ **api 기록치 923은 이번에 실측하니 936이었다**(작업 전 기준선). 이번 슬라이스가 +6/+7 했다. 舊 923은 기록 시점 이후 누적 차이가 반영되지 않은 stale 값이며, 아래 원칙이 예고한 그대로다.
   ⚠️ **shared dist가 stale이면 api 유닛이 5건 실패한다**(`isSafeLinkoutUrl is not a function`) — 코드 결함이 아니라 빌드 산출물 문제이므로 `pnpm --filter @gachinol/shared build`를 선행할 것. 기준선을 재기 전에 이걸 모르면 없는 회귀를 쫓게 된다. (ai-worker는 이번 회차 미실측 — 로컬에 pytest 미설치. 직전 기록 pytest 11) — 아래 이력 단락의 舊 계수(74·13 등)는 기록 당시 값이며, **문서의 기록치는 출처가 아니라 검증 대상이다**(위임에 수치를 적을 때는 그 자리에서 재실행할 것 — EXEC-DECISIONS #22 ⑥).
   ⚠️ 이번 재실측에서 **subscriber 기록치가 stale이었음이 드러났다**(舊 109 → 실측 289). auto_edit 작업과 무관한 누적 차이이며, 규율이 예고한 그대로다 — 수치를 인용할 때는 반드시 그 자리에서 재실행할 것.
