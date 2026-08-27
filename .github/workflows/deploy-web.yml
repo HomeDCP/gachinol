@@ -314,11 +314,11 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-          # ⚠️ 선행 조건(범위 밖, 보고 대상): 현재 `infra/docker/docker-compose.xeon.yml`의 `web` 서비스는
-          #    `build:`만 있고 `image:` 키가 없다 — 그 상태에서는 `compose pull web`이 "빌드 대상"이라며
-          #    건너뛰고 `up`이 제온에서 재빌드를 시도한다(DCP와 CPU를 공유하는 호스트에서 금지 사항).
-          #    그 파일에 `image: ${WEB_IMAGE:-gachinol-web:local}` 1줄이 추가돼야 아래가 의도대로 동작한다.
-          #    이 태스크는 infra/docker/** 를 소유하지 않으므로 고치지 않고 여기에 기록만 남긴다.
+          # 선행 조건 충족됨(대장 #143, 2026-08-16 해소): `docker-compose.xeon.yml`의 `web` 서비스에
+          #    `image: ${WEB_IMAGE:-gachinol-prod-web}` 키가 있어 아래 `pull && up --no-build`가 의도대로
+          #    동작한다(없으면 pull이 건너뛰어지고 up이 제온에서 재빌드 — 금지 사항). 舊 주석은 #143
+          #    해소 전 문언이 stale로 남은 것이었다(2026-08-26 정정 — 사용자가 이 주석을 근거로
+          #    "compose 1줄 수정"을 지시했으나 실측 결과 이미 완료돼 있었다).
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
             "set -euo pipefail; cd '$COMPOSE_DIR'; \
              export WEB_IMAGE='$WEB_IMAGE'; \
