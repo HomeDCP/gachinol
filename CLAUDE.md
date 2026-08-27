@@ -439,5 +439,9 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
   - ⚠️ **정답 전사(ground truth) 미확보** — 지금까지의 비교는 전부 대리 지표(글자수·키워드)다. 작업지를
     사용자에게 전달했으며, 확보 전에는 설정 튜닝이 감에 의존한다.
   - **입력 품질이 알고리즘보다 효과적일 수 있다** — 무선 핀마이크 도입 검토(사용자 결정). 실측 음량 -19.8·-26.2dB.
-- 도메인·제온 외부 노출 방식(Cloudflare Tunnel 권장/포트 개방) — **W0 착수 전 사용자 결정 필요**([docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md) §E 1번)
-- 도메인·제온 외부 노출 방식(Cloudflare Tunnel 권장/포트 개방) — **W0 착수 전 사용자 결정 필요**([docs/plan/08-rollout-transition.md](docs/plan/08-rollout-transition.md) §E 1번)
+- ~~제온 외부 노출 방식(Cloudflare Tunnel/포트 개방)~~ → **확정(2026-08-27 사용자 결정)**: 사용자 트래픽 =
+  **Cloudflare Tunnel**(도메인 확정 후 배선), 배포 제어(러너→제온 SSH) = **Tailscale**(도메인과 무관하게
+  지금 배선, 도메인 후에도 유지 — 두 경로는 독립). 켜는 절차·시크릿 목록은 `.github/workflows/deploy-web.yml`
+  preflight 잡 주석이 단일 원천.
+- **실 도메인 — 미정(보류)**: 당장은 Tailscale로 배포·테스트하고, 추후 구매 시 vars 재정의(공개 URL 번들
+  재빌드)+Tunnel 배선+퍼지 시크릿만 추가하면 되도록 설계됨(워크플로 무변경). 구매는 지출이라 사용자 실행.

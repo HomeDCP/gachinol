@@ -210,15 +210,23 @@ jobs:
   # 잡 수준 `if:`에서는 `secrets` 컨텍스트를 읽을 수 없다(GitHub 제약) — 그래서 시크릿 존재 여부를
   # 이 잡의 스텝에서 읽어 출력으로 내보내고, 아래 두 잡이 그 출력에 건다.
   #
-  # ▶ 실배포를 켜는 절차("설정하면 켜진다"):
+  # ▶ 실배포를 켜는 절차("설정하면 켜진다") — 2026-08-27 사용자 결정 반영:
+  #    **배포 제어 경로(러너→제온 SSH)는 Tailscale, 사용자 트래픽 경로는 추후 Cloudflare Tunnel.**
+  #    둘은 독립이라 도메인이 미정이어도 배포는 켤 수 있고, 도메인·터널이 생겨도 이 SSH 경로는
+  #    그대로 유지한다. WEB_DOMAIN은 ④(퍼지)와 공개 URL에만 필요한 값으로 강등됐다.
   #    1) gh variable set WEB_DEPLOY_ENABLED --body true          # 명시 스위치(이게 없으면 무조건 꺼짐)
-  #    2) gh variable set WEB_DOMAIN --body <확정 도메인>          # G9 ① 확정 후
-  #    3) gh variable set WEB_DEPLOY_COMPOSE_DIR --body <제온의 compose 디렉터리 절대경로>
-  #    4) gh secret set WEB_DEPLOY_SSH_HOST / WEB_DEPLOY_SSH_USER / WEB_DEPLOY_SSH_KEY
-  #       / WEB_DEPLOY_SSH_KNOWN_HOSTS                            # T-NC-02 ② 확정 후
-  #    5) (④만 추가로) gh secret set CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID
+  #    2) gh variable set WEB_DEPLOY_COMPOSE_DIR --body <제온의 리포 체크아웃>/infra/docker
+  #    3) gh secret set TS_OAUTH_CLIENT_ID / TS_OAUTH_SECRET      # Tailscale OAuth 클라이언트
+  #       (admin console → OAuth Clients, scope: auth_keys · tag:ci. ACL에 tag:ci → 제온:22 허용 필요)
+  #    4) gh secret set WEB_DEPLOY_SSH_HOST                       # 제온 테일넷 IP(100.92.205.127) 또는 MagicDNS
+  #       / WEB_DEPLOY_SSH_USER / WEB_DEPLOY_SSH_KEY              # 배포 전용 키(제온 authorized_keys 등록)
+  #       / WEB_DEPLOY_SSH_KNOWN_HOSTS                            # ssh-keyscan <호스트> 출력
+  #    5) (④ 퍼지만 추가로) gh variable set WEB_DOMAIN --body <확정 도메인>   # 도메인 구매 후
+  #       + gh secret set CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID
   #    6) main 푸시 또는 `gh workflow run deploy-web.yml -f deploy=true`
   #    → 1~4 중 하나라도 비면 ③이 스킵되고, 5가 비면 ④만 따로 스킵된다(사유가 잡 요약에 찍힌다).
+  #    ▶ 도메인 확정 시 추가 작업(설계 메모): vars.WEB_EXPO_PUBLIC_API_URL 등 공개 URL 재정의(번들
+  #      재빌드로 반영) + Cloudflare Tunnel을 제온에 배선(web·api 호스트네임) + 5) 설정 — 이 파일은 무변경.
   preflight:
     name: preflight (실배포 게이트 판정)
     runs-on: ubuntu-latest
@@ -234,6 +242,8 @@ jobs:
           ENABLED: ${{ vars.WEB_DEPLOY_ENABLED }}
           DOMAIN: ${{ vars.WEB_DOMAIN }}
           COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          TS_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
           SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
           SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
           SSH_KEY: ${{ secrets.WEB_DEPLOY_SSH_KEY }}
@@ -245,9 +255,12 @@ jobs:
           set -euo pipefail
           missing=""
           # 시크릿 "값"은 절대 출력하지 않는다 — 비어 있는지만 본다.
+          # WEB_DOMAIN은 ③(배포) 요건이 아니다(2026-08-27 — 배포 SSH는 Tailscale이라 도메인 불요.
+          # 도메인은 ④ 퍼지와 공개 URL 재정의에만 쓰인다) — 아래 cf_missing에서 본다.
           [ "$ENABLED" = "true" ]     || missing="$missing vars.WEB_DEPLOY_ENABLED(!=true)"
-          [ -n "$DOMAIN" ]            || missing="$missing vars.WEB_DOMAIN"
           [ -n "$COMPOSE_DIR" ]       || missing="$missing vars.WEB_DEPLOY_COMPOSE_DIR"
+          [ -n "$TS_ID" ]             || missing="$missing secrets.TS_OAUTH_CLIENT_ID"
+          [ -n "$TS_SECRET" ]         || missing="$missing secrets.TS_OAUTH_SECRET"
           [ -n "$SSH_HOST" ]          || missing="$missing secrets.WEB_DEPLOY_SSH_HOST"
           [ -n "$SSH_USER" ]          || missing="$missing secrets.WEB_DEPLOY_SSH_USER"
           [ -n "$SSH_KEY" ]           || missing="$missing secrets.WEB_DEPLOY_SSH_KEY"
@@ -256,6 +269,7 @@ jobs:
           cf_missing=""
           [ -n "$CF_TOKEN" ]          || cf_missing="$cf_missing secrets.CLOUDFLARE_API_TOKEN"
           [ -n "$CF_ZONE" ]           || cf_missing="$cf_missing secrets.CLOUDFLARE_ZONE_ID"
+          [ -n "$DOMAIN" ]            || cf_missing="$cf_missing vars.WEB_DOMAIN"
 
           deploy=false
           if [ "$REQUESTED" != "true" ]; then
@@ -296,6 +310,16 @@ jobs:
     needs: [build, preflight]
     if: needs.preflight.outputs.deploy == 'true'
     steps:
+      # 제온은 가정망이라 공인 SSH 포트가 없다 — 러너를 테일넷에 임시(ephemeral) 노드로 합류시켜
+      # 테일넷 IP로 SSH한다(2026-08-27 사용자 결정). 이 경로는 배포 제어 전용이며, 추후 도메인·
+      # Cloudflare Tunnel(사용자 트래픽)이 생겨도 그대로 유지한다 — 두 경로는 독립이다.
+      - name: Tailscale 합류 (러너 → 테일넷)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
       - name: Deploy over SSH (docker compose pull + up)
         env:
           SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
