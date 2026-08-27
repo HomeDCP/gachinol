@@ -29,7 +29,11 @@
   deploy-web.yml 2) · 대장 무결성(daejang-recheck 어긋남 0·행수 167·대기 42 불변) ·
   #147 신규 재현 명령 실측 2(≥1). 테스트 하니스 함정: 이 리포 @testing-library/react-native에선
   `render()`가 **await 대상**이다(안 기다리면 쿼리 없는 Promise — detail-screen.test.tsx가 선례).
-- **상태**: 구현 완료 — qa-verifier 검증 대기 (브랜치 `feat/t-w2-35-resident-link-issue-ui`, AC 5개)
+- **상태**: **완료** — qa-verifier **AC 5/5 PASS**(독립 재실행: 3스위트 11테스트 전건·전체 291/291
+  무회귀·typecheck 클린·하드코딩 리터럴 0건·3점 배선 1·2·2 정확·변경 범위 준수. 참고 관찰:
+  로컬 `main` ref stale로 `git diff main...HEAD`가 머지된 T-W2-36 파일을 섞어 보임 — 오검출,
+  실 diff는 `29985e2...HEAD`로 재야 한다). PR 준비 완료 — **머지=제온 자동 배포**이므로 머지는
+  사용자 실행(HANDOFF §7-1 관례)
 
 ## 2026-08-28 — T-W2-36 동의서 판단 게이트 해체 (촬영자 책임 모델 전환)
 
