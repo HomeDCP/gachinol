@@ -452,6 +452,8 @@ pnpm --filter @gachinol/api test:e2e -- media-pipeline
 - ~~제온 외부 노출 방식(Cloudflare Tunnel/포트 개방)~~ → **확정(2026-08-27 사용자 결정)**: 사용자 트래픽 =
   **Cloudflare Tunnel**(도메인 확정 후 배선), 배포 제어(러너→제온 SSH) = **Tailscale**(도메인과 무관하게
   지금 배선, 도메인 후에도 유지 — 두 경로는 독립). 켜는 절차·시크릿 목록은 `.github/workflows/deploy-web.yml`
-  preflight 잡 주석이 단일 원천.
+  preflight 잡 주석이 단일 원천. **⭐ 실가동 확인(2026-08-28)**: 사용자가 시크릿 입력·검증 완료 →
+  PR #71 머지분 main 런에서 **deploy 잡 실제 success**(제온 web 컨테이너 자동 갱신). 이제 **main 머지 =
+  웹 자동 배포**다. purge만 도메인 확정 시까지 skip.
 - **실 도메인 — 미정(보류)**: 당장은 Tailscale로 배포·테스트하고, 추후 구매 시 vars 재정의(공개 URL 번들
   재빌드)+Tunnel 배선+퍼지 시크릿만 추가하면 되도록 설계됨(워크플로 무변경). 구매는 지출이라 사용자 실행.
