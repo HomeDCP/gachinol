@@ -3,7 +3,6 @@ import type {
   ContentStatus,
   LiveSessionId,
   LiveSessionStatus,
-  MinorConsentFilter,
   ProgramCategory,
   RecommendationStatus,
   StationId,
@@ -19,12 +18,10 @@ export interface BoardFilter {
   status?: ContentStatus;
   category?: ProgramCategory;
   stationId?: StationId;
-  /** 미성년자 동의 게이트 — status와 직교한다 (T-W2-27, 대장 #118) */
-  minorConsent?: MinorConsentFilter;
 }
 
 /**
- * undefined 제거 + 고정 순서(status→category→stationId→minorConsent) 정규화 — 같은 필터는 항상
+ * undefined 제거 + 고정 순서(status→category→stationId) 정규화 — 같은 필터는 항상
  * 같은 키. 새 조회 파라미터를 여기에 빠뜨리면 **서로 다른 조회가 같은 캐시를 공유해** 엉뚱한 목록이
  * 보인다(키는 조회 파라미터 전수를 담아야 한다).
  */
@@ -33,7 +30,6 @@ function normalizeFilter(filter: BoardFilter): Record<string, string> {
   if (filter.status !== undefined) normalized.status = filter.status;
   if (filter.category !== undefined) normalized.category = filter.category;
   if (filter.stationId !== undefined) normalized.stationId = filter.stationId;
-  if (filter.minorConsent !== undefined) normalized.minorConsent = filter.minorConsent;
   return normalized;
 }
 

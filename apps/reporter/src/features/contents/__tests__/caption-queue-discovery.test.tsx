@@ -53,7 +53,6 @@ const summary = (id: string): ContentSummary =>
     reporterName: '동료 기자',
     durationSec: null,
     hasMinorSubject: false,
-    minorConsentConfirmedAt: null,
     createdAt: '2026-08-16T00:00:00.000Z',
     publishedAt: null,
   }) as ContentSummary;

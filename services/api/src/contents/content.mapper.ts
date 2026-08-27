@@ -70,12 +70,6 @@ export const toContent = (row: ContentRow): Content => {
     approvedByUserId: row.approvedByUserId ? toId<UserId>(row.approvedByUserId) : null,
     approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
     hasMinorSubject: row.hasMinorSubject,
-    minorConsentConfirmedByUserId: row.minorConsentConfirmedByUserId
-      ? toId<UserId>(row.minorConsentConfirmedByUserId)
-      : null,
-    minorConsentConfirmedAt: row.minorConsentConfirmedAt
-      ? row.minorConsentConfirmedAt.toISOString()
-      : null,
     publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -93,11 +87,8 @@ export const toContentSummary = (row: ContentRowWithNames): ContentSummary => ({
   reporterId: row.reporterId ? toId<UserId>(row.reporterId) : null,
   reporterName: row.reporter?.name ?? null,
   durationSec: row.durationSec,
-  // 미성년자 동의 게이트 (T-W2-27, 대장 #118) — 확인자 id는 상세에만, 목록은 "확인됐는가"만.
+  // 미성년 등장 표시 — 가시성 전용 메타데이터 (T-W2-36)
   hasMinorSubject: row.hasMinorSubject,
-  minorConsentConfirmedAt: row.minorConsentConfirmedAt
-    ? row.minorConsentConfirmedAt.toISOString()
-    : null,
   createdAt: row.createdAt.toISOString(),
   publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
 });

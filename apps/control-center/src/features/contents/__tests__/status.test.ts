@@ -1,7 +1,6 @@
 import {
   AUTO_PROGRESS_CONTENT_STATUSES,
   ContentStatus,
-  isMinorConsentPending,
   isStalledAutomationContentStatus,
   ProgramCategory,
   SYSTEM_DRIVEN_CONTENT_STATUSES,
@@ -10,9 +9,7 @@ import { CATEGORY_LABEL } from '../labels';
 import {
   AUTO_PROGRESS_STATUSES,
   STATUS_DESCRIPTION_CENTER,
-  TERMINAL_STATUSES,
   isAutoProgressStatus,
-  minorConsentBadge,
   needsCenterAttention,
   statusBadge,
 } from '../status';
@@ -140,94 +137,15 @@ describe('AUTO_PROGRESS_STATUSES — 레지스트리 파생 (대장 #98 보강 �
   });
 });
 
-/**
- * 미성년자 동의 게이트 배지 (T-W2-27, 대장 #118).
- * 이 축이 없으면 `reviewPolicy='reporter_only'` 콘텐츠는 `awaiting_reporter_review`("기자 확인
- * 대기" = 센터는 대기)로만 보여서, 승인이 차단돼 있다는 사실이 화면 어디에도 나타나지 않는다.
- */
-describe('minorConsentBadge — 상태와 직교한 게이트 축', () => {
-  const item = (
-    over: Partial<{
-      status: ContentStatus;
-      hasMinorSubject: boolean;
-      minorConsentConfirmedAt: string | null;
-    }> = {},
-  ) => ({
-    status: 'awaiting_reporter_review' as ContentStatus,
-    hasMinorSubject: false,
-    minorConsentConfirmedAt: null as string | null,
-    ...over,
+// (이력) 舊 minorConsentBadge·게이트 축 스위트는 T-W2-36으로 제거 — 판단 축 소멸.
+// 정보 배지(minorSubjectBadge)는 consent-judgment-removal.test.ts가 고정한다.
+describe('needsCenterAttention — 상태 축만 남았다 (T-W2-36)', () => {
+  test('센터 검토 대기는 조치 필요 (기존 동작 무회귀)', () => {
+    expect(needsCenterAttention({ status: 'awaiting_center_review' })).toBe(true);
   });
 
-  test('플래그가 꺼져 있으면 배지 없음 (대다수 콘텐츠는 이 축과 무관)', () => {
-    expect(minorConsentBadge(item())).toBeUndefined();
-  });
-
-  test('플래그 ON + 미확인 → "동의 확인 대기" · 조치 필요', () => {
-    const badge = minorConsentBadge(item({ hasMinorSubject: true }));
-    expect(badge?.label).toBe('동의 확인 대기');
-    expect(badge?.needsCenterAction).toBe(true);
-  });
-
-  test('플래그 ON + 확인 완료 → 조치 필요 아님', () => {
-    const badge = minorConsentBadge(
-      item({ hasMinorSubject: true, minorConsentConfirmedAt: '2026-08-10T00:00:00.000Z' }),
-    );
-    expect(badge?.label).toBe('동의 확인 완료');
-    expect(badge?.needsCenterAction).toBeUndefined();
-  });
-
-  test('판정은 shared isMinorConsentPending과 동치 — 사본 조건 금지', () => {
-    for (const hasMinorSubject of [true, false]) {
-      for (const at of [null, '2026-08-10T00:00:00.000Z']) {
-        const target = item({ hasMinorSubject, minorConsentConfirmedAt: at });
-        // 종결이 아닌 status에서는 두 판정이 정확히 일치해야 한다
-        expect(minorConsentBadge(target)?.needsCenterAction === true).toBe(
-          isMinorConsentPending(target),
-        );
-      }
-    }
-  });
-
-  test.each(TERMINAL_STATUSES)(
-    '%s(종결)는 사실 배지는 남기되 조치 필요로 올리지 않는다 (대기열 오염 방지)',
-    (status) => {
-      const badge = minorConsentBadge(item({ status, hasMinorSubject: true }));
-      expect(badge).toBeDefined();
-      expect(badge?.needsCenterAction).toBeUndefined();
-    },
-  );
-});
-
-describe('needsCenterAttention — 상태 축 ∪ 동의 게이트 축', () => {
-  const base = { hasMinorSubject: false, minorConsentConfirmedAt: null };
-
-  test('센터 검토 대기는 게이트와 무관하게 조치 필요 (기존 동작 무회귀)', () => {
-    expect(needsCenterAttention({ ...base, status: 'awaiting_center_review' })).toBe(true);
-  });
-
-  test('기자 확인 대기는 원래 조치 필요가 아니다', () => {
-    expect(needsCenterAttention({ ...base, status: 'awaiting_reporter_review' })).toBe(false);
-  });
-
-  test('★ 기자 확인 대기 + 동의 미확인 → 조치 필요 (reporter_only 교착의 유일한 신호)', () => {
-    expect(
-      needsCenterAttention({
-        status: 'awaiting_reporter_review',
-        hasMinorSubject: true,
-        minorConsentConfirmedAt: null,
-      }),
-    ).toBe(true);
-  });
-
-  test('동의 확인이 끝나면 다시 조치 필요가 아니다', () => {
-    expect(
-      needsCenterAttention({
-        status: 'awaiting_reporter_review',
-        hasMinorSubject: true,
-        minorConsentConfirmedAt: '2026-08-10T00:00:00.000Z',
-      }),
-    ).toBe(false);
+  test('기자 확인 대기는 조치 필요가 아니다 — 미성년 플래그와 무관 (판단 소멸)', () => {
+    expect(needsCenterAttention({ status: 'awaiting_reporter_review' })).toBe(false);
   });
 });
 

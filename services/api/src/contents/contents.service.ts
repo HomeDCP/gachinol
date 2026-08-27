@@ -13,7 +13,6 @@ import type {
 import {
   CAPTION_EDITABLE_CONTENT_STATUSES,
   CaptionFilter,
-  MinorConsentFilter,
   isCaptionEditableStatus,
   isReporterUser,
   requiresCultureTopic,
@@ -142,16 +141,11 @@ export class ContentsService {
   /**
    * 목록 — reporter는 자기 지사 강제.
    *
-   * `minorConsent` 필터(T-W2-27, 대장 #118): 미성년자 게이트가 막고 있는 콘텐츠를 센터가 **발견**하는
-   * 경로. status 필터로 대체할 수 없다 — `reviewPolicy='reporter_only'`(교양·날씨)는 센터 검토를 아예
-   * 거치지 않아 차단된 콘텐츠가 `awaiting_reporter_review`에 멈추고, 그 외 정책은
-   * `awaiting_center_review`에 멈춘다(content-workflow.service.ts policyGuard ④). 두 값 모두
-   * `hasMinorSubject=true`를 전제로 하며, 판정의 원천은 `minorConsentConfirmedAt`(=shared
-   * `isMinorConsentPending`이 보는 컬럼) 하나다 — `approvedAt`은 기자 승인 hop에서도 채워져 게이트
-   * 통과의 프록시가 아니다.
+   * (이력) 舊 `minorConsent` 필터(T-W2-27)는 T-W2-36으로 제거 — 동의 확인 대기열 개념 자체가
+   * 사라졌다(앱은 동의서 수취를 판단하지 않는다, 07 §3-3 개정).
    *
    * `captions` 필터(T-W2-34, 대장 #123): 간단 모드(03 §C-4)·주민 제보로 **자막 없이** 들어온
-   * 콘텐츠를 지사 담당자가 발견하는 경로. `minorConsent`와 달리 순수 사실 필터가 아니라
+   * 콘텐츠를 지사 담당자가 발견하는 경로. 순수 사실 필터가 아니라
    * "지금 채울 수 있는가"까지 포함한다 — 근거는 shared `CaptionFilter` 주석.
    */
   async list(user: User, query: ContentListQueryDto): Promise<Paginated<ContentSummary>> {
@@ -161,13 +155,6 @@ export class ContentsService {
       ...(stationId ? { stationId } : {}),
       ...(query.status ? { status: query.status } : {}),
       ...(query.category ? { category: query.category } : {}),
-      ...(query.minorConsent
-        ? {
-            hasMinorSubject: true,
-            minorConsentConfirmedAt:
-              query.minorConsent === MinorConsentFilter.Pending ? null : { not: null },
-          }
-        : {}),
       // 자막 대기열 (T-W2-34, 대장 #123) — "자막 0건 ∧ 지금 채울 수 있는 상태".
       // 상태 조건은 shared 파생 집합을 그대로 쓴다(쓰기 게이트 updateCaptions와 같은 원천 —
       // 어긋나면 "자막 필요"로 떠 있는 항목이 편집에서 409로 거부되는 교착이 된다).
@@ -260,8 +247,6 @@ export class ContentsService {
       throw new DomainException('validation_failed', 'culture 외 분류는 cultureTopics 금지');
     }
 
-    // Unchecked 사용 이유: minorConsentConfirmedByUserId가 관계(minorConsentConfirmedBy)로 매핑돼
-    // 체크형 ContentUpdateInput에는 스칼라로 없다 — D3 fail-closed 지움에 스칼라 null 대입이 필요하다.
     const data: Prisma.ContentUncheckedUpdateInput = {
       ...(dto.title !== undefined ? { title: dto.title } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
@@ -275,12 +260,6 @@ export class ContentsService {
     };
     if (dto.scenes !== undefined) {
       data.scenes = this.mergeScenes(row, dto.scenes) as unknown as Prisma.InputJsonValue;
-    }
-    // D3 fail-closed 불변식 (T-W2-23): true→false로 내리면 확인 기록도 같은 update에서 함께 지운다 —
-    // 켬→센터 확인→끔→다시 켬으로 동의 게이트를 우회하는 경로를 막는다.
-    if (dto.hasMinorSubject === false && row.hasMinorSubject) {
-      data.minorConsentConfirmedByUserId = null;
-      data.minorConsentConfirmedAt = null;
     }
 
     const updated = await this.prisma.content.update({ where: { id }, data });
@@ -337,121 +316,8 @@ export class ContentsService {
     return toContent(updated);
   }
 
-  /**
-   * 미성년자 동의 확인 — 센터 전용 (07 §3-3·02 §E-20, T-W2-23). "촬영한 사람과 확인하는 사람을
-   * 분리해야 게이트가 실효를 갖는다" — reviewPolicy='reporter_only' 경로도 이 확인을 거쳐야
-   * policyGuard ④(content-workflow.service.ts)를 통과할 수 있다(이 메서드는 그 게이트 자체가 아니라
-   * 게이트가 요구하는 사실을 기록하는 쓰기 경로다).
-   * hasMinorSubject=false인 콘텐츠는 거부 — 미리 확인해 두고 나중에 플래그를 켜는 우회를 막는다.
-   * 이미 확인된 콘텐츠는 멱등 200이며 기존 확인자·시각을 유지한다(최초 확인자가 감사 기록의 원천).
-   *
-   * ★ 대장 #116 ⓐ — 조기반환만으로는 그 "최초 확인자 보존"이 경합에서 깨진다. 위 두 판정은 **읽은
-   * 시점의 스냅샷**이라, 두 센터 운영자가 동시에 들어오면 둘 다 미확인을 보고 통과해 두 번째 쓰기가
-   * 최초 확인자를 덮어쓴다. 데이터 파손은 아니지만 **법적 감사 기록의 귀속 오류**라 일반 경합보다
-   * 무겁다. 그래서 쓰기를 `minorConsentConfirmedAt: null` 조건부 `updateMany`로 바꿔 판정과 쓰기를
-   * 한 원자 연산에 합친다(`applyHop`·`beginPublishing`과 동형 — 이 2메서드만 예외였다).
-   * 미적중(count=0)은 실패가 아니라 **경합했다는 사실**이므로, 재조회해서 그 결과로 판정한다.
-   */
-  async confirmMinorConsent(user: User, id: string): Promise<Content> {
-    this.requireCenterActor(user);
-    const row = await this.loadOwned(user, id);
-    if (!row.hasMinorSubject) {
-      throw new DomainException(
-        'validation_failed',
-        'hasMinorSubject가 꺼져 있는 콘텐츠는 동의를 확인할 수 없습니다',
-      );
-    }
-    if (row.minorConsentConfirmedAt) {
-      return toContent(row); // 멱등 — 기존 확인자·시각을 덮어쓰지 않는다
-    }
-
-    const confirmedAt = new Date();
-    const res = await this.prisma.content.updateMany({
-      where: { id, hasMinorSubject: true, minorConsentConfirmedAt: null },
-      data: { minorConsentConfirmedByUserId: user.id, minorConsentConfirmedAt: confirmedAt },
-    });
-    if (res.count === 0) {
-      // 읽기 이후 상태가 움직였다 — 다른 확인자가 선점했거나(멱등 유지) 플래그가 내려갔다(D3).
-      const fresh = await this.loadOwned(user, id);
-      if (!fresh.hasMinorSubject) {
-        throw new DomainException(
-          'validation_failed',
-          'hasMinorSubject가 꺼져 있는 콘텐츠는 동의를 확인할 수 없습니다',
-        );
-      }
-      return toContent(fresh); // 최초 확인자·시각 그대로 — 우리 쓰기는 적용되지 않았다
-    }
-    return toContent({ ...row, minorConsentConfirmedByUserId: user.id, minorConsentConfirmedAt: confirmedAt });
-  }
-
-  /**
-   * 동의 확인 철회 — 센터 전용. 미확인 상태면 409(철회할 대상이 없다).
-   *
-   * 게이트 통과 판정은 `approvedAt`이 아니라 `status_transition_logs` 실측이다(D5 정정, T-W2-23) —
-   * `approvedAt`은 `reporter_then_center`의 **기자 승인 hop에서도** 기록되므로(`content-workflow.service.ts`
-   * `approve()` 2지점: 센터 승인 시 + 모든 reviewPolicy의 기자 승인 hop) 게이트 통과의 프록시가 아니다.
-   * reporter_then_center 콘텐츠가 기자 승인만 받고 아직 센터 검토 전(`awaiting_center_review`)이어도
-   * `approvedAt`은 이미 채워져 있어, 그 필드만 보면 아직 미성년자 게이트를 통과하지 않았는데도
-   * 철회를 거부하는 오판이 난다. 대신 policyGuard ④가 실제로 지키는 전이(reviewPolicy별로 다름)가
-   * `status_transition_logs`에 기록됐는지를 직접 조회한다 — 모든 콘텐츠 전이는 `applyHop` 단일 관문을
-   * 거치며 거기서 로그를 남기므로, 상태 목록을 사본으로 하드코딩하지 않고 실제 발생한 전이에서
-   * 판정이 파생된다. 행이 있으면 게이트를 이미 통과했으므로 철회해도 송출을 막지 못해 409로 거부한다
-   * ("철회했는데 왜 송출되지?"라는 거짓 안심을 만들지 않는다). 사유 바디는 받지 않는다
-   * (저장할 컬럼이 없다 — T-W2-24 주민 검수 반려 API 선례).
-   *
-   * ★ 대장 #116 ⓑ — 그 판정과 쓰기 사이에 승인이 끼어들면 "승인됐는데 철회 성공"이 되어, D5가
-   * 막으려던 거짓 안심이 정확히 그 창에서 되살아난다. 방어의 실체는 **status CAS**다: 승인은 반드시
-   * status를 바꾸므로(awaiting_*→*_approved), 읽은 status가 그대로일 때만 쓰기가 적중한다.
-   * ⚠️ 트랜잭션은 이 경합을 **혼자서는 막지 못한다** — Read Committed에서 다른 트랜잭션이 그 사이
-   * 커밋한 로그 INSERT는 우리 SELECT에 안 보이기 때문이다. 여기서 `$transaction`은 조회와 쓰기의
-   * 원자 경계일 뿐이고, 경합을 실제로 잡는 것은 where 절의 status·확인여부 조건이다.
-   */
-  async withdrawMinorConsent(user: User, id: string): Promise<Content> {
-    this.requireCenterActor(user);
-    const row = await this.loadOwned(user, id);
-    if (!row.minorConsentConfirmedAt) {
-      throw new DomainException('conflict', '아직 확인되지 않은 동의는 철회할 수 없습니다');
-    }
-    // reviewPolicy별로 정책 가드 ④가 실제로 지키는 전이가 다르다(content-workflow.service.ts policyGuard 주석 ④ 참조):
-    // reporter_only는 기자 종단 승인(awaiting_reporter_review→reporter_approved)이 곧 "승인"이고,
-    // 그 외(reporter_then_center)는 센터 승인(awaiting_center_review→center_approved)이 "승인"이다.
-    const gateEdge =
-      row.reviewPolicy === 'reporter_only'
-        ? { fromStatus: 'awaiting_reporter_review', toStatus: 'reporter_approved' }
-        : { fromStatus: 'awaiting_center_review', toStatus: 'center_approved' };
-
-    const outcome = await this.prisma.$transaction(async (tx) => {
-      const gatePassed = await tx.statusTransitionLog.findFirst({
-        where: {
-          entityType: 'content',
-          entityId: id,
-          fromStatus: gateEdge.fromStatus,
-          toStatus: gateEdge.toStatus,
-        },
-      });
-      if (gatePassed) return 'gate_passed' as const;
-      const res = await tx.content.updateMany({
-        where: { id, status: row.status, minorConsentConfirmedAt: { not: null } },
-        data: { minorConsentConfirmedByUserId: null, minorConsentConfirmedAt: null },
-      });
-      return res.count === 1 ? ('withdrawn' as const) : ('raced' as const);
-    });
-
-    if (outcome === 'gate_passed') {
-      throw new DomainException(
-        'conflict',
-        '이미 승인된 콘텐츠는 동의 확인을 철회할 수 없습니다',
-      );
-    }
-    if (outcome === 'raced') {
-      // status가 움직였다 = 조회 이후 승인·전이가 끼어들었다. 철회했다고 답하면 거짓 안심이 된다.
-      throw new DomainException(
-        'conflict',
-        '조회 이후 콘텐츠 상태가 바뀌었습니다 — 재조회 후 다시 시도하세요',
-      );
-    }
-    return toContent({ ...row, minorConsentConfirmedByUserId: null, minorConsentConfirmedAt: null });
-  }
+  // (이력) 舊 confirmMinorConsent/withdrawMinorConsent(T-W2-23·#116)는 T-W2-36으로 제거 —
+  // 앱은 동의서 수취를 판단하지 않는다(촬영자 책임 모델, 07 §3-3 개정).
 
   async transitionLogs(
     user: User,

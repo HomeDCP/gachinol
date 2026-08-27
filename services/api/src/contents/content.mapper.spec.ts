@@ -1,4 +1,3 @@
-import { isMinorConsentPending } from '@gachinol/shared';
 import { v7 as uuidv7 } from 'uuid';
 import { contentRow, sceneJson } from '../test-support/fixtures';
 import { toContent, toContentDetail, toContentSummary } from './content.mapper';
@@ -27,23 +26,9 @@ describe('content.mapper — row → shared wire', () => {
     expect(() => toContent(row)).toThrow();
   });
 
-  it('toContent — 미성년자 동의 3필드 투영 (T-W2-23): 미확인은 전부 null/false', () => {
-    const content = toContent(contentRow());
-    expect(content.hasMinorSubject).toBe(false);
-    expect(content.minorConsentConfirmedByUserId).toBeNull();
-    expect(content.minorConsentConfirmedAt).toBeNull();
-  });
-
-  it('toContent — 미성년자 동의 확인 완료 상태를 그대로 투영', () => {
-    const row = contentRow({
-      hasMinorSubject: true,
-      minorConsentConfirmedByUserId: 'u-center',
-      minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
-    });
-    const content = toContent(row);
-    expect(content.hasMinorSubject).toBe(true);
-    expect(content.minorConsentConfirmedByUserId).toBe('u-center');
-    expect(content.minorConsentConfirmedAt).toBe('2026-08-10T00:00:00.000Z');
+  it('toContent — hasMinorSubject 투영 (T-W2-36: 리마인더 메타데이터, 확인 필드 없음)', () => {
+    expect(toContent(contentRow()).hasMinorSubject).toBe(false);
+    expect(toContent(contentRow({ hasMinorSubject: true })).hasMinorSubject).toBe(true);
   });
 
   it('toContentSummary — 비정규화 이름 채움, live_vod는 reporterName null', () => {
@@ -64,43 +49,19 @@ describe('content.mapper — row → shared wire', () => {
     expect(vod.reporterName).toBeNull();
   });
 
-  /**
-   * 대장 #118 — 목록 투영에 게이트 사실이 실리지 않으면 센터는 차단된 콘텐츠의 존재 자체를
-   * 알 수 없다(reporter_only는 센터 검토를 안 거친다). 확인자 id는 상세에만(노출 최소화).
-   */
-  it('toContentSummary — 미성년자 동의 게이트 2필드 투영 (T-W2-27) · 확인자 id는 미노출', () => {
-    const pending = toContentSummary({
-      ...contentRow({ hasMinorSubject: true, minorConsentConfirmedAt: null }),
+  it('toContentSummary — hasMinorSubject 투영(가시성 전용, T-W2-36) · 확인 필드 미존재', () => {
+    const flagged = toContentSummary({
+      ...contentRow({ hasMinorSubject: true }),
       station: { name: '애월 마을방송국' },
       reporter: { name: '애월 기자' },
     });
-    expect(pending.hasMinorSubject).toBe(true);
-    expect(pending.minorConsentConfirmedAt).toBeNull();
-    expect(isMinorConsentPending(pending)).toBe(true);
+    expect(flagged.hasMinorSubject).toBe(true);
     expect(
-      (pending as unknown as Record<string, unknown>).minorConsentConfirmedByUserId,
+      (flagged as unknown as Record<string, unknown>).minorConsentConfirmedAt,
     ).toBeUndefined();
-
-    const confirmed = toContentSummary({
-      ...contentRow({
-        hasMinorSubject: true,
-        minorConsentConfirmedByUserId: 'u-center',
-        minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
-      }),
-      station: { name: '애월 마을방송국' },
-      reporter: { name: '애월 기자' },
-    });
-    expect(confirmed.minorConsentConfirmedAt).toBe('2026-08-10T00:00:00.000Z');
-    expect(isMinorConsentPending(confirmed)).toBe(false);
-
-    // 플래그가 꺼진 대다수는 이 축과 무관 — 대기열에 섞이면 안 된다
-    const plain = toContentSummary({
-      ...contentRow(),
-      station: { name: '애월 마을방송국' },
-      reporter: { name: '애월 기자' },
-    });
-    expect(plain.hasMinorSubject).toBe(false);
-    expect(isMinorConsentPending(plain)).toBe(false);
+    expect(
+      (flagged as unknown as Record<string, unknown>).minorConsentConfirmedByUserId,
+    ).toBeUndefined();
   });
 
   it('toContentDetail — assets/publications 빈 배열, analysis undefined (미도입 테이블)', () => {

@@ -25,7 +25,7 @@ import type {
  *  ① published 콘텐츠에 "보관" 버튼과 경고 문구가 실제로 렌더된다 — 파생만 고쳐두고 화면에
  *     안 붙이는 것이 바로 대장 #124의 형태다("서버는 완비인데 앱에 호출이 0건").
  *  ② 보관은 **확인 다이얼로그를 경유**한다 — 취소하면 전이 API가 아예 호출되지 않는다.
- *  ③ 동의 확인 버튼이 렌더되고 확정 시 `POST /minor-consent`가 호출된다.
+ *  ③ (T-W2-36) 미성년 등장 정보 카드는 뜨되, 동의 확인·철회 같은 판단 UI는 없다.
  *  ④ **이미 승인된 콘텐츠에는 철회 버튼이 없다** — 서버가 409로 거부하는 조건이라
  *     노출하면 "눌러도 거절되는 버튼"이 된다(Wave 8a에서 실제로 저지른 결함).
  *
@@ -66,15 +66,11 @@ const mockGetContentDetail = jest.fn();
 const mockListTransitionLogs = jest.fn();
 const mockListPublications = jest.fn();
 const mockTransitionContent = jest.fn();
-const mockConfirmMinorConsent = jest.fn();
-const mockWithdrawMinorConsent = jest.fn();
 jest.mock('../../../api/contents', () => ({
   getContentDetail: (...a: unknown[]) => mockGetContentDetail(...a),
   listTransitionLogs: (...a: unknown[]) => mockListTransitionLogs(...a),
   listPublications: (...a: unknown[]) => mockListPublications(...a),
   transitionContent: (...a: unknown[]) => mockTransitionContent(...a),
-  confirmMinorConsent: (...a: unknown[]) => mockConfirmMinorConsent(...a),
-  withdrawMinorConsent: (...a: unknown[]) => mockWithdrawMinorConsent(...a),
   approveContent: jest.fn(),
   requestRevision: jest.fn(),
   rejectContent: jest.fn(),
@@ -111,8 +107,6 @@ function buildContent(overrides: Partial<Content> = {}): Content {
     approvedByUserId: null,
     approvedAt: null,
     hasMinorSubject: false,
-    minorConsentConfirmedByUserId: null,
-    minorConsentConfirmedAt: null,
     publishedAt: '2026-08-15T00:00:00.000Z',
     createdAt: '2026-08-01T00:00:00.000Z',
     updatedAt: '2026-08-15T00:00:00.000Z',
@@ -240,104 +234,27 @@ describe('ContentDetailScreen — 보관 액션 (대장 #124)', () => {
   });
 });
 
-describe('ContentDetailScreen — 미성년자 동의 확인 (대장 #130)', () => {
-  const minorPending = buildContent({
+describe('ContentDetailScreen — 미성년 등장 정보 카드 (T-W2-36)', () => {
+  const flagged = buildContent({
     status: ContentStatus.AwaitingCenterReview,
     publishedAt: null,
     hasMinorSubject: true,
-    minorConsentConfirmedAt: null,
   });
 
-  it('hasMinorSubject=false면 동의 카드 자체가 없다', async () => {
+  it('hasMinorSubject=false면 카드 자체가 없다', async () => {
     const { findByText, queryByText } = await renderScreen(buildContent());
     await findByText('보관');
-    expect(queryByText('미성년자 피촬영자 동의')).toBeNull();
+    expect(queryByText('미성년자 피촬영자')).toBeNull();
   });
 
-  it('동의 미확인이면 카드와 "동의 확인" 버튼이 렌더된다', async () => {
-    const { findByText, getByText } = await renderScreen(minorPending);
+  it('플래그가 켜져 있으면 정보 카드가 뜨되, 확인·철회 버튼과 차단 문구는 없다', async () => {
+    const { findByText, getByText, queryByText } = await renderScreen(flagged);
 
-    await findByText('미성년자 피촬영자 동의');
-    expect(getByText('동의 확인')).toBeTruthy();
-    expect(getByText(/승인이 차단돼 있습니다/)).toBeTruthy();
-  });
-
-  it('확인 다이얼로그에서 확정하면 confirmMinorConsent가 호출된다', async () => {
-    pressDialogButton('확인함');
-    mockConfirmMinorConsent.mockResolvedValue({
-      ...minorPending,
-      minorConsentConfirmedAt: '2026-08-16T00:00:00.000Z',
-    });
-    const { findByText } = await renderScreen(minorPending);
-
-    await fireEvent.press(await findByText('동의 확인'));
-
-    await waitFor(() =>
-      expect(mockConfirmMinorConsent).toHaveBeenCalledWith(expect.anything(), CONTENT_ID),
-    );
-  });
-
-  it('취소하면 confirmMinorConsent가 호출되지 않는다', async () => {
-    const alertSpy = cancelDialog();
-    const { findByText } = await renderScreen(minorPending);
-
-    await fireEvent.press(await findByText('동의 확인'));
-
-    expect(alertSpy.mock.calls[0]?.[0]).toBe('법정대리인 동의를 확인했습니까?');
-    await waitFor(() => expect(mockConfirmMinorConsent).not.toHaveBeenCalled());
-  });
-
-  it('확인 완료 ∧ 게이트 미통과 → 철회 버튼이 렌더되고 확정 시 withdrawMinorConsent가 호출된다', async () => {
-    pressDialogButton('철회');
-    const confirmed = buildContent({
-      status: ContentStatus.AwaitingCenterReview,
-      publishedAt: null,
-      hasMinorSubject: true,
-      minorConsentConfirmedAt: '2026-08-16T00:00:00.000Z',
-    });
-    mockWithdrawMinorConsent.mockResolvedValue({ ...confirmed, minorConsentConfirmedAt: null });
-    const { findByText } = await renderScreen(confirmed);
-
-    await fireEvent.press(await findByText('동의 확인 철회'));
-
-    await waitFor(() =>
-      expect(mockWithdrawMinorConsent).toHaveBeenCalledWith(expect.anything(), CONTENT_ID),
-    );
-  });
-
-  /** ★ 철회 불가 조건 — 서버가 409로 거부하므로 버튼을 그리면 안 된다 */
-  it('이미 승인 단계를 통과한 콘텐츠(전이 이력에 게이트 엣지)에는 철회 버튼이 없다', async () => {
-    mockListTransitionLogs.mockResolvedValue(
-      buildLogsPage([{ fromStatus: 'awaiting_center_review', toStatus: 'center_approved' }]),
-    );
-    const { findByText, queryByText } = await renderScreen(
-      buildContent({
-        hasMinorSubject: true,
-        minorConsentConfirmedAt: '2026-08-16T00:00:00.000Z',
-      }),
-    );
-
-    await findByText('미성년자 피촬영자 동의');
-    await waitFor(() =>
-      expect(queryByText(/이미 승인 단계를 통과한 콘텐츠라 확인을 철회할 수 없습니다/)).toBeTruthy(),
-    );
+    await findByText('미성년자 피촬영자');
+    expect(getByText(/촬영자가 직접 받아 보관/)).toBeTruthy();
+    // 판단 장치의 부재 — T-W2-36의 핵심 단언
+    expect(queryByText('동의 확인')).toBeNull();
     expect(queryByText('동의 확인 철회')).toBeNull();
-  });
-
-  it('이력을 끝까지 못 읽었으면(다음 페이지 있음) 철회 버튼 대신 안내가 뜬다 — fail-closed', async () => {
-    mockListTransitionLogs.mockResolvedValue({
-      ...buildLogsPage([{ fromStatus: 'preview_generating', toStatus: 'awaiting_reporter_review' }]),
-      totalCount: 40, // page 1(20건)만으로는 이력이 끝나지 않는다
-    });
-    const { findByText, queryByText } = await renderScreen(
-      buildContent({
-        hasMinorSubject: true,
-        minorConsentConfirmedAt: '2026-08-16T00:00:00.000Z',
-      }),
-    );
-
-    await findByText(/철회 가능 여부는 전이 이력으로 판정합니다/);
-    expect(queryByText('동의 확인 철회')).toBeNull();
-    expect(queryByText('이력 마저 불러오기')).toBeTruthy();
+    expect(queryByText(/승인이 차단/)).toBeNull();
   });
 });

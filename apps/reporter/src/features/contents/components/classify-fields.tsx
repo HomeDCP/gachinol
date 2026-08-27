@@ -108,9 +108,11 @@ export function ClassifyFields({
           <Text style={styles.minorLabel}>촬영본에 만 14세 미만 아동이 나옵니다</Text>
         </Pressable>
         {value.hasMinorSubject ? (
+          // T-W2-36 촬영자 책임 모델(07 §3-3 개정) — 앱은 수취 여부를 판단하지 않으므로
+          // 차단을 시사하는 문구를 쓰면 거짓이 된다. 리마인더만 말한다.
           <Text style={styles.minorGuide}>
-            법정대리인 동의서를 준비해 주세요. 지금 업로드는 그대로 진행되지만, 센터가 동의서를
-            확인하기 전에는 승인·송출되지 않습니다.
+            법정대리인 동의서는 촬영자가 직접 받아 보관해 주세요. 앱은 수취 여부를 확인하지
+            않으며, 동의서 없이 촬영·송출된 콘텐츠의 책임은 촬영자에게 있습니다.
           </Text>
         ) : null}
       </FormField>

@@ -1,23 +1,6 @@
 import { centerOperatorUser, contentRow, reporterUser } from '../test-support/fixtures';
 import { ContentsController } from './contents.controller';
 
-/** 최소 조립점 검증(위 setup과 별도) — 컨텍이터→서비스 위임만 확인, 비즈니스 로직은 contents.service.spec.ts 소관 */
-const setupMinorConsent = () => {
-  const contents = {
-    confirmMinorConsent: jest.fn(),
-    withdrawMinorConsent: jest.fn(),
-  };
-  const controller = new ContentsController(
-    contents as never, // contents
-    {} as never, // workflow
-    {} as never, // producer
-    {} as never, // analysisProducer
-    {} as never, // distributionProducer
-    {} as never, // distribution
-  );
-  return { contents, controller };
-};
-
 /**
  * 컨트롤러 조립점 검증 — approve 후 reporter_only 자동 연쇄(status=publishing)일 때만 자동 송출 트리거.
  * center 승인 경로(center_approved)는 미트리거(이중 송출 없음). 자동 송출 실패는 승인 응답을 깨지 않는다(에러 격리).
@@ -83,34 +66,7 @@ describe('ContentsController.approve — 자동 송출 조립점', () => {
   });
 });
 
-describe('ContentsController — 미성년자 동의 확인/철회 위임(T-W2-23)', () => {
-  it('POST :id/minor-consent → contents.confirmMinorConsent(user, id)로 위임', async () => {
-    const { contents, controller } = setupMinorConsent();
-    const confirmed = contentRow({
-      hasMinorSubject: true,
-      minorConsentConfirmedByUserId: 'u-center',
-    });
-    contents.confirmMinorConsent.mockResolvedValue(confirmed);
-    const user = centerOperatorUser();
-
-    const res = await controller.confirmMinorConsent(user, 'c-1');
-
-    expect(contents.confirmMinorConsent).toHaveBeenCalledWith(user, 'c-1');
-    expect(res).toBe(confirmed);
-  });
-
-  it('DELETE :id/minor-consent → contents.withdrawMinorConsent(user, id)로 위임', async () => {
-    const { contents, controller } = setupMinorConsent();
-    const withdrawn = contentRow({ hasMinorSubject: true });
-    contents.withdrawMinorConsent.mockResolvedValue(withdrawn);
-    const user = centerOperatorUser();
-
-    const res = await controller.withdrawMinorConsent(user, 'c-1');
-
-    expect(contents.withdrawMinorConsent).toHaveBeenCalledWith(user, 'c-1');
-    expect(res).toBe(withdrawn);
-  });
-});
+// (이력) 舊 minor-consent 위임 스위트(T-W2-23)는 라우트와 함께 T-W2-36으로 제거.
 
 describe('ContentsController — 사후 자막 보강 위임 (T-W2-34, 대장 #123)', () => {
   const setupCaptions = () => {

@@ -37,7 +37,6 @@ import {
 } from '../../../src/features/contents/analysis';
 import {
   centerActionsFor,
-  minorConsentActionsFor,
 } from '../../../src/features/contents/actions';
 import {
   CATEGORY_LABEL,
@@ -48,7 +47,6 @@ import {
 } from '../../../src/features/contents/labels';
 import {
   useApprove,
-  useConfirmMinorConsent,
   useDistribute,
   useReject,
   useRequestRevision,
@@ -57,7 +55,6 @@ import {
   useRetry,
   useRetryPublication,
   useTransitionContent,
-  useWithdrawMinorConsent,
 } from '../../../src/features/contents/mutations';
 import {
   useContentDetail,
@@ -69,7 +66,7 @@ import {
   STATUS_BADGE_CENTER,
   STATUS_DESCRIPTION_CENTER,
   isTerminalStatus,
-  minorConsentBadge,
+  minorSubjectBadge,
   statusBadge,
 } from '../../../src/features/contents/status';
 import {
@@ -383,8 +380,6 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const retryPublication = useRetryPublication(contentId);
   const retractPublication = useRetractPublication(contentId);
   const manualTransition = useTransitionContent(contentId);
-  const confirmConsent = useConfirmMinorConsent(contentId);
-  const withdrawConsent = useWithdrawMinorConsent(contentId);
   const publications = usePublications(contentId, { poll: focused });
 
   const stationId = detail.data?.content.stationId;
@@ -443,21 +438,11 @@ export default function ContentDetailScreen(): React.JSX.Element {
     requestRevision.isPending ||
     reject.isPending ||
     distribute.isPending ||
-    manualTransition.isPending ||
-    confirmConsent.isPending ||
-    withdrawConsent.isPending;
+    manualTransition.isPending;
   const publicationRows = publications.data ?? [];
 
-  /**
-   * 동의 철회 가능 여부는 **전이 이력 실측**으로 판정한다(서버와 같은 원천) — 이력을 끝까지
-   * 읽었는지를 함께 넘겨야 "아직 못 본 페이지에 게이트 전이가 있는" 경우를 미통과로 오판하지 않는다.
-   * 이력 조회는 무한스크롤이라 `hasNextPage`가 false일 때만 완결이다.
-   */
-  const consent = minorConsentActionsFor(content, {
-    logs: logItems,
-    complete: logs.isSuccess && !logs.hasNextPage,
-  });
-  const consentBadge = minorConsentBadge(content);
+  // 미성년 등장 표시(T-W2-36) — 정보 배지일 뿐, 판단(확인·차단)은 하지 않는다.
+  const minorBadge = minorSubjectBadge(content);
 
   const onTransitionError = (err: unknown): void => {
     if (isApiClientError(err) && err.status === 409) {
@@ -534,46 +519,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
     );
   };
 
-  /**
-   * 미성년자 동의 확인(대장 #130) — 승인성 조작이라 확인 절차를 둔다.
-   * "촬영한 사람과 확인하는 사람을 분리해야 게이트가 실효를 갖는다"(07 §3-3)가 이 버튼이 센터 앱에만
-   * 있는 이유이고, 최초 확인자·시각이 감사 기록으로 남아 덮어써지지 않는다는 사실을 문구로 밝힌다.
-   */
-  const confirmMinorConsentAction = async (): Promise<void> => {
-    const ok = await confirmDialog({
-      title: '법정대리인 동의를 확인했습니까?',
-      message:
-        '동의서를 직접 확인했음을 기록합니다. 확인 즉시 승인 차단이 풀립니다. ' +
-        '확인자와 시각이 감사 기록으로 남으며 최초 확인자는 이후 덮어써지지 않습니다.',
-      confirmText: '확인함',
-    });
-    if (!ok) return;
-    confirmConsent.mutate(undefined, {
-      onSuccess: () => showToast('동의 확인을 기록했습니다 — 승인 차단이 해제됩니다'),
-      onError: (err) => {
-        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
-      },
-    });
-  };
-
-  /** 동의 확인 철회 — 승인이 다시 차단된다. 이미 승인된 콘텐츠는 버튼 자체가 그려지지 않는다 */
-  const confirmWithdrawMinorConsent = async (): Promise<void> => {
-    const ok = await confirmDialog({
-      title: '동의 확인을 철회할까요?',
-      message:
-        '확인 기록이 지워지고 승인이 다시 차단됩니다. 확인자·시각도 함께 지워집니다 — ' +
-        '다시 확인하면 그때의 담당자가 최초 확인자로 기록됩니다.',
-      confirmText: '철회',
-      destructive: true,
-    });
-    if (!ok) return;
-    withdrawConsent.mutate(undefined, {
-      onSuccess: () => showToast('동의 확인을 철회했습니다 — 승인이 다시 차단됩니다'),
-      onError: (err) => {
-        if (!(isApiClientError(err) && err.status === 409)) showToast(userMessageForError(err));
-      },
-    });
-  };
+  // (이력) 舊 동의 확인/철회 다이얼로그(대장 #130)는 T-W2-36으로 제거.
 
   const confirmRetryPublication = async (p: Publication): Promise<void> => {
     const ok = await confirmDialog({
@@ -728,63 +674,18 @@ export default function ContentDetailScreen(): React.JSX.Element {
           ) : null}
         </View>
 
-        {/* (a-2) 미성년자 동의 게이트 — 상태와 직교한 축이라 별도 카드 (대장 #118·#130).
-            플래그가 꺼진 대다수 콘텐츠에서는 카드 자체가 렌더되지 않는다. */}
-        {consent.applicable ? (
+        {/* (a-2) 미성년 등장 표시(T-W2-36) — 정보 카드. 동의서 수취·보관은 촬영자 책임이며
+            앱은 판단하지 않는다(07 §3-3 개정). 플래그가 꺼진 대다수에서는 렌더되지 않는다. */}
+        {minorBadge ? (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>미성년자 피촬영자 동의</Text>
-            {consentBadge ? (
-              <View style={styles.badgeRow}>
-                <Badge label={consentBadge.label} tone={consentBadge.tone} />
-              </View>
-            ) : null}
-            {content.minorConsentConfirmedAt ? (
-              <Text style={styles.metaText}>
-                확인 완료 {formatDateTime(content.minorConsentConfirmedAt)}
-              </Text>
-            ) : (
-              <Text style={styles.warningText}>
-                법정대리인 동의서가 확인되지 않아 승인이 차단돼 있습니다. 촬영한 기자가 아니라 센터가
-                직접 확인해야 게이트가 실효를 갖습니다.
-              </Text>
-            )}
-            {consent.canConfirm ? (
-              <Button
-                label="동의 확인"
-                onPress={() => void confirmMinorConsentAction()}
-                loading={confirmConsent.isPending}
-                disabled={anyPending}
-              />
-            ) : null}
-            {consent.canWithdraw ? (
-              <Button
-                label="동의 확인 철회"
-                variant="destructive"
-                onPress={() => void confirmWithdrawMinorConsent()}
-                loading={withdrawConsent.isPending}
-                disabled={anyPending}
-              />
-            ) : consent.withdrawBlockedBy === 'gate_passed' ? (
-              // 서버 withdrawMinorConsent()가 409로 거부하는 조건 — 눌러도 거절될 버튼을 그리지 않는다
-              <Text style={styles.metaText}>
-                이미 승인 단계를 통과한 콘텐츠라 확인을 철회할 수 없습니다 (철회해도 송출을 막지
-                못합니다).
-              </Text>
-            ) : consent.withdrawBlockedBy === 'history_incomplete' ? (
-              <>
-                <Text style={styles.metaText}>
-                  철회 가능 여부는 전이 이력으로 판정합니다. 이력을 끝까지 불러온 뒤 표시됩니다.
-                </Text>
-                {logs.hasNextPage ? (
-                  <Button
-                    label="이력 마저 불러오기"
-                    variant="secondary"
-                    loading={logs.isFetchingNextPage}
-                    onPress={() => void logs.fetchNextPage()}
-                  />
-                ) : null}
-              </>
-            ) : null}
+            <Text style={styles.sectionTitle}>미성년자 피촬영자</Text>
+            <View style={styles.badgeRow}>
+              <Badge label={minorBadge.label} tone={minorBadge.tone} />
+            </View>
+            <Text style={styles.metaText}>
+              촬영본에 만 14세 미만 피촬영자가 있다고 기자가 표시했습니다. 법정대리인 동의서는
+              촬영자가 직접 받아 보관합니다 — 앱은 수취 여부를 확인하지 않습니다.
+            </Text>
           </View>
         ) : null}
 

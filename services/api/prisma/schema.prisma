@@ -65,7 +65,6 @@ model User {
   refreshTokens                 RefreshToken[]
   reportedContents              Content[]              @relation("ContentReporter")
   approvedContents              Content[]              @relation("ContentApprover")
-  minorConsentConfirmedContents Content[]              @relation("ContentMinorConsentConfirmer")
   approvedRecommendations       WeeklyRecommendation[] @relation("RecommendationApprover")
   issuedResidentLinks           ResidentUploadLink[]   @relation("ResidentLinkIssuer")
   reviewedResidentUploads       ResidentUpload[]       @relation("ResidentUploadReviewer")
@@ -115,12 +114,10 @@ model Content {
   durationSec                   Int?      @map("duration_sec")
   approvedByUserId              String?   @map("approved_by_user_id")
   approvedAt                    DateTime? @map("approved_at") @db.Timestamptz(3)
-  // 미성년자(만 14세 미만) 피촬영자 동의 게이트 (07 §3-3·02 §E-20, T-W2-13) — 개인정보 최소수집:
-  // 아동 식별정보(이름·생년월일) 컬럼 없음, "14세 미만 등장 여부" 불린 사실 + 확인자·확인시각만 다룬다.
-  // 기본값 false=미체크(기존 행 안전 백필). 동의서 파일 자체는 저장하지 않는다(템플릿·문구는 07 소관).
+  // 미성년자(만 14세 미만) 피촬영자 등장 여부 (07 §3-3·02 §E-20, T-W2-13 → T-W2-36 재정의) —
+  // 리마인더용 메타데이터. 앱은 동의서 수취를 판단하지 않는다(촬영자 책임, 사용자 결정 2026-08-27).
+  // 개인정보 최소수집: 아동 식별정보 없음, 등장 여부 불린 하나뿐(舊 확인자·확인시각 컬럼은 drop).
   hasMinorSubject               Boolean   @default(false) @map("has_minor_subject")
-  minorConsentConfirmedByUserId String?   @map("minor_consent_confirmed_by_user_id") // fail-closed 판정: null=미확인
-  minorConsentConfirmedAt       DateTime? @map("minor_consent_confirmed_at") @db.Timestamptz(3)
   publishedAt                   DateTime? @map("published_at") @db.Timestamptz(3)
   createdAt                     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -128,7 +125,6 @@ model Content {
   station                 Station           @relation(fields: [stationId], references: [id])
   reporter                User?             @relation("ContentReporter", fields: [reporterId], references: [id])
   approvedBy              User?             @relation("ContentApprover", fields: [approvedByUserId], references: [id])
-  minorConsentConfirmedBy User?             @relation("ContentMinorConsentConfirmer", fields: [minorConsentConfirmedByUserId], references: [id])
   revisionRequests        RevisionRequest[]
   mediaAssets             MediaAsset[]
   aiAnalyses              AiAnalysis[]

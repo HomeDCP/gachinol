@@ -110,8 +110,7 @@ export default function EditDraftScreen(): React.JSX.Element {
     // cultureTopics는 비culture여도 명시적으로 빈 배열 전송 — 기존 값 잔존 방지
     // description도 항상 전송 — validateClassify는 빈 값을 키 생략하는데, PATCH에서
     // 키 생략='변경 없음'이라 지운 설명이 되살아난다 (서버 zod는 '' 허용, 렌더는 ''를 부재로 취급)
-    // hasMinorSubject도 항상 전송 — 해제(true→false)를 생략하면 서버의 fail-closed
-    // 확인 무효화에 도달하지 못해 플래그가 켜진 채 남는다 (T-W2-14)
+    // hasMinorSubject도 항상 전송 — PATCH에서 키 생략='변경 없음'이라 해제가 전달되지 않는다 (T-W2-14)
     updateDraft.mutate(
       {
         title,
@@ -166,14 +165,6 @@ export default function EditDraftScreen(): React.JSX.Element {
           }
           errors={errors}
         />
-        {content.minorConsentConfirmedAt !== null && !form.classify.hasMinorSubject ? (
-          // 서버 fail-closed 불변식(shared dto.ts): true→false로 내리면 확인 기록도 함께 지워진다.
-          // 실수 해제 후 재체크 시 센터 확인을 처음부터 다시 받아야 하므로 저장 전에 알린다.
-          <Text style={styles.minorWipeWarning}>
-            이 콘텐츠는 센터가 법정대리인 동의를 이미 확인했습니다. 체크를 해제한 채 저장하면 동의
-            확인 기록이 함께 삭제되며, 다시 체크하면 센터 확인을 새로 받아야 합니다.
-          </Text>
-        ) : null}
         <SceneListEditor
           scenes={form.scenes}
           onChange={(scenes) => setForm((prev) => (prev ? { ...prev, scenes } : prev))}
@@ -198,12 +189,6 @@ const styles = StyleSheet.create({
   revisionTitle: { fontSize: typo.caption, fontWeight: '700', color: colors.warning },
   revisionBody: { fontSize: typo.body, color: colors.text, lineHeight: 22 },
   notice: { fontSize: typo.caption, color: colors.textMuted, marginBottom: spacing.lg },
-  minorWipeWarning: {
-    fontSize: typo.caption,
-    color: colors.warning,
-    lineHeight: 18,
-    marginTop: spacing.sm,
-  },
   serverError: {
     color: colors.danger,
     fontSize: typo.caption,
