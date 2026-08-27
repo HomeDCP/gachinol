@@ -123,7 +123,7 @@ export default function BoardScreen(): React.JSX.Element {
 
   return (
     <Screen>
-      {/* 보드 뷰 칩 (단일 선택) — 상태 축 + 동의 게이트 축(대장 #118) */}
+      {/* 보드 뷰 칩 (단일 선택) — 상태 축 (舊 동의 게이트 축은 T-W2-36으로 소멸) */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

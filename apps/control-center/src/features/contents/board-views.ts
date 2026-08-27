@@ -42,7 +42,7 @@ export const toBoardFilter = (
   ...(extra.stationId ? { stationId: extra.stationId } : {}),
 });
 
-/** 0건 문구 — "검토할 게 없다"와 "동의 확인 대기가 없다"는 다른 사실이다 */
+/** 0건 문구 — 뷰마다 "없다"가 말하는 사실이 다르면 emptyMessage로 구분한다 */
 export const DEFAULT_BOARD_EMPTY_MESSAGE = '검토할 콘텐츠가 없습니다';
 
 export const boardViewEmptyMessage = (view: BoardView | undefined): string =>
