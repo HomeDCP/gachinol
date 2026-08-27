@@ -6,7 +6,6 @@ import {
   CONTENT_RETRY_TARGET,
   CONTENT_STATUS_TRANSITIONS,
   isFailureStatus,
-  isMinorConsentPending,
   nextStates,
 } from '@gachinol/shared';
 import type { Content as ContentRow, Prisma } from '@prisma/client';
@@ -466,15 +465,10 @@ export class ContentWorkflowService {
    *    awaiting_reporter_review는 아래 ③의 requireOwnerReporter가 reporterId===user.id를 요구하므로
    *    reporterId=null인 두 유래는 애초에 그 경로를 완주할 수 없다(선택의 여지 없이 center 경로가 유일해).
    * ③ awaiting_reporter_review 계열 결정(승인·수정요청·반려)의 user 액터는 담당 기자만
-   * ④ 미성년자(만 14세 미만) 피촬영자 동의 게이트 (07 §3-3·02 §E-20, T-W2-13 본체, fail-closed) —
-   *    hasMinorSubject && !minorConsentConfirmedAt이면 "승인"을 차단한다. 정본 문언의 1차 대상은
-   *    승인 단계(센터 검토: awaiting_center_review→center_approved)다. 다만 reviewPolicy='reporter_only'는
-   *    센터 검토를 아예 거치지 않고 reporter_approved가 같은 트랜잭션에서 즉시 publishing으로 자동
-   *    연쇄되므로(afterReporterApproval) — 그 경로에서는 awaiting_reporter_review→reporter_approved가
-   *    실질적인 "승인"(더 이상의 인간 검토 없이 송출 확정)이라 동일 게이트를 적용한다. 그렇지 않으면
-   *    미성년자 플래그가 켜진 콘텐츠가 동의 확인 없이 공개 송출로 직행해 게이트 취지가 무력화된다.
-   *    reviewPolicy='reporter_then_center'의 reporter_approved는 이후 센터 게이트가 다시 잡으므로
-   *    대상에서 제외(중복 차단 불필요, 기자 자신의 검토 단계는 그대로 통과 — AC5 회귀 금지 대상 아님).
+   *
+   * (이력) 舊 ④ 미성년자 동의 게이트(hasMinorSubject && 미확인 → 승인 차단, T-W2-13)는
+   * **T-W2-36으로 제거**됐다 — 앱은 동의서 수취를 판단하지 않는다(촬영자 책임 모델,
+   * 사용자 결정 2026-08-27 · 07 §3-3 개정). hasMinorSubject는 리마인더용 메타데이터일 뿐이다.
    */
   private policyGuard(
     content: ContentRow,
@@ -506,20 +500,6 @@ export class ContentWorkflowService {
       actor.type === 'user'
     ) {
       this.requireOwnerReporter(content, actor.user);
-    }
-    const isCenterApproval = from === 'awaiting_center_review' && to === 'center_approved';
-    const isReporterOnlyTerminalApproval =
-      from === 'awaiting_reporter_review' &&
-      to === 'reporter_approved' &&
-      content.reviewPolicy === 'reporter_only';
-    // 판정 술어는 shared `isMinorConsentPending` 하나뿐(T-W2-27) — 관제 보드의 발견 수단
-    // (목록 필터·배지)이 같은 술어에서 파생하므로 "무엇이 차단인가"가 서버·UI에서 갈릴 수 없다.
-    if ((isCenterApproval || isReporterOnlyTerminalApproval) && isMinorConsentPending(content)) {
-      throw new DomainException(
-        'invalid_transition',
-        '피촬영자 만 14세 미만 플래그가 켜져 있습니다 — 법정대리인 동의서 확인 전에는 승인할 수 없습니다',
-        { from, to, hasMinorSubject: true },
-      );
     }
   }
 
@@ -574,22 +554,8 @@ export class ContentWorkflowService {
     if (to === 'published' && !content.publishedAt) data.publishedAt = now; // 비정규화: 최초 송출 시각
     if (to === 'regenerating') {
       data.generation = { increment: 1 }; // 산출물 세대 +1
-      // ★ 대장 #117 — 미성년자 동의 확인은 generation-scoped가 아니다.
-      // 세대가 올라가면 그것은 **다른 영상**이고 센터는 그 영상의 동의서를 본 적이 없다.
-      // 등재 당시 "재생성 워커가 미구동이라 잠복"이라 적혀 있었는데, auto_edit 구동으로
-      // 그 잠복 조건이 사라지므로 같은 슬라이스에서 닫는다.
-      //
-      // ⚠️ **매번 무효화**한다 — 조건을 좁히지 않는다.
-      // 07 정본 대조 완료(2026-08-23): **§3-3에는 재생성·세대에 관한 문언 자체가 없다.**
-      // 규정하는 것은 "만 14세 미만 = 법정대리인 동의 필수 + 승인 단계 첨부 확인 게이트"뿐이다.
-      // 따라서 승인된 계획(§5-D)의 완화안("화면 구성(editPlan)이 실제로 바뀐 재생성만 무효화")을
-      // **지지할 정본 근거가 없다** — 정본의 침묵은 완화 허가가 아니므로 보수적 판정을 유지한다.
-      // (Phase 1은 editPlan이 항상 null이라 완화안을 적용해도 결과가 같다. 실질 차이는 컷이
-      //  들어오는 T-AI 트랙부터 생기며, 그때 완화하려면 07 §3-3에 세대 관련 문언이 먼저 필요하다.)
-      if (content.hasMinorSubject) {
-        data.minorConsentConfirmedByUserId = null;
-        data.minorConsentConfirmedAt = null;
-      }
+      // (이력) 舊 대장 #117의 세대별 동의 확인 무효화는 T-W2-36으로 확인 개념 자체와 함께 제거됐다
+      // — 앱은 동의서 수취를 판단하지 않는다(촬영자 책임, 07 §3-3 개정).
     }
 
     const res = await tx.content.updateMany({ where: { id: content.id, status: from }, data });

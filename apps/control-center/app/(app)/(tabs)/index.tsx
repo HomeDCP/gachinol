@@ -21,7 +21,7 @@ import { formatDuration, formatRelativeTime } from '../../../src/features/conten
 import { CATEGORY_LABEL } from '../../../src/features/contents/labels';
 import { useContentBoard } from '../../../src/features/contents/queries';
 import {
-  minorConsentBadge,
+  minorSubjectBadge,
   needsCenterAttention,
   statusBadge,
 } from '../../../src/features/contents/status';
@@ -87,8 +87,8 @@ export default function BoardScreen(): React.JSX.Element {
 
   const renderCard = ({ item }: { item: ContentSummary }): React.JSX.Element => {
     const badge = statusBadge(item.status);
-    // 동의 게이트 배지는 상태 배지와 별개 축이다 — 강조 판정은 두 축을 합친 needsCenterAttention 하나로.
-    const consent = minorConsentBadge(item);
+    // 미성년 등장 표시는 정보 배지일 뿐이다(T-W2-36) — 강조 판정은 상태 축 하나.
+    const consent = minorSubjectBadge(item);
     const needsAction = needsCenterAttention(item);
     return (
       <Pressable

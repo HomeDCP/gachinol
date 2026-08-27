@@ -1,7 +1,6 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   Logger,
@@ -70,17 +69,12 @@ export class ContentsController {
   @ApiOperation({
     summary: '목록 — reporter는 자기 지사 강제',
     description:
-      'minorConsent=pending|confirmed는 미성년자 동의 게이트 필터다(T-W2-27, 대장 #118). 둘 다 ' +
-      'hasMinorSubject=true인 콘텐츠만 남기며, pending은 아직 확인되지 않은 것 = 센터가 확인해야 ' +
-      '승인이 풀리는 대기열이다. status로 대체할 수 없다 — reviewPolicy=reporter_only는 센터 검토를 ' +
-      '거치지 않아 차단된 콘텐츠가 awaiting_reporter_review에 멈추기 때문이다. 사실 필터라 ' +
-      '종결(rejected·canceled) 상태를 따로 제외하지 않는다. 응답 ContentSummary에도 ' +
-      'hasMinorSubject·minorConsentConfirmedAt이 실린다(확인자 id는 상세에만). ' +
       'captions=needed는 자막 대기열 필터다(T-W2-34, 대장 #123) — 간단 모드·주민 제보로 ' +
       '자막 없이(scenes=[]) 들어온 콘텐츠 중 **아직 채울 수 있는 것**만 남긴다. ' +
-      'minorConsent와 달리 순수 사실 필터가 아니다: 상태 조건(published 이후·종결 제외)을 ' +
+      '순수 사실 필터가 아니다: 상태 조건(published 이후·종결 제외)을 ' +
       '값 자체가 포함하며, 그 판정은 자막 쓰기 게이트(PATCH :id/captions)와 같은 shared ' +
-      '원천에서 파생해 둘이 어긋날 수 없다. status와 함께 보내면 AND로 적용된다.',
+      '원천에서 파생해 둘이 어긋날 수 없다. status와 함께 보내면 AND로 적용된다. ' +
+      '(이력) 舊 minorConsent 필터는 T-W2-36으로 제거 — 동의 확인 대기열 개념 소멸.',
   })
   list(
     @CurrentUser() user: User,
@@ -135,34 +129,8 @@ export class ContentsController {
     return this.contents.updateCaptions(user, id, body);
   }
 
-  @Post(':id/minor-consent')
-  @HttpCode(200)
-  @Roles('center_operator', 'admin')
-  @ApiOperation({
-    summary: '미성년자 피촬영자 법정대리인 동의 확인 — 센터 전용 (07 §3-3·02 §E-20, T-W2-23)',
-    description:
-      '촬영한 기자가 아니라 검토하는 센터가 확인해야 게이트가 실효를 갖는다. hasMinorSubject=false인 ' +
-      '콘텐츠는 거부(선확인 후 플래그를 켜는 우회 차단). 이미 확인된 콘텐츠는 멱등 200이며 최초 ' +
-      '확인자·시각을 덮어쓰지 않는다(감사 기록 보존).',
-  })
-  confirmMinorConsent(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
-    return this.contents.confirmMinorConsent(user, id);
-  }
-
-  @Delete(':id/minor-consent')
-  @Roles('center_operator', 'admin')
-  @ApiOperation({
-    summary: '미성년자 동의 확인 철회 — 센터 전용',
-    description:
-      '미확인 상태면 409. 미성년자 게이트가 차단하는 전이(reviewPolicy에 따라 ' +
-      'awaiting_center_review→center_approved 또는 awaiting_reporter_review→reporter_approved)가 ' +
-      'status_transition_logs에 이미 기록됐으면 게이트 효력이 없어 409로 거부한다. approvedAt은 ' +
-      '판정에 쓰지 않는다(reporter_then_center의 기자 승인 hop에서도 채워지므로 게이트 통과의 ' +
-      '프록시가 아니다). 사유 바디는 받지 않는다(저장할 컬럼이 없다 — T-W2-24 선례).',
-  })
-  withdrawMinorConsent(@CurrentUser() user: User, @Param('id') id: string): Promise<Content> {
-    return this.contents.withdrawMinorConsent(user, id);
-  }
+  // (이력) 舊 POST/DELETE :id/minor-consent(T-W2-23)는 T-W2-36으로 제거 — 앱은 동의서
+  // 수취를 판단하지 않는다(촬영자 책임 모델, 07 §3-3 개정).
 
   @Post(':id/approve')
   @HttpCode(200)

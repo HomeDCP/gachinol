@@ -1,13 +1,10 @@
-import type { Content, MinorConsentFacts, StatusTransitionLog } from '@gachinol/shared';
+import type { Content } from '@gachinol/shared';
 import {
   CONTENT_STATUS_TRANSITIONS,
   ContentStatus,
-  ReviewPolicy,
-  afterReporterApproval,
   canTransitionContent,
   isAutoProgressContentStatus,
   isFailureStatus,
-  isMinorConsentPending,
 } from '@gachinol/shared';
 
 /**
@@ -117,112 +114,5 @@ export function centerActionsFor(c: Pick<Content, 'status'>): CenterActions {
   };
 }
 
-// ── 미성년자 동의 게이트 (대장 #130 — #118 교착의 나머지 절반) ──────────────────
-
-/** 전이 엣지 1건 — 게이트 판정의 표기 단위 */
-export interface ContentTransitionEdge {
-  readonly from: ContentStatus;
-  readonly to: ContentStatus;
-}
-
-/**
- * ★ 미성년자 동의 게이트가 **실제로 지키는 전이 엣지** — 서버 `withdrawMinorConsent()`가 철회 거부
- * 판정에 쓰는 것과 같은 엣지다(services/api/src/contents/contents.service.ts).
- *
- * 분기 조건을 상태 이름이 아니라 shared `afterReporterApproval(policy)`에서 파생한다:
- * 기자 승인이 곧바로 송출로 자동 연쇄하는 정책(= 다음 상태가 `publishing`)에서는 기자 종단 승인이
- * 실질적 "승인"(더 이상의 인간 검토 없이 송출 확정)이고, 그렇지 않으면 센터 승인이 "승인"이다 —
- * `content-workflow.service.ts` policyGuard ④가 밝힌 논리 그대로다.
- * reviewPolicy가 늘어나도 이 함수는 `afterReporterApproval`의 답만 보므로 갈라지지 않는다.
- */
-export const minorConsentGateEdge = (policy: ReviewPolicy): ContentTransitionEdge =>
-  afterReporterApproval(policy) === ContentStatus.Publishing
-    ? { from: ContentStatus.AwaitingReporterReview, to: ContentStatus.ReporterApproved }
-    : { from: ContentStatus.AwaitingCenterReview, to: ContentStatus.CenterApproved };
-
-/**
- * 게이트 통과 여부 3치. `unknown`이 별도로 있는 이유는 아래 `minorConsentGateState` 주석 참조.
- */
-export type MinorConsentGateState = 'passed' | 'not_passed' | 'unknown';
-
-/** 게이트 판정에 필요한 이력 최소 형태 — 화면의 무한스크롤 페이지를 평탄화해 넘긴다 */
-export interface TransitionHistory {
-  readonly logs: readonly Pick<StatusTransitionLog, 'fromStatus' | 'toStatus'>[];
-  /** 이력을 **끝까지** 불러왔는가 (다음 페이지 없음). false면 판정 보류 */
-  readonly complete: boolean;
-}
-
-/**
- * ★ 게이트 통과 판정 — 서버와 **같은 원천**(`status_transition_logs` 실측)에서 파생한다.
- *
- * `approvedAt`을 쓰지 않는다: reporter_then_center의 **기자 승인 hop에서도** 채워지므로
- * 게이트 통과의 프록시가 아니다(서버 D5 정정, T-W2-23). 그 필드로 판정하면
- * `awaiting_center_review`에 멈춘 콘텐츠(아직 게이트 미통과)의 철회를 잘못 막는다.
- *
- * 이력을 끝까지 못 봤으면 `'unknown'` — 못 본 페이지에 게이트 전이가 있을 수 있으므로
- * "미통과"로 단정하지 않는다(fail-closed: 호출부가 철회 버튼을 숨긴다).
- * "미통과"로 단정하면 서버가 409로 거절하는 버튼을 그리게 된다(Wave 8a에서 실제로 저지른 결함).
- */
-export function minorConsentGateState(
-  content: Pick<Content, 'reviewPolicy'>,
-  history: TransitionHistory,
-): MinorConsentGateState {
-  const edge = minorConsentGateEdge(content.reviewPolicy);
-  const passed = history.logs.some((l) => l.fromStatus === edge.from && l.toStatus === edge.to);
-  if (passed) return 'passed';
-  return history.complete ? 'not_passed' : 'unknown';
-}
-
-export interface MinorConsentActions {
-  /** 이 콘텐츠가 이 축과 관계 있는가 — false면 카드 자체를 렌더하지 않는다 */
-  applicable: boolean;
-  /** 확인 버튼 노출 — 서버 `POST /contents/:id/minor-consent`는 hasMinorSubject=false를 거부한다 */
-  canConfirm: boolean;
-  /** 철회 버튼 노출 — 확인됨 ∧ 게이트 미통과가 **확정**된 경우만 */
-  canWithdraw: boolean;
-  /** 확인은 됐는데 철회 버튼을 감춘 이유 (안내 문구 분기용) */
-  withdrawBlockedBy?: 'gate_passed' | 'history_incomplete';
-  /** 판정에 쓰인 게이트 상태 (표시·테스트용) */
-  gate: MinorConsentGateState;
-  /** 판정에 쓰인 게이트 엣지 (표시·테스트용) */
-  gateEdge: ContentTransitionEdge;
-}
-
-/**
- * ★ 동의 확인/철회 액션 파생 (T-W2-32, 대장 #130).
- *
- * "대기인가"의 판정은 shared `isMinorConsentPending` **하나뿐**이다 — api 승인 가드(policyGuard ④)·
- * 목록 필터·보드 배지가 모두 같은 술어를 쓰므로 서버가 막는 조건과 화면이 여는 버튼이 갈릴 수 없다.
- * 여기에 사본 조건(`minorConsentConfirmedAt === null` 직접 비교 등)을 쓰지 말 것.
- *
- * 철회는 서버가 **두 조건**으로 거부한다: ① 미확인(409) ② 게이트 전이가 이미 로그에 있음(409).
- * ①은 `canWithdraw`가 확인 여부를 요구해 자연히 막히고, ②는 `minorConsentGateState`가 미리 판정해
- * 버튼 자체를 그리지 않는다 — "눌러도 거절되는 버튼"을 만들지 않기 위한 것이다.
- */
-export function minorConsentActionsFor(
-  content: Pick<Content, 'reviewPolicy'> & MinorConsentFacts,
-  history: TransitionHistory,
-): MinorConsentActions {
-  const gateEdge = minorConsentGateEdge(content.reviewPolicy);
-  const gate = minorConsentGateState(content, history);
-  const applicable = content.hasMinorSubject;
-  const pending = isMinorConsentPending(content);
-  const confirmed = applicable && !pending;
-
-  const withdrawBlockedBy: MinorConsentActions['withdrawBlockedBy'] = !confirmed
-    ? undefined
-    : gate === 'passed'
-      ? 'gate_passed'
-      : gate === 'unknown'
-        ? 'history_incomplete'
-        : undefined;
-
-  return {
-    applicable,
-    canConfirm: applicable && pending,
-    canWithdraw: confirmed && gate === 'not_passed',
-    ...(withdrawBlockedBy ? { withdrawBlockedBy } : {}),
-    gate,
-    gateEdge,
-  };
-}
+// (이력) 舊 미성년자 동의 게이트 판정부(minorConsentGateEdge/State·minorConsentActionsFor,
+// T-W2-32·대장 #130)는 확인 개념과 함께 T-W2-36으로 제거 — 앱은 동의서 수취를 판단하지 않는다.

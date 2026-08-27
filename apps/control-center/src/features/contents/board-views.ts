@@ -1,9 +1,4 @@
-import type {
-  ContentStatus,
-  MinorConsentFilter,
-  ProgramCategory,
-  StationId,
-} from '@gachinol/shared';
+import type { ContentStatus, ProgramCategory, StationId } from '@gachinol/shared';
 import type { BoardFilter } from '../../query/keys';
 
 /**
@@ -17,24 +12,13 @@ import type { BoardFilter } from '../../query/keys';
 export interface BoardView {
   readonly label: string;
   readonly status?: ContentStatus;
-  readonly minorConsent?: MinorConsentFilter;
   /** 결과 0건일 때의 문구 — 뷰마다 "없다"의 의미가 다르다(미지정 시 기본 문구) */
   readonly emptyMessage?: string;
 }
 
-/**
- * '동의 확인 대기'는 status가 아니라 **직교 축**(`minorConsent`)을 건다 — 미성년자 게이트가 막고
- * 있는 콘텐츠의 status는 reviewPolicy마다 다르고(`reporter_only`는 센터 검토를 아예 거치지 않아
- * `awaiting_reporter_review`에 멈춘다), 그래서 상태 칩만으로는 발견 자체가 불가능했다(대장 #118).
- * 두 번째 자리에 두는 것은 가로 스크롤 없이 보이는 위치라야 "발견 수단"이 실효를 갖기 때문이다.
- */
+// (이력) 舊 '동의 확인 대기' 뷰(T-W2-27, 대장 #118)는 T-W2-36으로 제거 — 판단 축 자체가 소멸.
 export const BOARD_VIEWS: readonly BoardView[] = [
   { label: '검토 대기', status: 'awaiting_center_review' },
-  {
-    label: '동의 확인 대기',
-    minorConsent: 'pending',
-    emptyMessage: '법정대리인 동의 확인을 기다리는 콘텐츠가 없습니다',
-  },
   { label: '전체' },
   { label: '처리 중', status: 'processing' },
   { label: '분석 중', status: 'analyzing' },
@@ -54,7 +38,6 @@ export const toBoardFilter = (
   extra: { category?: ProgramCategory; stationId?: StationId } = {},
 ): BoardFilter => ({
   ...(view?.status ? { status: view.status } : {}),
-  ...(view?.minorConsent ? { minorConsent: view.minorConsent } : {}),
   ...(extra.category ? { category: extra.category } : {}),
   ...(extra.stationId ? { stationId: extra.stationId } : {}),
 });

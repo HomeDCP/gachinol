@@ -1,6 +1,5 @@
-import { MinorConsentFilter } from '@gachinol/shared';
 import { zPage } from '../../common/zod';
-import { zContentListQuery, zCreateContentDraft, zUpdateContentDraft } from './content.schemas';
+import { zCreateContentDraft, zUpdateContentDraft } from './content.schemas';
 
 describe('content.schemas', () => {
   const base = {
@@ -102,32 +101,7 @@ describe('content.schemas', () => {
     });
   });
 
-  describe('zContentListQuery.minorConsent — 게이트 필터 (T-W2-27, 대장 #118)', () => {
-    it('미지정이면 undefined (기존 목록 호출 무회귀)', () => {
-      const res = zContentListQuery.safeParse({});
-      expect(res.success).toBe(true);
-      if (res.success) expect(res.data.minorConsent).toBeUndefined();
-    });
-
-    it.each(Object.values(MinorConsentFilter))('shared 열거값 %s를 받는다', (value) => {
-      const res = zContentListQuery.safeParse({ minorConsent: value });
-      expect(res.success).toBe(true);
-      if (res.success) expect(res.data.minorConsent).toBe(value);
-    });
-
-    it('열거값 밖은 거부 (400 validation_failed)', () => {
-      expect(zContentListQuery.safeParse({ minorConsent: 'unknown' }).success).toBe(false);
-      expect(zContentListQuery.safeParse({ minorConsent: true }).success).toBe(false);
-    });
-
-    it('status와 동시 지정 가능 — 직교 축이다', () => {
-      const res = zContentListQuery.safeParse({
-        minorConsent: 'pending',
-        status: 'awaiting_reporter_review',
-      });
-      expect(res.success).toBe(true);
-    });
-  });
+  // (이력) 舊 minorConsent 필터 스위트(T-W2-27)는 T-W2-36으로 제거.
 
   describe('zPage — 기본값·clamp', () => {
     it('기본 page=1, pageSize=20', () => {

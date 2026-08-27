@@ -235,95 +235,28 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
     });
   });
 
-  describe('미성년자 피촬영자 동의 게이트 (07 §3-3·02 §E-20, T-W2-13 본체, fail-closed)', () => {
-    it('센터 검토 승인: hasMinorSubject=true + 미확인 → invalid_transition (approve() 경유)', async () => {
+  describe('★ T-W2-36 — 동의서 판단 게이트 해체 (촬영자 책임 모델, 사용자 결정 2026-08-27)', () => {
+    // 앱은 동의서 수취 여부를 판단하지 않는다 — hasMinorSubject는 리마인더용 메타데이터일 뿐이며
+    // 어떤 승인 전이도 차단하지 않는다. 동의 수취·보관·입증은 촬영자 책임(07 §3-3 개정).
+    it('센터 검토 승인: hasMinorSubject=true(확인 기록 없음)여도 통과한다', async () => {
       const row = contentRow({
         status: 'awaiting_center_review',
         hasMinorSubject: true,
-        minorConsentConfirmedAt: null,
-      });
-      const { service } = setup(row);
-      const err = await expectDomainError(
-        service.approve(row.id, centerOperatorUser()),
-        'invalid_transition',
-      );
-      expect(err.details).toMatchObject({
-        from: 'awaiting_center_review',
-        to: 'center_approved',
-        hasMinorSubject: true,
-      });
-    });
-
-    it('센터 검토 승인: hasMinorSubject=true + 확인 완료 → 통과 (approve() 경유)', async () => {
-      const row = contentRow({
-        status: 'awaiting_center_review',
-        hasMinorSubject: true,
-        minorConsentConfirmedByUserId: 'u-center',
-        minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
       });
       const { prisma, service } = setup(row);
       await service.approve(row.id, centerOperatorUser());
       expect(prisma.content.updateMany.mock.calls[0][0].data.status).toBe('center_approved');
     });
 
-    it('센터 검토 승인: hasMinorSubject=false → 무영향으로 통과 (기존 경로 회귀 없음)', async () => {
-      const row = contentRow({
-        status: 'awaiting_center_review',
-        hasMinorSubject: false,
-        minorConsentConfirmedAt: null,
-      });
-      const { prisma, service } = setup(row);
-      await service.approve(row.id, centerOperatorUser());
-      expect(prisma.content.updateMany.mock.calls[0][0].data.status).toBe('center_approved');
-    });
-
-    it('범용 transition()으로 center_approved 진입해도 동일 게이트 적용(우회 불가)', async () => {
-      const row = contentRow({
-        status: 'awaiting_center_review',
-        hasMinorSubject: true,
-        minorConsentConfirmedAt: null,
-      });
-      const { service } = setup(row);
-      await expectDomainError(
-        service.transition(row.id, 'center_approved', centerOperatorUser()),
-        'invalid_transition',
-      );
-    });
-
-    it('reviewPolicy=reporter_only: hasMinorSubject=true + 미확인 → 기자 승인 자체가 차단(공개 송출 직행 경로 원천 봉쇄)', async () => {
+    it('reporter_only 말단 승인: hasMinorSubject=true여도 publishing까지 자동 연쇄 통과한다', async () => {
       const row = contentRow({
         status: 'awaiting_reporter_review',
         reviewPolicy: 'reporter_only',
         hasMinorSubject: true,
-        minorConsentConfirmedAt: null,
-      });
-      const { service } = setup(row);
-      await expectDomainError(service.approve(row.id, reporterUser()), 'invalid_transition');
-    });
-
-    it('reviewPolicy=reporter_only: hasMinorSubject=true + 확인 완료 → publishing까지 자동 연쇄 통과', async () => {
-      const row = contentRow({
-        status: 'awaiting_reporter_review',
-        reviewPolicy: 'reporter_only',
-        hasMinorSubject: true,
-        minorConsentConfirmedByUserId: 'u-center',
-        minorConsentConfirmedAt: new Date('2026-08-10T00:00:00.000Z'),
       });
       const { prisma, service } = setup(row);
       await service.approve(row.id, reporterUser());
       expect(prisma.content.updateMany.mock.calls[1][0].data.status).toBe('publishing');
-    });
-
-    it('reviewPolicy=reporter_then_center: hasMinorSubject=true + 미확인이어도 기자 승인 단계는 통과(센터 게이트가 후속으로 차단)', async () => {
-      const row = contentRow({
-        status: 'awaiting_reporter_review',
-        reviewPolicy: 'reporter_then_center',
-        hasMinorSubject: true,
-        minorConsentConfirmedAt: null,
-      });
-      const { prisma, service } = setup(row);
-      await service.approve(row.id, reporterUser());
-      expect(prisma.content.updateMany.mock.calls[1][0].data.status).toBe('awaiting_center_review');
     });
   });
 
@@ -599,33 +532,7 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
       expect(upd.data).toMatchObject({ status: 'regenerating', generation: { increment: 1 } });
     });
 
-    it('★ 대장 #117 — 세대가 오르면 미성년자 동의 확인이 무효화된다 (다른 영상이므로 재확인 필요)', async () => {
-      const row = contentRow({
-        status: 'revision_requested',
-        generation: 1,
-        hasMinorSubject: true,
-        minorConsentConfirmedByUserId: 'u-center',
-        minorConsentConfirmedAt: new Date(),
-      });
-      const { prisma, service } = setup(row);
-
-      await service.regenerate(row.id, centerOperatorUser());
-
-      expect(prisma.content.updateMany.mock.calls[0][0].data).toMatchObject({
-        minorConsentConfirmedByUserId: null,
-        minorConsentConfirmedAt: null,
-      });
-    });
-
-    it('미성년자 플래그가 없으면 동의 필드를 건드리지 않는다 (무관한 콘텐츠 무영향)', async () => {
-      const row = contentRow({ status: 'revision_requested', hasMinorSubject: false });
-      const { prisma, service } = setup(row);
-
-      await service.regenerate(row.id, centerOperatorUser());
-
-      const data = prisma.content.updateMany.mock.calls[0][0].data;
-      expect(data).not.toHaveProperty('minorConsentConfirmedAt');
-    });
+    // (이력) 舊 대장 #117 세대별 확인 무효화 테스트 2건은 확인 개념과 함께 T-W2-36으로 제거.
 
     it.each([
       ['analyzing', 'reanalyze=true 분기'],

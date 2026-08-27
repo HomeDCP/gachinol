@@ -5,7 +5,7 @@ import type { AiAnalysis } from '../analysis/ai-analysis';
 import type { Publication } from '../distribution/publication';
 import type { MediaAsset } from '../media/media-asset';
 import type { CultureTopic, ProgramCategory } from './category';
-import type { CaptionFilter, Content, MinorConsentFilter } from './content';
+import type { CaptionFilter, Content } from './content';
 import type { RevisionRequest } from './revision-request';
 import type { ContentStatus } from './workflow';
 
@@ -15,12 +15,6 @@ export interface ContentListQuery extends PageQuery {
   category?: ProgramCategory;
   /** 관제 공용 */
   stationId?: StationId;
-  /**
-   * 미성년자 동의 게이트 필터 (T-W2-27, 대장 #118) — 센터가 "동의 확인 대기" 대기열을 발견하는
-   * 목록 경로. status와 **직교**한다: `reviewPolicy='reporter_only'`는 센터 검토를 거치지 않아
-   * 차단된 콘텐츠가 `awaiting_reporter_review`에 멈춰 있으므로 상태 필터로는 골라낼 수 없다.
-   */
-  minorConsent?: MinorConsentFilter;
   /**
    * 자막 대기열 필터 (T-W2-34, 대장 #123) — 간단 모드·주민 제보로 자막 없이 들어온 콘텐츠를
    * 지사 담당자가 발견하는 경로. status와 **직교**하지 않는다(값 자체가 상태 조건을 포함한다 —
@@ -60,9 +54,8 @@ export interface UpdateContentDraftRequest {
   cultureTopics?: readonly CultureTopic[];
   scenes?: readonly SceneInput[];
   /**
-   * 피촬영자 중 만 14세 미만 존재 여부 (T-W2-23). fail-closed 불변식: true→false로 내리면
-   * 서버가 같은 update에서 확인 기록(minorConsentConfirmedByUserId·At)도 함께 지운다 —
-   * 켬→센터 확인→끔→다시 켬으로 동의 게이트를 우회하는 경로를 막는다.
+   * 피촬영자 중 만 14세 미만 존재 여부 (T-W2-23 → T-W2-36 재정의: 리마인더용 메타데이터 —
+   * 서버는 값을 저장만 하고 어떤 판단도 하지 않는다).
    */
   hasMinorSubject?: boolean;
   targetChannelAccountIds?: readonly ChannelAccountId[];

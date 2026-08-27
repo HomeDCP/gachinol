@@ -18,7 +18,6 @@ import {
   CaptionFilter,
   ContentStatus,
   CultureTopic,
-  MinorConsentFilter,
   ProgramCategory,
   requiresCultureTopic,
 } from '@gachinol/shared';
@@ -127,11 +126,6 @@ export const zContentListQuery = zPage.extend({
   category: zEnum(ProgramCategory).optional(),
   /** 관제 공용 — reporter는 서버가 자기 소속으로 덮어씀 */
   stationId: zId<StationId>().optional(),
-  /**
-   * 미성년자 동의 게이트 필터 (T-W2-27, 대장 #118) — 값은 shared `MinorConsentFilter`가 원천.
-   * status와 직교한다(차단된 콘텐츠의 상태가 reviewPolicy마다 다르다).
-   */
-  minorConsent: zEnum(MinorConsentFilter).optional(),
   /**
    * 자막 대기열 필터 (T-W2-34, 대장 #123) — 값·의미의 원천은 shared `CaptionFilter`.
    * `needed`는 상태 조건(`CAPTION_EDITABLE_CONTENT_STATUSES`)을 포함하므로 status 필터와

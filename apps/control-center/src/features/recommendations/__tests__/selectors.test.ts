@@ -38,9 +38,7 @@ const content = (n: number): ContentSummary => ({
   reporterId: null,
   reporterName: null,
   durationSec: 120,
-  // 미성년자 동의 게이트 (T-W2-27) — 추천 항목은 이미 published라 게이트와 무관하다
   hasMinorSubject: false,
-  minorConsentConfirmedAt: null,
   createdAt: '2026-06-02T00:00:00.000Z',
   publishedAt: '2026-06-02T01:00:00.000Z',
 });

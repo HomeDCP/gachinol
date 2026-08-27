@@ -71,8 +71,6 @@ export const contentRow = (over: Partial<ContentRow> = {}): ContentRow => ({
   approvedByUserId: null,
   approvedAt: null,
   hasMinorSubject: false,
-  minorConsentConfirmedByUserId: null,
-  minorConsentConfirmedAt: null,
   publishedAt: null,
   createdAt: NOW,
   updatedAt: NOW,
