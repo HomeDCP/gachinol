@@ -37,8 +37,12 @@ import { describeWithDb, e2eDb } from './e2e-db';
 const d = describeWithDb();
 
 const S3_BUCKET = 'gachinol-media';
-const S3_KEY = 'S3RVER';
-const S3_SECRET = 'S3RVER';
+// ★ E2E_S3_ENDPOINT/E2E_REDIS_URL 주입 지원(media-pipeline.e2e-spec.ts와 동형, 대장 #167) —
+// s3rver는 aws-chunked 스트림 업로드를 디코드하지 못해 파일을 손상시키고, auto_edit이 만든
+// edited_master를 preview가 다시 읽으면서 이 스펙은 embedded 경로에서 구조적으로 preview_failed가
+// 된다(선존 — T-W2-36 검증 중 발견). MinIO 주입 시 같은 왕복이 바이트 일치한다.
+const S3_KEY = process.env.E2E_S3_KEY ?? 'S3RVER';
+const S3_SECRET = process.env.E2E_S3_SECRET ?? 'S3RVER';
 
 interface Embedded {
   redisUrl: string;
@@ -113,14 +117,23 @@ async function startStubAiWorker(): Promise<StubAiWorker> {
 
 async function startEmbedded(): Promise<Embedded | null> {
   try {
-    const { RedisMemoryServer } = await import('redis-memory-server');
+    let redisUrl = process.env.E2E_REDIS_URL;
+    let stopRedis: () => Promise<void> = async () => undefined;
+    if (!redisUrl) {
+      const { RedisMemoryServer } = await import('redis-memory-server');
+      const redis = new RedisMemoryServer();
+      const host = await redis.getHost();
+      const port = await redis.getPort();
+      redisUrl = `redis://${host}:${port}`;
+      stopRedis = async () => void (await redis.stop().catch(() => undefined));
+    }
+
+    const external = process.env.E2E_S3_ENDPOINT;
+    if (external) {
+      return { redisUrl, s3Endpoint: external, stop: stopRedis };
+    }
+
     const S3rver = (await import('s3rver')).default;
-
-    const redis = new RedisMemoryServer();
-    const host = await redis.getHost();
-    const port = await redis.getPort();
-    const redisUrl = `redis://${host}:${port}`;
-
     const dir = mkdtempSync(join(tmpdir(), 's3rver-ai-e2e-'));
     const s3port = 9700 + Math.floor(Math.random() * 100);
     const s3 = new S3rver({ port: s3port, address: '127.0.0.1', silent: true, directory: dir });
@@ -132,7 +145,7 @@ async function startEmbedded(): Promise<Embedded | null> {
       s3Endpoint,
       stop: async () => {
         await s3.close().catch(() => undefined);
-        await redis.stop().catch(() => undefined);
+        await stopRedis();
       },
     };
   } catch (e) {
@@ -181,7 +194,8 @@ d('analysis pipeline (withDb + embedded redis/s3 + stub ai-worker)', () => {
       forcePathStyle: true,
       credentials: { accessKeyId: S3_KEY, secretAccessKey: S3_SECRET },
     });
-    await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }));
+    // 외부 저장소(MinIO)는 버킷이 이미 있을 수 있다 — 중복 생성은 무해 무시 (media-pipeline 동형)
+    await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET })).catch(() => undefined);
 
     // ③ tiny mp4
     const wdir = mkdtempSync(join(tmpdir(), 'ai-e2e-'));
