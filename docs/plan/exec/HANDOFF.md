@@ -4,11 +4,54 @@
 > ([EXEC-PLAN](EXEC-PLAN.md) §1 → [EXEC-DECISIONS](EXEC-DECISIONS.md) #28~ → 대장 [PIVOT-PLAN](../PIVOT-PLAN.md) §6-11 순).
 > **이 문서의 모든 수치는 재현 명령을 함께 적는다** — 기록치는 출처가 아니라 검증 대상이다(규율 1).
 
+## 0. 다음 작업 — 기자 웹 실기 업로드 검증 (사용자 지시 2026-08-28)
+
+**T-W2-02(PR #75)가 배포됐지만 실기 확인이 없다.** CI가 증명한 것은 빌드·배포 통과까지이고,
+브라우저에서 실제 영상을 올려 `uploaded`까지 가는 경로는 사람이 밟아야 한다 — 2026-08-15 실증에서
+**잠복 결함 6건이 이 방식으로만 드러났다**(EXEC-DECISIONS #26). 태스크 ID 없는 검증 작업이며
+코드 태스크 모수(§1)와 무관하다.
+
+**⚠️ 착수 전 확인 2건 — 여기서 막힐 가능성이 높다**(2026-08-28 코드 실측, 아직 실기 미확인):
+
+1. **nginx가 IP 직접 접근을 끊는다.** `infra/docker/nginx.conf:85` default server가 등록되지 않은
+   Host를 `return 444`로 차단한다 — `http://<제온IP>:8081`은 **빈 응답**이고 이는 장애가 아니라
+   의도된 동작이다. 기자 웹은 `reporter.${DOMAIN}` vhost로만 응답하며 `DOMAIN` 기본값은
+   `gachinol.local`(`docker-compose.xeon.yml`). 접속하려면 hosts 매핑이 필요하다:
+   `100.92.205.127  reporter.gachinol.local` → `http://reporter.gachinol.local:8081`
+   (포트는 `WEB_PORT_PUBLISH` 기본 8081). 제온 env의 `DOMAIN`이 다르면 그 값으로.
+2. **번들의 API 주소가 `localhost`일 수 있다.** `Dockerfile.web:65`가
+   `ARG EXPO_PUBLIC_API_URL=http://localhost:4000`이고 CI는 Actions vars `WEB_EXPO_PUBLIC_API_URL`이
+   **설정된 경우에만** 덮어쓴다(`deploy-web.yml:125`). 미설정이면 브라우저가 자기 PC의 4000을 호출해
+   **로그인부터 실패**한다. §8의 `WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL`과 같은 계열의 미확인 항목이다.
+
+**📌 정본 불일치 1건(확인 후 정정 대상)**: `nginx.conf`의 API 프록시 주석은 *"웹 번들은
+`EXPO_PUBLIC_API_URL=/`(**상대 경로**)로 빌드된다"*고 단언하는데, 실제 기본값은 위 ②처럼
+`http://localhost:4000`이다. vars에 `/`가 들어 있으면 주석이 맞고, 비어 있으면 **주석이 stale**이다
+(그 경우 주석 정정 또는 Dockerfile 기본값을 `/`로 바꾸는 쪽이 맞다 — 상대 경로가 3앱 vhost 프록시
+설계의 전제다). 실기 진입 시 함께 판정할 것.
+
+**체크포인트(이번 변경이 실제로 도는지)** — 기자 로그인 → 새 콘텐츠 → **보관함에서 영상 선택**
+(카메라 직접 촬영은 T-W2-03/T-NC-03 PoC 대기라 범위 밖):
+① 파일 선택 다이얼로그가 열리는가 ② **진행률이 0에서 실제로 올라가는가**(XHR `upload.onprogress`가
+붙었다는 증거 — 그전엔 화면이 도달조차 못 했다) ③ 완료 후 `uploaded`로 넘어가는가.
+
+**실패 시 네트워크 탭 판별**: `POST /v1/contents/:id/upload-url`이 **400** → `sizeBytes` 폴백 실패
+(어댑터가 Blob 실측으로 막아둔 지점) · **PUT 요청 자체가 없음** → 어댑터 스왑 실패(웹 번들이 네이티브
+경로를 잡음) · **PUT 403/연결 실패** → presigned URL·MinIO CORS.
+
+**⚠️ 환경 제약(2026-08-28 실측)**: **CCR 리모트 세션에서는 제온에 닿지 않는다**(LAN `192.168.0.101`·
+Tailscale `100.92.205.127` 둘 다 타임아웃) — 배포 SSH는 GitHub 러너만 테일넷에 합류한다. 게다가
+**이 컨테이너에는 docker 데몬이 없어**(`docker info` 실패) Postgres·MinIO를 띄운 로컬 풀스택 재현도
+불가하다. ⇒ **실기는 사용자 맥에서 밟아야 하고**, 세션은 결과(스크린샷·네트워크 탭)를 받아 진단한다.
+맥 로컬 재현 경로는 `pnpm infra:up`(docker) → `pnpm --filter @gachinol/api dev` →
+`pnpm --filter @gachinol/reporter exec expo start --web`(`apps/reporter/.env`의
+`EXPO_PUBLIC_API_URL`을 LAN IP로 — CLAUDE.md §9의 `localhost` 함정과 동일).
+
 ## 1. 현재 위치
 
 | 항목 | 값 | 재현 |
 |---|---|---|
-| main | `b6fcfb9` (PR #75) | `git fetch origin main && git log --oneline -1 origin/main` (§7-0 — 로컬 ref는 stale일 수 있다) |
+| main | `537119a` (PR #76) | `git fetch origin main && git log --oneline -1 origin/main` (§7-0 — 로컬 ref는 stale일 수 있다) |
 | 열린 PR | 0 (이 문서 자신의 docs PR 제외) | `gh pr list --state open` |
 | 대장 | 167행 / 대기 42 (#73·#74·#75 전후 불변 — 2026-08-28 재실측) | 아래 §5 |
 | 코드 태스크 | **46건 중 27 완료 · 19 미착수 (59%)** (2026-08-28 T-W2-02 머지 후 재실측) — ⚠️ grep 원값은 **34**(E2 §C 행 48 기준, 명령은 §5): 언급-오검출 **5건**(T-W1-11b·T-W2-17·T-W4-02 §7-1 + T-W2-05·T-W1-07a §7-0) + **모수 밖 신설 2건**(T-W2-19·T-W2-35 — E2에 행은 있으나 §0 총계 "코드 46"에 미편입) 포함. 검산: 미매치 14 + 잔여 오검출 5 = **미착수 19**. ⚠️ **T-W2-02는 오검출이었다가 이번에 실구현됐다** — 그래서 원값 34는 26/46 시점과 똑같고 실질만 +1이다(§5 마지막 경고). 모수 밖 완료 3건 — T-W2-19·T-W2-35·**T-W2-36(E2 행 자체가 없음)** — 은 **대장 기준으로 셀 것**(#71·#147·#166 비고) | 아래 §5 |
@@ -54,7 +97,7 @@ T-W2-17 Playwright — 후자는 T-W2-07이 동반 소유) + W4 정리 단계 **
 - **머지분 main 런 #49 deploy 잡 success**(11:23:55, 제온 web 컨테이너 갱신). purge만 의도된 skip.
 
 ⚠️ **실기 확인은 아직이다** — CI가 증명한 것은 빌드·배포 통과까지다. 브라우저에서 실제로 영상을
-올려 `uploaded`까지 가는 한 바퀴는 사람이 밟아야 한다(§8).
+올려 `uploaded`까지 가는 한 바퀴는 사람이 밟아야 한다 → **§0이 다음 작업으로 상세를 갖고 있다**.
 
 ## 3. 그 전 완료 — T-W2-35 주민 링크 발급 UI (2026-08-28, PR #73 · 대장 #147)
 
@@ -188,6 +231,5 @@ git log origin/main --grep="<ID>" --pretty=%s | grep -qE "^(feat|fix|refactor|pe
   편성표 화면에 시:분이 들어가면 실패하는 테스트가 걸려 있어 누락 시 CI가 잡는다.
 - **Actions vars `WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL` 설정 여부**(T-W2-35 후속) — 미설정이어도
   발급 화면은 경로 표시+안내로 정직 강등되므로 차단 아님. 설정하면 공유 URL이 완전한 절대 URL로 복사된다.
-- **기자 웹 업로드 실기 한 바퀴**(T-W2-02 후속) — 브라우저에서 보관함 영상 선택 → 진행률 →
-  `uploaded` 도달까지. **CI가 증명한 것은 빌드·배포 통과까지이고 실기 재생 경로는 사람이 밟아야 한다**
-  (2026-08-15 실증 때 잠복 결함 6건이 이 방식으로만 드러났다 — EXEC-DECISIONS #26).
+- **기자 웹 업로드 실기 한 바퀴**(T-W2-02 후속) — **§0으로 승격**(다음 작업). 접속 관문 2건·체크포인트·
+  실패 판별표가 거기 있다. 세션은 제온에 닿지 않으므로 **실기는 사용자 맥에서** 밟는다.
