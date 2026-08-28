@@ -20,7 +20,7 @@
 | 태스크 | 내용 | 비고 |
 |---|---|---|
 | T-W2-07 | 관제 3단계·기자 4단계 시나리오 e2e | 화면 단위 회귀 방어가 아직 없다. **L + `@playwright/test` 신규 의존성(lockfile 웨이브당 1건) + T-W2-17 CI 배선 동반** — 한 세션을 통째로 쓸 것(2026-08-28 판정) |
-| T-W2-02 | 기자 웹 업로더 어댑터(XHR `upload.onprogress`/`abort`, 어댑터 2 + DI 배선 1 = 3파일) | ⚠️ **오검출 정정 재편입**(§7-0 — 舊 계수가 완료로 오계상). 구독자 주민 업로더 `src/upload/uploader.web.ts`(5c6023f, DOM input+XHR)가 리포 내 선례 |
+| T-W2-02 | 기자 웹 업로더 어댑터(XHR `upload.onprogress`/`abort`, 어댑터 2 + DI 배선 1 = 3파일) | ⚠️ **오검출 정정 재편입**(§7-0 — 舊 계수가 완료로 오계상). 구독자 주민 업로더 `src/upload/uploader.web.ts`(5c6023f, DOM input+XHR)가 리포 내 선례 → **같은 날 착수 완료(PR #75**, 사용자 확정) — 머지되면 §1은 27/46(59%)·미착수 19가 된다 |
 | T-W3-02 | 3앱 PWA manifest + SW 배선 확장 | T-W1-04 기반 존재 |
 | T-W3-01 | 웹푸시(VAPID) 구독·발송 API | T-W3-03·04의 선행 |
 | T-W2-05 | 기자 앱 토큰 전환 + `theme.ts` 제거(21파일 XL) | ⚠️ **오검출 정정 재편입**(§7-0). T-W2-06과 동형 — reporter `src/ui/theme.ts` 실존(hex 하드코딩)이 미착수의 물증 |
