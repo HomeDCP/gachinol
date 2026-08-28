@@ -1,5 +1,19 @@
 # WORKLOG
 
+## 2026-08-29 — 기자 웹 실기 업로드 검증 (HANDOFF §0)
+
+- **작업명**: 제온 실배포 기자 웹에서 촬영본 실기 업로드 한 바퀴(로그인→업로드→프리뷰) 검증.
+  역할 분담: **사용자가 맥 브라우저로 직접 밟고**, 세션은 제온 무접근(LAN·Tailscale 타임아웃) 상태에서
+  안내·진단(§0 실패 판별표: upload-url 400=sizeBytes 폴백 / PUT 부재=어댑터 스왑 / PUT 403=presign·CORS).
+- **선행 관문 2건**: ① 접속 — nginx default_server 444 차단 대비 hosts 매핑(reporter.gachinol.local)·
+  포트·제온 `DOMAIN` 실값 확인 ② 번들 API URL — Dockerfile.web 기본값 `http://localhost:4000` 대비
+  Actions vars `WEB_EXPO_PUBLIC_API_URL` 실값·배포 번들 grep 확인. ③ 관문 결과로 nginx.conf 주석 ↔
+  Dockerfile 기본값 불일치 판정(주석 stale이면 정정 PR).
+- **순서 결정**: PR #77(HANDOFF §0 신설, docs-only)은 검증과 독립 → **검증 먼저, 결과 반영 PR은
+  #77 머지 후**(같은 파일 충돌 방지). 머지는 사용자 실행(머지=제온 자동 배포 관례).
+- **비고**: 실기 검증은 태스크 ID 없는 작업(코드 태스크 모수 무관). TDD 게이트는 코드 수정이
+  발생하는 시점에 적용.
+
 ## 2026-08-28 — T-W2-02 기자 웹 업로더 어댑터 (오검출 정정 후속)
 
 - **작업명**: 기자 웹 업로드를 실제로 가능하게 하는 XHR 어댑터 — 02 §E-7 "웹용 업로더 어댑터
