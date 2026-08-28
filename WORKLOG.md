@@ -27,7 +27,11 @@
   `onprogress` 1파일·`createUploadTask` 0건 — 네이티브 업로드 경로가 웹 번들에서 소거) · E2 판정
   grep(`upload.onprogress|XMLHttpRequest`, spec 제외) **5**(등재 시 0). 콜드 인스톨은
   `REDISMS_DISABLE_POSTINSTALL=1` 선행(ci.yml env 주석의 함정이 로컬 인스톨에도 그대로 적용).
-- **상태**: **완료** — PR 준비 완료. 머지=제온 자동 배포이므로 머지는 사용자 실행(관례).
+- **상태**: **완료 · 머지 반영**(2026-08-28) — 사용자 지시로 PR #75 머지(main `b6fcfb9`).
+  머지분 **Deploy Web 런 #49의 deploy 잡 success 실측**(잡 단위: preflight → build web 2분 19초
+  (코드 변경이라 캐시 미스) → deploy 제온 SSH `compose pull + up` 11:23:55 완료, purge만 의도된 skip)
+  → 어댑터가 제온 web 컨테이너에 실제 반영. ⚠️ **실기 한 바퀴는 미확인**(HANDOFF §8 등재) —
+  CI는 빌드·배포 통과까지만 증명한다.
 
 ## 2026-08-28 — T-W2-35 기자 웹 주민 링크 발급 UI (대장 #147)
 
