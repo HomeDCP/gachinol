@@ -1,5 +1,40 @@
 # WORKLOG
 
+## 2026-08-28 — T-W2-35 기자 웹 주민 링크 발급 UI (대장 #147)
+
+- **작업명**: 지사 담당자가 주민 임시 업로드 링크를 발급·복사·공유하는 화면 — 03 §C-5 주민 공급
+  경로의 마지막 실사용 공백(#147: 서버 `POST /v1/resident-links`·주민 소비 화면(T-W2-09)은 완비인데
+  발급 화면이 0건이라 경로 전체가 실사용 불가).
+- **1순위 재판정 근거**: HANDOFF §2 후보 7건 중 T-W1-07c는 실존하지 않는 태스크(E2 402행 "신설하지
+  않음" 판정 종결 — HANDOFF 후보 목록이 stale). 잔여 6건 중 본 태스크가 ① 유일하게 "완성된
+  서버+소비 화면을 실사용으로 전환" ② 사용자 채번 지시(#147) ③ 신규 의존성 0·CI 무접촉이라
+  머지=배포 체제에서 최저 리스크. 차순위 T-W2-07(e2e)은 L 사이즈+신규 의존성+T-W2-17 CI 배선
+  동반이라 독립 세션 감.
+- **§1 실측에서 발견한 문서 어긋남 2건(별도 정정 대상)**: ⓐ 진행률 오검출이 §7-1 기지 1건이
+  아니라 3건(T-W1-11b·T-W2-17·T-W4-02 — 전부 커밋 260d9f0의 언급, 산출물 미실재. 실제 29/46=63%)
+  ⓑ #147 재현 명령이 주민 소비 측 POST(subscriber 3건)를 세어 착수 전인데 "해소≥1"로 읽힘
+  (규율 17 위반 유형) → 본 작업에서 발급 본질을 재는 명령으로 정정.
+- **범위**: `apps/reporter` — `src/api/resident-links.ts`(신규)·`src/features/resident-uploads/issue.ts`
+  (신규)·`app/(app)/resident-uploads/issue.tsx`(신규)·`index.tsx`(진입점 수정) + 신규 공개 키
+  `EXPO_PUBLIC_SUBSCRIBER_WEB_URL` 3점 배선(ⓐ `.env.example` ⓑ `infra/docker/Dockerfile.web`
+  ⓒ `.github/workflows/deploy-web.yml` — Dockerfile.web 62행 명문 규칙·대장 #146. E2 예상 경로
+  밖 파일 3건은 이 규칙이 강제하는 확장이며 미배선 시 프로덕션 번들에서 키가 영원히 빈다).
+- **설계 고정**: 서버 제약치(72h·5건·500MB)는 화면에 박지 않고 발급 응답 값만 렌더(E2 명문).
+  토큰 원문은 발급 응답 1회 노출(서버 해시 보관) → 화면에 "지금만 복사 가능" 경고 필수.
+  공유 URL = `<구독자 오리진>/upload/<token>`, 오리진은 env 우선 → 웹 호스트
+  `reporter.<rest>`→`watch.<rest>` 유도 폴백 → 둘 다 없으면 경로만 표시+설정 안내.
+- **검증 실측**: TDD 레드 3스위트(모듈 부재로 전건 실패) 확인 후 구현 → 신규 11 테스트 그린 ·
+  reporter 전체 **291/291**(기준선 280+11) · typecheck 0 · lint 0 · **web export 성공**
+  (`/(app)/resident-uploads/issue` 라우트 산출물 포함) · AC5 grep(.env.example 1·Dockerfile.web 2·
+  deploy-web.yml 2) · 대장 무결성(daejang-recheck 어긋남 0·행수 167·대기 42 불변) ·
+  #147 신규 재현 명령 실측 2(≥1). 테스트 하니스 함정: 이 리포 @testing-library/react-native에선
+  `render()`가 **await 대상**이다(안 기다리면 쿼리 없는 Promise — detail-screen.test.tsx가 선례).
+- **상태**: **완료** — qa-verifier **AC 5/5 PASS**(독립 재실행: 3스위트 11테스트 전건·전체 291/291
+  무회귀·typecheck 클린·하드코딩 리터럴 0건·3점 배선 1·2·2 정확·변경 범위 준수. 참고 관찰:
+  로컬 `main` ref stale로 `git diff main...HEAD`가 머지된 T-W2-36 파일을 섞어 보임 — 오검출,
+  실 diff는 `29985e2...HEAD`로 재야 한다). PR 준비 완료 — **머지=제온 자동 배포**이므로 머지는
+  사용자 실행(HANDOFF §7-1 관례)
+
 ## 2026-08-28 — T-W2-36 동의서 판단 게이트 해체 (촬영자 책임 모델 전환)
 
 - **작업명**: 미성년자 동의서 "판단" 장치 전면 제거 — 플래그(`hasMinorSubject`)는 리마인더로 유지.

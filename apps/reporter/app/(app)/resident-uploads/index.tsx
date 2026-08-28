@@ -70,6 +70,12 @@ export default function ResidentUploadQueueScreen(): React.JSX.Element {
   return (
     <Screen>
       <Stack.Screen options={{ title: '주민 업로드 검수' }} />
+      {/* 발급 진입점(T-W2-35, 대장 #147) — 발급 화면에 도달할 수 없으면 03 §C-5 경로 전체가 실사용 불가 */}
+      <View style={styles.issueRow}>
+        <Pressable style={styles.issueButton} onPress={() => router.push('/resident-uploads/issue')}>
+          <Text style={styles.issueButtonLabel}>주민 링크 발급</Text>
+        </Pressable>
+      </View>
       <View style={styles.filterRow}>
         {RESIDENT_UPLOAD_FILTERS.map((f, index) => {
           const selected = index === filterIndex;
@@ -120,6 +126,16 @@ export default function ResidentUploadQueueScreen(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
+  issueRow: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  issueButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.md,
+    minHeight: 44,
+  },
+  issueButtonLabel: { fontSize: typo.body, fontWeight: '600', color: '#FFFFFF' },
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
