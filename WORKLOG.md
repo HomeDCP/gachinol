@@ -1,5 +1,34 @@
 # WORKLOG
 
+## 2026-08-28 — T-W2-02 기자 웹 업로더 어댑터 (오검출 정정 후속)
+
+- **작업명**: 기자 웹 업로드를 실제로 가능하게 하는 XHR 어댑터 — 02 §E-7 "웹용 업로더 어댑터
+  신규 작성(fetch/XHR `upload.onprogress`/`abort`) → 기존 `useUploadService()` DI 지점에 주입".
+- **1순위 재판정 근거(사용자 확정 2026-08-28)**: HANDOFF 현행화 중 언급-오검출 전수 스윕으로
+  T-W2-05·T-W2-02·T-W1-07a가 실은 미착수로 판명(진행률 26/46 정정, PR #74). 그중 T-W2-02는
+  기존 `http-upload-service`가 expo-file-system(네이티브 전용) 단일 경로라 **기자 웹에서 촬영
+  업로드 자체가 기능 부재** — W2 목표 한복판의 공백이 "완료"로 가려져 있던 것. 3파일 S·신규
+  의존성 0·구독자 선례 재사용으로 후보 8건 중 최저 리스크·최고 실사용 가치. AskUserQuestion 확정.
+- **범위**: `apps/reporter/src/upload/` — 신규 2(`xhr-upload-service.ts` 로직+DI ·
+  `http-upload-service.web.ts` 웹 해석 진입) + 수정 1(`http-upload-service.ts` —
+  `notifyUploadFailed`를 xhr 쪽으로 이동) + 신규 테스트 1스위트. **E2 문언과의 차이 2건(근거)**:
+  ⓐ 수정 파일이 `use-upload-service.ts`가 아니라 `http-upload-service.ts`다 — DI 주입을 Metro
+  플랫폼 해석(`.web.ts`, 구독자 `uploader.web.ts` 선례)으로 성립시켜 훅·화면 코드 무변경이 되고
+  expo-file-system이 웹 번들에서 빠진다(총 3파일은 동일). ⓑ 이동은 웹 해석에서
+  `'./http-upload-service'`가 `.web.ts` 자신이라 생기는 순환 회피 + 복구 의미론 사본 금지.
+- **설계 고정**: ⓪ 본문(`resolveBody`)을 ①보다 **먼저** 읽는다 — 읽기 실패 시 서버 무접촉(draft
+  유지. 네이티브는 전송 태스크가 읽기를 지연해 이 순서가 불가). `sizeBytes`는 실측 Blob 크기
+  우선 — 웹 픽커가 fileSize를 안 줘 호출부가 0을 보내면(`asset.fileSize ?? 0`) 서버
+  zod(positive)에서 ①부터 400이 나던 것을 어댑터가 흡수. 에러 메시지에 상태코드만(presigned
+  서명 URL 비유출 — 구독자 dom-uploader 규칙 답습). 취소는 `UploadAbortedError`로 기존 화면
+  분기(phase='aborted') 재사용.
+- **검증 실측**: TDD 레드(모듈 부재) 확인 후 구현 → 신규 8 테스트 그린 · reporter 전체
+  **299/299**(기준선 291+8) · typecheck 0 · lint 0 · web export 성공 + **번들 스왑 실증**(웹 번들
+  `onprogress` 1파일·`createUploadTask` 0건 — 네이티브 업로드 경로가 웹 번들에서 소거) · E2 판정
+  grep(`upload.onprogress|XMLHttpRequest`, spec 제외) **5**(등재 시 0). 콜드 인스톨은
+  `REDISMS_DISABLE_POSTINSTALL=1` 선행(ci.yml env 주석의 함정이 로컬 인스톨에도 그대로 적용).
+- **상태**: **완료** — PR 준비 완료. 머지=제온 자동 배포이므로 머지는 사용자 실행(관례).
+
 ## 2026-08-28 — T-W2-35 기자 웹 주민 링크 발급 UI (대장 #147)
 
 - **작업명**: 지사 담당자가 주민 임시 업로드 링크를 발급·복사·공유하는 화면 — 03 §C-5 주민 공급
