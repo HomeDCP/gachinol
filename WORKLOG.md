@@ -1,5 +1,51 @@
 # WORKLOG
 
+## 2026-08-29 — 기자 웹 실기 업로드 검증 (HANDOFF §0)
+
+- **작업명**: 제온 실배포 기자 웹에서 촬영본 실기 업로드 한 바퀴(로그인→업로드→프리뷰) 검증.
+  역할 분담: **사용자가 맥 브라우저로 직접 밟고**, 세션은 제온 무접근(LAN·Tailscale 타임아웃) 상태에서
+  안내·진단(§0 실패 판별표: upload-url 400=sizeBytes 폴백 / PUT 부재=어댑터 스왑 / PUT 403=presign·CORS).
+- **선행 관문 2건**: ① 접속 — nginx default_server 444 차단 대비 hosts 매핑(reporter.gachinol.local)·
+  포트·제온 `DOMAIN` 실값 확인 ② 번들 API URL — Dockerfile.web 기본값 `http://localhost:4000` 대비
+  Actions vars `WEB_EXPO_PUBLIC_API_URL` 실값·배포 번들 grep 확인. ③ 관문 결과로 nginx.conf 주석 ↔
+  Dockerfile 기본값 불일치 판정(주석 stale이면 정정 PR).
+- **순서 결정**: PR #77(HANDOFF §0 신설, docs-only)은 검증과 독립 → **검증 먼저, 결과 반영 PR은
+  #77 머지 후**(같은 파일 충돌 방지). 머지는 사용자 실행(머지=제온 자동 배포 관례).
+- **비고**: 실기 검증은 태스크 ID 없는 작업(코드 태스크 모수 무관). TDD 게이트는 코드 수정이
+  발생하는 시점에 적용.
+- **결과 (2026-08-30): 완주 — `published` + 공개 피드 노출 실증.** 전이 사슬 전 구간
+  (draft→uploading→uploaded→processing→analyzing→preview_generating→기자승인→센터승인→publishing→
+  published) + 자산 5종 ready(edited_master·preview 포함) + durationSec 95 기록. §0 체크포인트 ①②③
+  전부 통과(진행률 실상승 = T-W2-02 XHR 어댑터 실동작 실증). **그 과정에서 배포·설정 결함 6건을
+  실측으로 적발·해소**(전부 실기가 아니면 안 드러나는 층위 — 2026-08-15 실증의 교훈 재현):
+  1. **제온 `inet filter forward`(policy drop)가 LAN→도커 발행 포트 전멸시킴** — nftables는 모든
+     테이블의 forward 훅을 평가해 Docker `ip filter` accept가 무효였다(tcpdump+카운터로 드랍 지점 확정).
+     `br-*` accept 2줄 런타임+`/etc/nftables.conf` 영속(백업·`nft -c`·제온 decisions.md 기록).
+     파일의 "docker NAT와 무관" 주석은 오판이라 정정.
+  2. **Actions vars `WEB_EXPO_PUBLIC_API_URL` 미설정** → 번들 API가 `http://localhost:4000`
+     (3앱 grep 실측) = 로그인부터 불가·터널 구독자 웹도 API 불통. `/`(상대 경로) 설정 + 재배포
+     (런 33221872913 deploy success)로 nginx 설계 전제와 정합 — **관문 ③의 nginx 주석은 이로써 참이
+     되어 정정 PR 불요 판정**.
+  3. **제온 `DOMAIN=localhost`** → vhost가 `reporter.localhost`인데 브라우저는 `*.localhost`를
+     루프백 강제 해석(RFC 6761)이라 LAN 접근 구조적 불가 → `gachinol.local` 교정.
+  4. **`WEB_ORIGINS` 미설정** → 웹 쿠키 로그인 CSRF 가드가 전면 차단(fail-closed 설계 기본값) →
+     reporter·center 오리진 화이트리스트 배선. 양방향 검증(허용 401/비허용 403 유지).
+  5. **`S3_PUBLIC_ENDPOINT=http://localhost:9000`** → presigned PUT이 사용자 자기 맥으로 나가
+     즉사(Safari·Chrome 동일, 제온 9000 패킷 0으로 확정). LAN IP 교정. ⚠️ 중간에 세운 "Safari 로컬
+     네트워크 정책" 가설은 Chrome A/B가 기각 — 원인은 DOMAIN과 같은 시기의 env 잔재였다.
+  6. **media-worker 이미지 스테일(8/09, auto_edit 이전)** → `auto_edit` 잡 3회 거부로 `preview_failed`.
+     GHCR 패키지 3종 공개 전환(사용자·리포가 PUBLIC이라 노출 증분 0) + pull·재생성(8/28 빌드)으로 해소.
+  - **잠복 코드 결함 1건 적발(후속 수리 대상)**: `upload-complete` HEAD-미검출 복구가 비원자적
+    (`assets.markFailed`→`workflow.failUpload` 2쓰기) — 사이에 프로세스가 죽으면 자산만 failed로 남고
+    콘텐츠는 `uploading` 교착, `findOriginal`(failed 제외)로 **완료 경로까지 영구 차단**(실제 발생 →
+    가드된 UPDATE 1행으로 수동 복원, 사용자 실행). 트랜잭션 묶음 수리 필요.
+  - 후속 기록 대상: 스턱 콘텐츠 `01a04de0`(uploading) 정리 · api 이미지 스테일(로컬 8/21, 이제 pull
+    가능) 풀스택 리프레시 · 주민 업로드가 터널 경유일 때 presigned LAN IP 도달 불가(구조) ·
+    상대경로 전환 후 구독자·관제 socket.io `io('')` 원점 해석 확인 · vars
+    `WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL` placeholder 실값 교체.
+- **상태**: 실기 검증 **완료**(실행 근거: 전이 로그·자산·피드 API 실측 + 사용자 브라우저 실기).
+  HANDOFF §0 종결 반영은 PR #77 머지 후 별도 PR.
+
 ## 2026-08-28 — T-W2-02 기자 웹 업로더 어댑터 (오검출 정정 후속)
 
 - **작업명**: 기자 웹 업로드를 실제로 가능하게 하는 XHR 어댑터 — 02 §E-7 "웹용 업로더 어댑터
