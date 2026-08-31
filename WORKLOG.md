@@ -1,5 +1,42 @@
 # WORKLOG
 
+## 2026-08-31 — 빌드 스탬프 + 배포 후 SHA 대조 (대장 #186, PR #81) — scribe 소급 기록
+
+- **작업명**: "배포된 것이 어느 커밋인가"를 묻는 방법이 0건이던 결함(자문단 레드팀 발견, 대장 #186)을
+  닫는다 — 4개 이미지(api·media-worker·ai-worker·web)에 `GIT_SHA` 빌드 스탬프를 심고 배포 후 실서버
+  대조를 CI에 편입한다. ⚠️ **이 항목은 구현 세션이 WORKLOG를 갱신하지 않아 scribe가 사후 기록한다** —
+  아래 수치는 전부 이 기록 시점(2026-08-31)에 scribe가 직접 재실행해 확보했다(PR 본문·커밋 로그를
+  베끼지 않음).
+- **범위**: `services/{api,media-worker,ai-worker}/Dockerfile`(runner 스테이지 `ARG GIT_SHA` 재선언) ·
+  `infra/docker/Dockerfile.web` + `infra/docker/inject-build-sha.mjs`(expo export 산출물 전 html에
+  `<meta name="build-sha">` 주입, 0건이면 빌드 실패) · `services/api/src/health/`(`GET /health/version`
+  신설, `env.schema.ts` 경유) · `infra/scripts/verify-deployed-sha.mjs`(fail-closed CLI) ·
+  `.github/workflows/{build-images,deploy-web}.yml`(build-arg 배선 + deploy 잡 끝 배포 후 대조).
+  동반 의무(규율 23) — `infra/scripts/`가 그동안 어떤 검사에도 안 걸려 `node --test` 18케이스 신설 +
+  루트 `test` 스크립트 편입.
+- **결과**: 게이트② 독립 검증 PASS — 뮤테이션 3건(불일치 판정 무력화·meta 주입 0건·`/health/version`
+  sha 하드코딩) 전부 red 확인. PR #81 → **머지**(`gh pr view 81` 재실행: `mergedAt
+  2026-08-31T12:39:44Z`·`mergeCommit 325fd8c0c6368ba07ccc34bcab5f76e70222adf8`) → **제온 실배포 + 배포
+  후 SHA 대조가 실제로 통과**(제온 web 컨테이너 `<meta name="build-sha" content="325fd8c...">` 실측 —
+  `docker exec <web-cid> cat /usr/share/nginx/html/watch/index.html | grep -o 'build-sha[^>]*'`, scribe
+  Tailscale SSH 직접 확인). CI 3워크플로(CI·Build Images·Deploy Web) headSha=325fd8c 전부 success,
+  Deploy Web 잡 단위 preflight✅·build✅·**deploy✅**(스텝 "배포 후 SHA 대조" 포함)·purge skipped(도메인
+  미확정, 정상).
+- **부수 기록 갱신(같은 세션, 커밋 `5744149`)**: 대장 #190 신규 채번(`apps/reporter` 웹 번들이 QR
+  스캐너 경로에서 jsDelivr CDN을 env 게이트 없이 무조건 로드 — 공급망 리스크 + 07 §3-10 국외이전
+  미판정) · QUEUE.md 0-1(#186) 행 제거 및 순번 정정 · QUEUE 사실 오류 2건 정정("13항목"→**14항목** ·
+  "지연 상한 2주" 귀속을 03→**07 §3-11**로 정정).
+- **검증(scribe 재실행, 2026-08-31)**: `grep -rl "GIT_SHA" services/api/Dockerfile infra/docker` → **3**
+  (등재 시 0) · `pnpm --filter @gachinol/api test` → **903/903 (74 스위트)**, PR 본문 수치와 독립 재확인
+  일치 · `gh run list --branch main -L 3` → CI 3종 headSha=325fd8c 전부 success.
+- **이월/남은 것**: **api·media-worker·ai-worker의 배포 후 `/health/version` 대조는 배포 워크플로
+  자체가 없어 미배선**(대장 #180 — web만 merge=자동배포, 백엔드 3종은 여전히 수동 `compose pull+up`).
+  제온 실측: api 컨테이너에 `GET /health/version` 호출 시 `404 Cannot GET`(배포된 이미지가 8/21 구빌드라
+  이 라우트 자체가 없다 — 코드 결함이 아니라 미배포). 스크립트는 `--kind api`를 지원하도록 만들어
+  뒀을 뿐 CI에서 호출되지 않는다.
+- **상태**: **완료**(웹 경로 한정) — 머지·배포·SHA 대조 전부 실서버에서 확인. 백엔드 3종 대조 배선은
+  대장 #180이 이어받는다.
+
 ## 2026-08-30 — 차기 슬라이스 재판정 (HANDOFF §2 후보 7건 + 대장 #168)
 
 - **작업명**: HANDOFF §0·§2가 다음 세션에 넘긴 재판정을 §6 규율(1·5·10·13·15)로 수행. 코드 변경 0,
