@@ -51,6 +51,11 @@ RUN pnpm --filter @gachinol/api deploy --prod /app/out \
 
 # ── runner: 최소 런타임(openssl = Prisma 쿼리엔진 의존) ──
 FROM node:${NODE_VERSION} AS runner
+# 빌드 스탬프(대장 #186) — "배포된 것이 어느 커밋인가"를 런타임에 물을 수 있게 한다(`GET /health/version`).
+# ⚠️ 멀티스테이지 함정: ARG는 스테이지를 넘어 자동 전파되지 않는다 — build 스테이지에서 선언해도
+# 여기(runner)에서 다시 선언하지 않으면 조용히 빈 값이 된다. 기본값 `unknown`(빈 문자열 금지 — 규율 21).
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
     && rm -rf /var/lib/apt/lists/*

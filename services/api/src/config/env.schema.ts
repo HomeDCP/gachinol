@@ -130,6 +130,12 @@ export const envSchema = z
     CF_ZONE_ID: z.string().optional(),
     CF_API_TOKEN: z.string().optional(),
     CF_PURGE_TIMEOUT_MS: z.coerce.number().int().default(5000),
+    // 빌드 스탬프(대장 #186) — 이미지 빌드 시점의 `docker build --build-arg GIT_SHA=<커밋SHA>`가
+    // Dockerfile의 `ENV GIT_SHA=${GIT_SHA}`로 런타임 env에 굽는다. `.env` 파일로 사람이 설정하는
+    // 값이 아니다(시크릿도 아님). 미설정(로컬 `node dist/main.js` 직접 실행 등) 시 'unknown' —
+    // `GET /health/version`이 그대로 노출한다(규율 21: non-null이 구동의 증거가 아니듯, 여기서는
+    // 반대로 값이 없다는 사실 자체를 'unknown'으로 정직하게 드러낸다).
+    GIT_SHA: z.string().default('unknown'),
   })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_REFRESH_SECRET, {
     message: 'access/refresh 시크릿은 서로 달라야 한다',

@@ -45,6 +45,12 @@ RUN pnpm --filter @gachinol/media-worker deploy --prod --ignore-scripts /app/out
 
 # ── runner: 시스템 ffmpeg(신뢰성) + 정적 패키지 경로를 그것으로 심링크 ──
 FROM node:${NODE_VERSION} AS runner
+# 빌드 스탬프(대장 #186) — "배포된 것이 어느 커밋인가"를 물을 수 있게 한다(워커는 HTTP 미노출이라
+# `docker inspect`/`docker exec printenv GIT_SHA`로 조회). ⚠️ 멀티스테이지 함정: ARG는 스테이지를
+# 넘어 자동 전파되지 않는다 — 여기(runner)에서 다시 선언하지 않으면 조용히 빈 값이 된다.
+# 기본값 `unknown`(빈 문자열 금지 — 규율 21).
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 ENV NODE_ENV=production
 # ffmpeg/ffprobe = Debian 패키지. 코드가 ffmpeg-static/ffprobe-static 경로를 setFfmpegPath로 하드 주입하므로
 # (services/media-worker/src/ffmpeg.ts), 그 경로들을 시스템 바이너리로 심링크해 채운다.

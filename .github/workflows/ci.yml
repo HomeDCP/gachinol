@@ -49,6 +49,11 @@ jobs:
         run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck
+      # infra/scripts/ 테스트(`node --test`, 신규 의존 0)는 루트 `package.json`의 `test` 스크립트가
+      # `turbo run test && pnpm run test:scripts`로 편입해뒀다 — 위 `pnpm test` 한 스텝이 turbo
+      # 워크스페이스 테스트와 infra/scripts 테스트를 함께 돌린다. 별도 스텝을 두지 않는 이유는
+      # 대장 #146·#161이 반복해 밟은 "같은 배선이 두 곳에 있으면 한쪽만 고치는 함정"을 피하기
+      # 위해서다(로컬 `pnpm test`와 CI가 같은 경로를 타야 드리프트가 없다).
       - name: Test (unit)
         run: pnpm test
 

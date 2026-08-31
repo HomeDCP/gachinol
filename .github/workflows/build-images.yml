@@ -70,5 +70,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 빌드 스탬프(대장 #186) — `GET /health/version`(api)·`docker exec printenv GIT_SHA`
+          # (media-worker·ai-worker)가 이 값을 노출한다. 각 Dockerfile의 runner 스테이지가
+          # `ARG GIT_SHA=unknown`을 다시 선언해 받는다(멀티스테이지는 ARG가 자동 전파되지 않는다).
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
