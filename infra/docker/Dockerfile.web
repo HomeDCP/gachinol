@@ -79,9 +79,18 @@ ARG EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL=
 ENV EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL=${EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL}
 ARG EXPO_PUBLIC_SCHEDULE_LIVE_TITLE=
 ENV EXPO_PUBLIC_SCHEDULE_LIVE_TITLE=${EXPO_PUBLIC_SCHEDULE_LIVE_TITLE}
+
+# 빌드 스탬프(대장 #186) — "배포된 것이 어느 커밋인가"를 물을 수 있게 한다. EXPO_PUBLIC_* 와 달리
+# 번들(JS)에 인라인하지 않는다 — expo export 산출물(*.html) 각각의 <head>에 직접
+# <meta name="build-sha" content="..."> 를 주입한다(export 완료 **이후** 후처리). 기본값
+# `unknown`(빈 문자열 금지 — 규율 21). 스크립트가 주입 0건이면 스스로 exit 1 하므로 이 RUN 레이어
+# 안에서 실패가 드러난다(주입 실패를 조용히 지나치지 않는다).
+ARG GIT_SHA=unknown
+COPY infra/docker/inject-build-sha.mjs ./inject-build-sha.mjs
 RUN pnpm --filter @gachinol/subscriber exec expo export --platform web --output-dir dist \
  && pnpm --filter @gachinol/reporter exec expo export --platform web --output-dir dist \
- && pnpm --filter @gachinol/control-center exec expo export --platform web --output-dir dist
+ && pnpm --filter @gachinol/control-center exec expo export --platform web --output-dir dist \
+ && node inject-build-sha.mjs "${GIT_SHA}" apps/subscriber/dist apps/reporter/dist apps/control-center/dist
 
 # ── runner: nginx만(Node/pnpm 런타임 미포함 — 정적 파일 서빙에 불필요) ──
 # alpine 채택(api·media-worker의 bookworm-slim/glibc와 다름, 의도적 예외): 그 두 이미지가 glibc를 쓰는

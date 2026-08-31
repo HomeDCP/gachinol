@@ -3,6 +3,12 @@
 #   docker build -t gachinol-ai-worker services/ai-worker
 FROM python:3.12-slim
 
+# 빌드 스탬프(대장 #186) — "배포된 것이 어느 커밋인가"를 물을 수 있게 한다(워커는 HTTP 미노출이라
+# `docker inspect`/`docker exec printenv GIT_SHA`로 조회). 단일 스테이지라 멀티스테이지 전파 함정은
+# 없지만 다른 두 Dockerfile과 형태를 맞춘다. 기본값 `unknown`(빈 문자열 금지 — 규율 21).
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 # 컨테이너 로깅 정합(버퍼링 해제)·.pyc 미생성
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

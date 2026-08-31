@@ -121,6 +121,10 @@ jobs:
           # ⚠️ 이 값이 바뀌면 번들 바이트 수도 몇 십 바이트 단위로 움직인다(문자열이 번들에 박히므로).
           # ⚠️ 여기 없는 EXPO_PUBLIC_* 키는 번들에 값이 들어가지 않는다(대장 #146) — Dockerfile.web의
           # ARG/ENV와 **짝**이어야 하고, 한쪽만 추가하면 조용히 빈 값이 박힌다. 빈 줄은 무시된다.
+          # GIT_SHA(대장 #186, 빌드 스탬프)는 EXPO_PUBLIC_*이 아니다 — 번들이 아니라 export 산출물
+          # *.html의 <meta name="build-sha">에 후주입된다(Dockerfile.web 참조). ⚠️ 이 스텝과 아래
+          # "Publish web image" 스텝 **양쪽 다** 이 인자가 있어야 한다 — 한쪽만 넣으면 실제로 배포되는
+          # 이미지(Publish 쪽)엔 값이 안 들어간다(load-only인 이 스텝은 게이트용, 발행은 아래 스텝).
           build-args: |
             ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
             ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_TEL && format('EXPO_PUBLIC_SUPPORT_TEL={0}', vars.WEB_EXPO_PUBLIC_SUPPORT_TEL) || '' }}
@@ -130,6 +134,7 @@ jobs:
             ${{ vars.WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL && format('EXPO_PUBLIC_SUBSCRIBER_WEB_URL={0}', vars.WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL) || '' }}
             ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL && format('EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL) || '' }}
             ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE && format('EXPO_PUBLIC_SCHEDULE_LIVE_TITLE={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE) || '' }}
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
@@ -196,6 +201,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           # ⚠️ 여기 없는 EXPO_PUBLIC_* 키는 번들에 값이 들어가지 않는다(대장 #146) — Dockerfile.web의
           # ARG/ENV와 **짝**이어야 하고, 한쪽만 추가하면 조용히 빈 값이 박힌다. 빈 줄은 무시된다.
+          # GIT_SHA(대장 #186) — 위 "Build web image" 스텝과 **반드시 짝을 맞춘다**. 이 스텝(push:true)의
+          # 결과가 실제로 배포되는 이미지이므로, 한쪽만 넣으면 배포본에 값이 안 들어가는 쪽이 여기다.
           build-args: |
             ${{ vars.WEB_EXPO_PUBLIC_API_URL && format('EXPO_PUBLIC_API_URL={0}', vars.WEB_EXPO_PUBLIC_API_URL) || '' }}
             ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_TEL && format('EXPO_PUBLIC_SUPPORT_TEL={0}', vars.WEB_EXPO_PUBLIC_SUPPORT_TEL) || '' }}
@@ -205,6 +212,7 @@ jobs:
             ${{ vars.WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL && format('EXPO_PUBLIC_SUBSCRIBER_WEB_URL={0}', vars.WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL) || '' }}
             ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL && format('EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL) || '' }}
             ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE && format('EXPO_PUBLIC_SCHEDULE_LIVE_TITLE={0}', vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE) || '' }}
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
@@ -312,6 +320,9 @@ jobs:
     needs: [build, preflight]
     if: needs.preflight.outputs.deploy == 'true'
     steps:
+      # 배포 후 SHA 대조 스텝(맨 아래)이 러너 로컬의 infra/scripts/verify-deployed-sha.mjs를 돈다.
+      - uses: actions/checkout@v4
+
       # 제온은 가정망이라 공인 SSH 포트가 없다 — 러너를 테일넷에 임시(ephemeral) 노드로 합류시켜
       # 테일넷 IP로 SSH한다(2026-08-27 사용자 결정). 이 경로는 배포 제어 전용이며, 추후 도메인·
       # Cloudflare Tunnel(사용자 트래픽)이 생겨도 그대로 유지한다 — 두 경로는 독립이다.
@@ -351,6 +362,31 @@ jobs:
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml pull web; \
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build web; \
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps web"
+
+      # 배포 후 SHA 대조(대장 #186) — "pull && up이 성공"과 "실제로 이 커밋이 서빙된다"는 별개
+      # 질문이다. 러너에서 제온 web 포트로 직접 HTTP가 가는지는 미확인이라(방화벽·bind 미실측),
+      # 이미 확립된 SSH 경로를 그대로 재사용해 컨테이너 **안에서** 정적 산출물을 직접 읽는다 —
+      # Host 헤더 vhost 매칭(도메인 미확정이라 값이 배포 환경마다 다를 수 있다, §12)에 기대지 않는다.
+      # 불일치·컨테이너 미검출·파싱 실패 → 이 스텝이 실패해 잡 전체가 red(continue-on-error 없음).
+      - name: 배포 후 SHA 대조 (web 엔트리 HTML의 build-sha meta)
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q web")"
+          if [ -z "$cid" ]; then
+            echo "web 컨테이너 ID를 얻지 못함(compose ps -q web 결과 없음) — 배포 확인 불가" >&2
+            exit 1
+          fi
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "docker exec '$cid' cat /usr/share/nginx/html/watch/index.html" > web-entry.html
+          node infra/scripts/verify-deployed-sha.mjs --kind web --expect "$GIT_SHA" --body-file web-entry.html
 
   # ── ④ D-T5 4항 Cloudflare 캐시 퍼지 ───────────────────────────────────────────
   # 정본 02 §D-T5 4항: "엔트리 HTML · 매니페스트 · /sw.js" 최소 대상.
