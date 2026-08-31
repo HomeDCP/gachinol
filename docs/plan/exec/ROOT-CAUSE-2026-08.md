@@ -57,7 +57,15 @@ if (video) {                                    // 웹: {uri:''} 는 truthy
 | 1 | **인터넷 경로 502 전면 불통** — 살아 있는 Quick Tunnel 호스트와 web 컨테이너 `TUNNEL_HOST`가 불일치(이전 세션 잔재). nginx `default_server`가 444로 끊고 cloudflared가 502를 낸다 | 제온: `journalctl -u gachinol-quick-tunnel`의 최신 발급 호스트 vs `docker exec gachinol-prod-web-1 printenv TUNNEL_HOST` | #179 |
 | 2 | **배포된 api에 없는 라우트를 배포된 웹이 호출** — 제온 실측 `GET /v1/resident-uploads` = 401(있음), `/v1/resident-uploads/:id` = **404**(없음). 이 라우트는 2026-08-22 커밋이 추가했다. **#120이 회귀한 게 아니라 배포된 적이 없다** | 제온에서 두 경로에 미인증 요청 | #170·#180 |
 | 3 | **배포 번들에 치환 안 된 안내문** — Actions vars가 placeholder 리터럴이라 주민 공유 링크가 그 문자열로 조합된다 | `gh variable list` | #172 |
-| 4 | **위 셋 중 무엇도 알려줄 주체가 없다** — `infra/monitoring/`의 경보 7종 전부 `implemented: false`, 스크립트 0건 | `grep -c '"implemented": true' infra/monitoring/uptime-kuma-alerts.json` → 0 | #72 |
+| 4 | **위 셋 중 무엇도 알려줄 주체가 없다** — 가용성·배포신선도를 감시하는 장치가 **아예 없다** | `ls infra/monitoring/*.sh` → 없음 · 제온에 uptime-kuma 컨테이너 없음 | (미채번 — QUEUE 1-3) |
+
+> ⚠️ **2026-08-31 독립 검증이 잡은 오귀속(정정)**: 이 문서의 초판은 위 4번의 근거로 대장 #72
+> (`uptime-kuma-alerts.json`의 경보 7종이 전부 `implemented: false`)를 들었다. **틀렸다.**
+> 실측하니 그 7종은 전부 `security-*`(4)·`resource-*`(2)·`evidence-*`(1)로 **가용성 감시가 하나도 없다**
+> — SSH 인증 이상·호스트 권한 무결성·401 스파이크·역할 변경·디스크·RAM·증거보전 하트비트다.
+> ⇒ **7종을 전부 구현해도 §2의 502·스테일 이미지·placeholder 중 아무것도 알려주지 않는다.**
+> 필요한 것은 #72의 구현이 아니라 **가용성 감시의 신설**(별건)이다. #72는 보안·자원 축이라 백로그다.
+> 재현: `grep -oE '"id": *"[^"]+"' infra/monitoring/uptime-kuma-alerts.json`
 
 **이 넷이 0단계인 이유**: 지금 실측이 오염돼 있어서 무엇을 고쳐도 확인할 수 없다.
 이건 수리가 아니라 **계측기 복구**다.
