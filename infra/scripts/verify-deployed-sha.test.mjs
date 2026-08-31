@@ -9,9 +9,17 @@
 // GitHub Actions 러너 기본 셸인 bash는 매치 실패 시 glob 문자열을 리터럴 그대로 넘기고, 그걸
 // Node 내장 테스트러너가 **자체 glob으로 재해석**해 `0 tests, 0 pass, exit 0`으로 통과시킨다
 // (fail-open). 즉 이 파일이 리네임·삭제되면 CI가 "검사를 안 도는데 초록"이 되는, `DISCIPLINES.md`
-// §21이 금지한 "초록·존재를 구동의 증거로 삼지 마라" 유형의 구멍이 조용히 열린다. 명시 나열이면
-// 파일이 없을 때 Node가 `MODULE_NOT_FOUND`로 즉시 죽어 fail-closed가 보장된다.
-// → **테스트 파일을 추가/리네임할 때는 루트 `package.json`의 `test:scripts`도 함께 고쳐야 한다.**
+// §21이 금지한 "초록·존재를 구동의 증거로 삼지 마라" 유형의 구멍이 조용히 열린다.
+// ⚠️ **"명시 나열이면 파일이 없을 때 MODULE_NOT_FOUND로 즉시 죽어 fail-closed"는 거짓이었다**
+// (2026-09-01 게이트② 검증에서 반증). `node --test <있는 파일> <없는 파일>`처럼 **한 `--test`
+// 호출에 인자를 여러 개 나열**하면, 없는 파일은 경고 0건으로 조용히 무시되고 있는 파일의
+// 테스트만 돌며 **exit 0**이 된다(3회 재현, 순서 무관). Node가 즉시 죽는 것은 인자가 **1개뿐일
+// 때**뿐이다. → **지금 fail-closed의 실제 근거는 `test:scripts`가 이 파일과
+// `daejang-recheck.test.mjs`를 `node --test <파일 1개>` 형태로 **개별 호출**해 `&&`로 연결하는
+// 것**(인자 1개 보장)**이며, 새 테스트 파일 추가를 잊는 반대 방향은
+// `daejang-recheck.test.mjs`의 "test:scripts 등재 self-check" 테스트가 잡는다.**
+// → **테스트 파일을 추가/리네임할 때는 루트 `package.json`의 `test:scripts`도 함께 고쳐야 한다**
+//   (잊어도 위 self-check가 레드로 잡는다).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
