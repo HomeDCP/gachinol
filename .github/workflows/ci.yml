@@ -56,6 +56,20 @@ jobs:
       # 위해서다(로컬 `pnpm test`와 CI가 같은 경로를 타야 드리프트가 없다).
       - name: Test (unit)
         run: pnpm test
+      # 대장 #180 동반 의무(D1) — health/version이 전역 프리픽스 밖에 있는지(존재만이 아니라
+      # "prefix 밖"인지)는 유닛으로 원천적으로 못 잡는다: health.controller.spec.ts는
+      # `new HealthController(...)`로 컨트롤러를 직접 인스턴스화해 setGlobalPrefix를 거치지 않는다.
+      # 그래서 실증은 test/smoke.e2e-spec.ts(e2e)에 있는데, 이 워크플로는 e2e 전체를 돌리지 않는다
+      # (위 REDISMS_DISABLE_POSTINSTALL 주석 참조 — Postgres/Redis 인프라가 없다).
+      # smoke 스위트만은 "DB 무관" 설계(PrismaService는 연결 실패에도 부팅, globalSetup은 DB
+      # 도달 불가 시 DB 의존 스위트만 skip하고 자신은 green 종료)라 인프라 기동 없이 이 잡에서
+      # 그대로 돈다 — 그래서 smoke만 골라 돌린다(전체 test:e2e를 켜면 DB 의존 11개 스위트가
+      # skip으로 흘러 "돌았는데 아무것도 검증 안 한" 상태가 상시화된다).
+      # ⚠️ jest는 이 리포 어디서도 `--passWithNoTests`를 켜지 않았다(실측 확인) — 패턴이
+      # 어긋나 0개 스위트가 매칭되면 기본값대로 exit 1로 fail-closed 한다(잘못된 필터가 조용히
+      # 통과하지 않음).
+      - name: Test (e2e smoke — DB 무관, 프리픽스 회귀 실증)
+        run: pnpm --filter @gachinol/api test:e2e -- smoke
 
   ai-worker:
     name: ai-worker (ruff·pytest)
