@@ -102,6 +102,23 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ github.sha }}
 
+      # URL 형태 검증(대장 #189) — "설정됨"과 "올바름"을 구분한다. `EXPO_PUBLIC_*_URL` 값이
+      # `new URL()` 파싱 불가 · 플레이스홀더(`<`/`>` 포함) · 비-HTTP(S) 프로토콜이면 여기서 잡는다.
+      # ⚠️ **반드시 아래 "Build web image" 스텝보다 앞서 돈다** — 빌드 후에 검사하면 이미 쓰레기값이
+      # 번들에 박힌 뒤다. 여기 넘기는 env 키 집합은 아래 build-args 목록(8개)과 **동일**해야 한다
+      # (한쪽만 고치면 검증받지 않는 키가 생긴다 — 대장 #146과 같은 함정, Dockerfile.web 헤더 주석 참조).
+      - name: URL 형태 검증 (EXPO_PUBLIC_*_URL, 대장 #189)
+        env:
+          EXPO_PUBLIC_API_URL: ${{ vars.WEB_EXPO_PUBLIC_API_URL }}
+          EXPO_PUBLIC_SUPPORT_TEL: ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_TEL }}
+          EXPO_PUBLIC_LIVE_YOUTUBE_URL: ${{ vars.WEB_EXPO_PUBLIC_LIVE_YOUTUBE_URL }}
+          EXPO_PUBLIC_KAKAO_CHANNEL_URL: ${{ vars.WEB_EXPO_PUBLIC_KAKAO_CHANNEL_URL }}
+          EXPO_PUBLIC_SUPPORT_EMAIL: ${{ vars.WEB_EXPO_PUBLIC_SUPPORT_EMAIL }}
+          EXPO_PUBLIC_SUBSCRIBER_WEB_URL: ${{ vars.WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL }}
+          EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL: ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_HLS_URL }}
+          EXPO_PUBLIC_SCHEDULE_LIVE_TITLE: ${{ vars.WEB_EXPO_PUBLIC_SCHEDULE_LIVE_TITLE }}
+        run: node infra/scripts/bundle-budget.mjs --check-urls
+
       # ① 웹 export 빌드. Dockerfile.web의 build 스테이지가 3앱 `expo export --platform web`을 수행하고
       #    runner 스테이지(nginx)가 그 산출물을 담는다.
       #    **여기서는 푸시하지 않는다**(load만) — 번들 예산 게이트를 통과하지 못한 이미지가 GHCR에
