@@ -1,5 +1,80 @@
 # WORKLOG
 
+## 2026-09-01 (오후) — 인터넷 경로 개통 (대장 #179·#187·#172·#193 해소 + #194·#195·#196 신규, 문서 전용)
+
+- **AC**: ① 사용자가 도메인 구입 + named tunnel 개통으로 실제 3앱이 인터넷에서 열렸다는 사실을
+  scribe가 인터넷 경유 재현으로 독립 확인한다. ② 그 사실을 근거로 대장 #179·#187·#172(부분)를
+  해소로, #193은 형식만 확인(구현자 기재분 손대지 않음)으로 정리한다. ③ 사고 처리 중 발견된 신규
+  결함 2건(#194·#195)과 그 발견에 쓴 안전 필터 자체의 오탐(#196)을 채번해 폐기되지 않게 남긴다.
+  ④ QUEUE·HANDOFF·일간보고서 3문서를 새 사실과 정합하게 갱신하고 표 무결성 0건을 확인한다.
+  ⑤ 코드·스크립트·compose는 손대지 않는다(scribe 역할 경계).
+- **배경 사건**: 사용자가 도메인 `bapfull.com`을 구입하고 Cloudflare **named tunnel**(`bapfull-xeon`)을
+  개통했다. Published application routes 5개(`watch`·`reporter`·`center`·`api`·`go` → 전부
+  `http://web:80`)를 배선해 **3앱이 인터넷에서 200으로 열리고 로그인까지 정상 동작**했다(사용자 확인).
+  같은 시점에 `WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL` Actions vars가 placeholder에서 실값
+  (`https://watch.bapfull.com`)으로 교체됐다. **Deploy Web 4잡(build·preflight·deploy·purge) 전부
+  첫 성공** — purge는 도메인 미확정 동안 계속 skip돼 오다 이번이 최초 실행이다.
+- ⭐ **빌드 스탬프(대장 #186, 어제 신설)가 만든 다음 날 실사고를 잡았다.** 사용자가 터널을 켜려고
+  제온에서 `docker compose up -d`를 수동 실행하자, `docker-compose.xeon.yml`의 web 서비스가
+  `image: ${WEB_IMAGE:-gachinol-prod-web}`(로컬 캐시 태그 폴백)라 `WEB_IMAGE` 미설정 상태에서는
+  `--build` 없이 재빌드하지 않고 **로컬에 캐시돼 있던 2026-08-21 빌드 이미지를 그대로 재사용**했다 —
+  즉 빌드 스탬프 커밋보다 10일 앞선 이미지가 인터넷에 그대로 서빙됐다. `<meta name="build-sha">` 대조로
+  이 사실이 발각됐다 — **화면은 200이라 빌드 스탬프가 없었으면 발견 불가**였다. 舊 #143/T-W1-11c의
+  완화 전제("WEB_IMAGE 미설정 시 로컬에서 재빌드되니 무회귀")가 **사실과 다름**이 이번에 실증됐다
+  (`up -d`는 `--build` 없이는 재빌드하지 않는다). **대장 #194로 채번.**
+- 같은 사고를 처리하는 과정에서 **제온의 `~/gachinol`이 git 체크아웃이 아니라 파일 복사본**임이
+  드러났다(`git status` → *"깃 저장소가 아닙니다"*, 조율자 실측 — scribe는 제온 SSH 금지). 리포에서
+  compose·스크립트를 고쳐도 제온에 자동 전달되지 않고, 배포 워크플로(`deploy-web.yml`)도
+  `compose pull && up`만 하며 compose 파일 자체는 갱신하지 않는다(scribe가 리포 쪽에서 구조적으로
+  재확인: `grep -c "rsync\|scp \|git pull\|git clone\|git checkout" .github/workflows/deploy-web.yml`
+  → 0). **오늘 실제 피해**: 대장 #193(compose 블록 위치) 수리를 리포에 반영했지만 제온에는 사용자가
+  손으로 같은 수리를 적용해야 했고, 그 결과 리포와 제온의 compose가 문구 수준에서 이미 달라졌다.
+  **대장 #195로 채번**, QUEUE 1-1(#180 api·워커 배포 경로 신설)의 동반 의무로 편입 — "web 잡 복제"가
+  이 비동기화 패턴까지 그대로 복제하는 것이기 때문이다.
+- ⚠️ **조율자의 오안내 2건**(기록 목적 — 다음 사람이 같은 안내를 반복하지 않도록 이력에 남긴다):
+  ⓐ *"named tunnel은 도메인 불요"* — QUEUE §C-1 원문의 정본 인용이었으나 **사실과 다르다**. named
+  tunnel도 Cloudflare Zero Trust Public Hostname 라우팅에 도메인이 필요하고, 실제로 사용자가
+  `bapfull.com`을 구입해야 했다. ⓑ *"compose 블록의 `#`을 지우면 켜진다"* — 그 `cloudflared:` 블록이
+  헤더 주석 영역에 있어 `services:` **바깥**이었고, 안내대로 주석만 해제하면 compose 검증이 거부했다
+  (대장 #193, 사용자가 제온에서 실제로 이 오류를 밟았다). **둘 다 사용자가 실제로 밟았다** — QUEUE
+  §C-1에는 규율13대로 원문 보존 + 취소선 + 정정 각주를, PIVOT-PLAN #193에는 이미 사용자 실측 오류
+  원문이 등재돼 있다.
+- **daejang-recheck.mjs 안전 필터 자체 오탐 발견** — #194·#195를 등재하며 재현 명령을 그 도구로
+  검증하던 중, 둘 다 `grep`만으로 구성된 read-only 파이프인데도 `isSafe`가 `false`를 반환하는 것을
+  포착했다. 원인은 `DENY_CHAR_PATTERN`이 명령의 **실행 주체가 아니라 인자**(#194는 파일명
+  `docker-compose.*.yml`에 든 `docker` 토큰, #195는 따옴표 안 grep 검색어 `"...git pull..."`에 든
+  `git` 토큰)에 단어경계로 걸리기 때문이다. **판정이 틀린 게 아니라 자동판정 커버리지가 줄어드는
+  성격**(오탐이지 결함 은폐 아님) — #191이 닫은 `sed -i`·`find -delete`·`awk system()` 위험과는 무관.
+  **대장 #196으로 채번**(조율자 지시, "채번하지 않으면 폐기와 같다" — 규율 22·24-1). 코드는 고치지
+  않았다(scribe 범위 밖 + 안전 필터를 느슨히 고치다 #191이 닫은 구멍을 다시 열 위험).
+- **검증 근거**(전부 scribe가 그 자리에서 재실행, 값+명령 동봉):
+  - 인터넷 경로: `curl -s -o /dev/null -w "%{http_code}" https://watch.bapfull.com` → 200,
+    `reporter.bapfull.com`/`center.bapfull.com` → 200, `api.bapfull.com/health/liveness` → 200,
+    `api.bapfull.com/health/version` → **404**(대장 #180 미해소 실물 증거, 무관 확인).
+  - 빌드 스탬프: `curl -s https://watch.bapfull.com | grep -o '<meta name="build-sha"[^>]*>'` →
+    `content="99c1e4fc21d9151b473909a20919394d40964513"`(main HEAD와 일치).
+  - Actions vars: `gh variable list` → `WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL	https://watch.bapfull.com`.
+  - Deploy Web 4잡: `gh run view 33443330150 --json jobs` → build/preflight/deploy/purge 전부 success
+    (purge는 직전 두 런에서 `skipped` — 이번이 최초 실행).
+  - compose 비대칭(#194): `grep -n '^\s*image: \${' infra/docker/docker-compose.prod.yml
+    infra/docker/docker-compose.xeon.yml | grep -vc 'ghcr.io'` → 1(web만 레지스트리 미한정).
+  - 배포 미동기화(#195): `grep -c "rsync\|scp \|git pull\|git clone\|git checkout"
+    .github/workflows/deploy-web.yml` → 0.
+  - 안전 필터 오탐(#196): `node -e` 원라이너(대장 #196 확인 방법 칸 원문과 동일)로 #194·#195의
+    재현 명령이 `splitPipeSegments` 기준 전부 `grep` 세그먼트인데 `isSafe`가 `false`인 경우를
+    카운트 → **2**.
+  - 대장 표 무결성: `node infra/scripts/daejang-recheck.mjs` → 표 무결성 **0행**·어긋남 **0건**·
+    대상 **60행**(#196 신규 반영).
+- **결과**: 대장 195→**196행**(신규 #194·#195·#196), 대기 60(#179·#187·#172 해소 -3, #194·#195·#196
+  신규 +3). QUEUE 0단계 renumbering(舊 0-1·0-2 통폐합 → 새 0-1=#189·0-2=#170) + C-1/C-2/D-3 충족 처리
+  + C-3 요청 시점 재확인("당겨지지 않음", 조율자 승인 시 "0-1 착수 시 예고 요청" 문구 추가 예정) +
+  1-1에 #195 동반 의무 편입 + 2-6에 #194 신규. HANDOFF §0-A·§1·"다음 1건" 갱신(새 0-1 = #189).
+  일간보고서 ①③④⑤⑥ 갱신 + ② 오후 사건 추가.
+- **이월**: #189(URL 검증층, 다음 0-1) · #170(제온 백엔드 배포, 0-2, C-3 대기) · #180(api·워커 배포
+  경로, #195 동반) · #194(web 이미지 레지스트리 폴백 정정) · #195(제온 git 동기화 경로) · #196(안전
+  필터 오탐 수리) — 전부 **미착수**, 다음 세션이 QUEUE 순서대로 착수.
+- **상태**: **완료**(문서 정리) — 이 리포는 코드 변경 0줄, PR 없음(scribe는 git 쓰기 금지)
+
 ## 2026-09-01 — daejang-recheck 판정 도구 자기검사·정정 (대장 #182 + #191·#192 파생, PR 대기)
 
 - **작업명**: 대장 판정 도구(`infra/scripts/daejang-recheck.mjs`) 자신이 대장 아닌 표까지 함께 세고
