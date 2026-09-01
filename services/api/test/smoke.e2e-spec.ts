@@ -22,9 +22,8 @@ describe('스모크 (DB 무관)', () => {
     const res = await request(app.getHttpServer()).get('/health/version').expect(200);
     expect(typeof res.body.sha).toBe('string');
 
-    // ⚠️ 이 단언이 핵심 — /v1/health/version만 통과하고 /health/version이 404여도
-    // 위 단언만으로는 green이 될 수 있다. 프리픽스 "밖"에 있음을 증명하려면
-    // 프리픽스 "안"에는 없음(404)을 함께 확인해야 한다.
+    // 두 단언은 서로 다른 실패 모드를 막는다 — 위 200 단언은 exclude 누락(이 결함,
+    // 뮤테이션으로 실증)을, 아래 404 단언은 이중 노출(양쪽 경로가 모두 200이 되는 경우)을 잡는다.
     await request(app.getHttpServer()).get('/v1/health/version').expect(404);
   });
 
