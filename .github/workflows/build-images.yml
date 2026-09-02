@@ -1,9 +1,19 @@
 name: Build Images
 
-# api·media-worker·ai-worker 컨테이너 이미지 빌드.
+# api·media-worker·ai-worker 컨테이너 이미지 빌드 + 제온 자동 배포 (대장 #180).
 # - pull_request: 빌드만(푸시 없음) → Dockerfile 회귀 검증
-# - main push / 수동: GHCR(ghcr.io/<owner>/gachinol-*)로 푸시(sha + latest 태그)
-# 배포(VM에서 compose pull + up)는 서버 확정 후 별도 워크플로로 — docs/infrastructure.md §7.
+# - main push / 수동: GHCR(ghcr.io/<owner>/gachinol-*)로 푸시(sha-<7자> + latest + <branch> 태그)
+#
+# ── 배포(③) — `deploy-web.yml`의 `deploy` 잡을 그대로 복제한 것 (대장 #180) ─────────────────
+# 배치를 `deploy-web.yml`(별 파일 + workflow_run)이 아니라 **이 파일에 잡으로 추가**한 이유:
+# ① `deploy-web.yml` 자체가 이미 build+deploy를 한 파일에 담은 선례다. ② `needs:`로 빌드→배포
+# 순서가 명시적으로 보장된다(workflow_run은 두 워크플로가 성공/실패를 각자 보고해 디버깅이 간접적).
+# ③ 이 워크플로가 애초에 만드는 이미지를 그대로 당겨가는 것이라 워크플로 경계를 나눌 이유가 없다.
+# preflight(시크릿 존재 판정)·SSH 배포·Environment 승인 게이트·배포 후 SHA 대조까지 구조는 동일하되
+# 대상만 api·media-worker·ai-worker 3종으로 바꿨다. **새 시크릿·vars 0개** — `WEB_DEPLOY_*`를 그대로
+# 재사용한다(이름이 `WEB_`로 시작하지만 "웹 전용"이 아니라 "제온 배포 전용" 의미다 — 같은 서버,
+# 같은 SSH 경로이므로 이름을 새로 만들면 사용자가 시크릿을 다시 입력해야 한다). 아래 `preflight`·
+# `deploy` 잡 주석에 재사용 상세를 남긴다.
 on:
   push:
     branches: [main]
@@ -22,7 +32,14 @@ permissions:
 
 concurrency:
   group: build-images-${{ github.ref }}
-  cancel-in-progress: true
+  # ⚠️ (대장 #180 동반 수정) 舊 값은 이벤트 무관 `true`였다 — 빌드 전용이던 시절엔 무해했지만
+  # (초과된 빌드를 취소해도 손실이 없다), 이제 이 워크플로가 `deploy` 잡(프로덕션 SSH 배포)을
+  # 포함하므로 main 푸시가 연달아 들어오면 **진행 중이거나 Environment 승인 대기 중인 배포가
+  # 통째로 취소**될 수 있다(워크플로 수준 취소는 잡 단위 concurrency로 막을 수 없다 — 잡이
+  # Environment 승인을 기다리는 동안에도 런 자체가 cancelled 되면 그 배포는 조용히 사라진다).
+  # `deploy-web.yml`이 이미 겪은 문제라 그 파일의 해법을 그대로 가져온다: PR은 최신 커밋만
+  # 의미가 있으니 취소하되, main 푸시는 취소 대신 **큐잉**한다(순서대로 하나씩 실행).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -77,3 +94,227 @@ jobs:
             GIT_SHA=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # ── preflight (실배포 게이트 판정) — `deploy-web.yml`의 동명 잡 복제 ──────────────────────
+  # `deploy-web.yml`의 preflight는 ③(배포)·④(CF 캐시 퍼지) 2개 출력을 계산하지만, 이 워크플로는
+  # 배포(SSH pull+up) 1개뿐이다(퍼지 대상인 정적 캐시가 없다) — 그래서 `purge`류 판정은 들어내고
+  # `deploy` 판정만 남겼다. 시크릿·vars는 **전부 재사용**(새로 만들지 않음): 같은 제온·같은 SSH
+  # 경로이므로 `WEB_DEPLOY_ENABLED`가 이 배포에도 마스터 스위치로 그대로 쓰인다(웹과 백엔드를
+  # 따로 끄고 켤 방법이 필요해지면 그때 새 var를 판단 — 지금은 "제온 배포 전체 스위치" 1개로 충분).
+  # `github.event_name == 'push'`에서만 돈다 — `workflow_dispatch`(수동 재빌드)는 배포 의도를
+  # 명시할 입력이 없으므로(舊 `on:` 미변경 — 새 입력을 추가하면 트리거 정의가 넓어진다) 빌드만 하고
+  # 배포는 건너뛴다. PR은 애초에 `if:`에서 걸러진다.
+  preflight:
+    name: preflight (제온 백엔드 배포 게이트 판정)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      deploy: ${{ steps.gate.outputs.deploy }}
+    steps:
+      - name: 게이트 판정
+        id: gate
+        env:
+          ENABLED: ${{ vars.WEB_DEPLOY_ENABLED }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          TS_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_KEY: ${{ secrets.WEB_DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.WEB_DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          missing=""
+          # 시크릿 "값"은 절대 출력하지 않는다 — 비어 있는지만 본다.
+          [ "$ENABLED" = "true" ]     || missing="$missing vars.WEB_DEPLOY_ENABLED(!=true)"
+          [ -n "$COMPOSE_DIR" ]       || missing="$missing vars.WEB_DEPLOY_COMPOSE_DIR"
+          [ -n "$TS_ID" ]             || missing="$missing secrets.TS_OAUTH_CLIENT_ID"
+          [ -n "$TS_SECRET" ]         || missing="$missing secrets.TS_OAUTH_SECRET"
+          [ -n "$SSH_HOST" ]          || missing="$missing secrets.WEB_DEPLOY_SSH_HOST"
+          [ -n "$SSH_USER" ]          || missing="$missing secrets.WEB_DEPLOY_SSH_USER"
+          [ -n "$SSH_KEY" ]           || missing="$missing secrets.WEB_DEPLOY_SSH_KEY"
+          [ -n "$SSH_KNOWN_HOSTS" ]   || missing="$missing secrets.WEB_DEPLOY_SSH_KNOWN_HOSTS"
+
+          deploy=false
+          if [ -n "$missing" ]; then
+            reason="미설정 항목:$missing"
+          else
+            deploy=true
+            reason="설정 완료 — 배포 수행"
+          fi
+
+          {
+            echo "### 제온 백엔드(api·media-worker·ai-worker) 배포 게이트"
+            echo ""
+            echo "- 배포: **$deploy** — $reason"
+            echo ""
+            echo "설정 절차는 \`.github/workflows/deploy-web.yml\`의 \`preflight\` 잡 주석 참조"
+            echo "(이 잡은 그 시크릿·vars를 그대로 재사용한다 — 새로 만들지 않는다)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+          echo "배포=$deploy ($reason)"
+
+  # ── deploy (제온 api·media-worker·ai-worker 배포) ────────────────────────────────────────
+  deploy:
+    name: deploy (api·media-worker·ai-worker → 제온)
+    runs-on: ubuntu-latest
+    needs: [build, preflight]
+    if: needs.preflight.outputs.deploy == 'true'
+    # GitHub Environment 승인 게이트(deploy-web.yml과 동일 Environment, CLAUDE.md §0-3·대장 #180) —
+    # 이 Environment는 2026-09-02 deploy-web.yml에서 이미 만들어졌고, 그 주석이 "앞으로 추가될
+    # 프로덕션 배포 잡(api·워커, 대장 #180)도 같은 Environment를 쓴다"고 예고한 대로다. 새로 만들지 않는다.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # deploy-web.yml과 동일 — 제온은 가정망이라 러너를 테일넷에 임시 합류시켜 SSH한다.
+      - name: Tailscale 합류 (러너 → 테일넷)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      # build-images.yml의 `type=sha`(docker/metadata-action 기본값, 위 build 잡 실행 로그로 실측
+      # 확인: `sha-<git-sha 앞 7자>`, 예 `sha-fd3fd51`)를 그대로 재현한다. `latest`를 쓰지 않는 이유는
+      # 대장 #180 본문 그대로다 — "무엇이 배포됐는지"를 다시 흐리지 않기 위해서. `github.sha`(전체
+      # 40자)는 아래 SHA 대조 스텝에서 별도로 쓴다(태그와 검증값은 서로 다른 축 — 태그는 이미지를
+      # 고르는 열쇠, GIT_SHA는 그 이미지 *안에* build-arg로 구워진 값).
+      - name: IMAGE_TAG 계산 (build-images.yml의 type=sha 규칙과 동일)
+        id: imagetag
+        run: echo "tag=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: SSH 키 준비
+        env:
+          SSH_KEY: ${{ secrets.WEB_DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.WEB_DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # known_hosts를 시크릿으로 요구한다 — StrictHostKeyChecking=no(MITM 무방비)를 쓰지 않기 위해서다.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      # ── 동반 의무 (대장 #195) ──────────────────────────────────────────────────────────
+      # "web 잡을 복제"가 곧 "compose 파일 자체는 갱신 안 하고 pull&&up만 한다"는 패턴까지 그대로
+      # 베끼면, api·워커도 #195(제온이 git 체크아웃이 아니라 파일이 일괄 복사돼 있어 사람이 서버에서
+      # compose를 손으로 고치는 일이 생기고 리포와 갈라짐)와 같은 처지가 된다. 그래서 배포 직전에
+      # 리포의 compose 2파일을 제온으로 보낸다 — **이 순간부터 리포가 단일 원천**이고, 사람이 서버에서
+      # 직접 고친 내용은 다음 배포에서 리포 버전으로 덮인다(그것이 의도다 — #195가 실제로 겪은 역방향
+      # 드리프트를 구조적으로 막는다). `.env`는 건드리지 않는다 — 그건 제온에만 있는 시크릿이고
+      # 리포에 아예 없다(커밋된 적이 없다).
+      # 백업: 기존 compose 관례(`docker-compose.xeon.yml.bak`가 실재)를 따라 덮어쓰기 직전 `.bak`으로
+      # 1세대 롤백본을 남긴다(무한 누적 아님 — 매 배포마다 직전 1개만 남도록 덮어쓴다). 롤백이 필요한
+      # 사고(예: 파라미터화가 깨진 compose가 배포되는 경우)에서 사람이 SSH로 `mv *.bak *.yml` 한 줄로
+      # 되돌릴 수 있게 하는 것이 비용(파일 1개 여분) 대비 이득이 크다고 판단했다.
+      - name: compose 파일 동기화 (리포 → 제온, 대장 #195 동반 의무)
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             for f in docker-compose.prod.yml docker-compose.xeon.yml; do \
+               if [ -f \"\$f\" ]; then cp \"\$f\" \"\$f.bak\"; fi; \
+             done"
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" -o IdentitiesOnly=yes \
+            infra/docker/docker-compose.prod.yml infra/docker/docker-compose.xeon.yml \
+            "$SSH_USER@$SSH_HOST:$COMPOSE_DIR/"
+
+      # 선행 조건: docker-compose.prod.yml의 api·media-worker·ai-worker 서비스가 이미
+      # `image: ${REGISTRY:-ghcr.io/homedcp}/gachinol-<서비스>:${IMAGE_TAG:-latest}`로 파라미터화돼
+      # 있어(web의 `WEB_IMAGE`와 동형) `IMAGE_TAG` 환경변수 주입만으로 `pull && up --no-build`가
+      # 의도대로 동작한다 — compose 파일 자체는 이번 태스크에서 고치지 않는다(요구사항 밖).
+      # `web`·`postgres`·`redis`·`minio`·`cloudflared`는 건드리지 않는다(deploy-web이 `web`만
+      # 건드리는 것과 같은 최소 반경 원칙 — 이미 실행 중인 의존 서비스는 `depends_on`으로 필요 시에만
+      # 딸려 온다. 이미 healthy로 떠 있으면 재기동되지 않는다).
+      - name: Deploy over SSH (docker compose pull + up — api·media-worker·ai-worker)
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          IMAGE_TAG: ${{ steps.imagetag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             export IMAGE_TAG='$IMAGE_TAG'; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml pull api media-worker ai-worker; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build api media-worker ai-worker; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps api media-worker ai-worker"
+
+      # 배포 후 SHA 대조 — api (대장 #186 패턴, `infra/scripts/verify-deployed-sha.mjs --kind api`).
+      # ⚠️ 프리픽스 없는 경로다(`/health/version` — 오늘 `/v1/health/version`에서 정정됐다, 대장 #189
+      # 계열). 이 스텝이 관측하는 것이 바로 이번 태스크의 해소 신호다: 舊 배포 이미지는 `/v1` 쪽에서
+      # 응답했고, 이 워크플로가 처음 배포에 성공하면 `/health/version`이 200을 내기 시작한다.
+      # web과 달리 정적 파일이 아니라 실행 중인 HTTP 서버이므로 `docker exec <cid> node -e "fetch(...)"`로
+      # **컨테이너 내부에서 자기 자신에게 요청**한다(Dockerfile의 HEALTHCHECK와 같은 방식 — node 내장
+      # fetch만 쓰고 curl 설치 여부에 기대지 않는다). 러너→제온 직접 HTTP 가능 여부는 미실측이라
+      # (deploy-web.yml과 동일 이유) 이미 확립된 SSH 경로를 재사용한다.
+      - name: 배포 후 SHA 대조 — api (GET /health/version)
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q api")"
+          if [ -z "$cid" ]; then
+            echo "api 컨테이너 ID를 얻지 못함(compose ps -q api 결과 없음) — 배포 확인 불가" >&2
+            exit 1
+          fi
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "docker exec '$cid' node -e \"fetch('http://127.0.0.1:4000/health/version').then(r=>r.text()).then(t=>process.stdout.write(t))\"" \
+            > api-version.json
+          node infra/scripts/verify-deployed-sha.mjs --kind api --expect "$GIT_SHA" --body-file api-version.json
+
+      # 배포 후 SHA 대조 — media-worker·ai-worker. 둘 다 HTTP를 노출하지 않는 순수 워커라
+      # `verify-deployed-sha.mjs`는 이 케이스를 지원하지 않는다(`--kind`는 web|api만 — 스크립트는
+      # 고치지 않는다, 이번 태스크 범위 밖). 대신 각 Dockerfile의 runner 스테이지가 `ENV GIT_SHA=`로
+      # 빌드 스탬프를 구워 두므로(위 build 잡 build-args와 동형) `docker exec printenv GIT_SHA`로
+      # 직접 대조한다. ⚠️ fail-closed가 핵심이다 — 컨테이너 미검출·값 공백·불일치 **어느 경우든
+      # exit 1**로 잡 전체를 red로 만든다(continue-on-error 없음). 조용히 통과하면 대장 #180이
+      # 지목한 결함("빌드 성공 ≠ 배포 반영"을 확인할 장치가 없다)이 이 자리에서 재발한다.
+      - name: 배포 후 SHA 대조 — media-worker·ai-worker (docker exec printenv GIT_SHA)
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          fail=0
+          for svc in media-worker ai-worker; do
+            cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+              "set -euo pipefail; cd '$COMPOSE_DIR'; \
+               docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q $svc")"
+            if [ -z "$cid" ]; then
+              echo "SHA 대조 실패($svc): 컨테이너 ID를 얻지 못함(compose ps -q $svc 결과 없음)" >&2
+              fail=1
+              continue
+            fi
+            actual="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+              "docker exec '$cid' printenv GIT_SHA" || true)"
+            if [ -z "$actual" ]; then
+              echo "SHA 대조 실패($svc): GIT_SHA 미검출(printenv 빈 값)" >&2
+              fail=1
+            elif [ "$actual" != "$GIT_SHA" ]; then
+              echo "SHA 불일치($svc): 기대=$GIT_SHA 실제=$actual" >&2
+              fail=1
+            else
+              echo "SHA 일치 확인($svc): $actual"
+            fi
+          done
+          exit "$fail"
