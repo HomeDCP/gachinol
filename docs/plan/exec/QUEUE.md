@@ -94,7 +94,7 @@
 
 | # | 항목 | 요청 시점 | 막는 행 |
 |---|---|---|---|
-| **D-1** | **GitHub Environment 승인 게이트 설정**(required reviewer) | ⭐ **도달함(2026-09-02)** — 0단계가 완주돼 1-1(대장 #180)이 다음 순번이 됐다. scribe 재현: `grep -rn "environment:" .github/workflows/deploy-web.yml \| wc -l` → **0**(2026-09-02 — 배포 워크플로 어디에도 required reviewer 게이트가 배선돼 있지 않다, 미배선 확인) | **1-1**(api·워커 자동 배포). ⚠️ **이 게이트 없이 api 자동 배포를 켜면 로컬 push와 프로덕션 사이에 아무 장치가 없는 상태로 사고 반경이 커진다**(DISCIPLINES §24-0) |
+| **D-1** | **GitHub Environment 승인 게이트 설정**(required reviewer) | ✅ **충족(2026-09-02)** — **사용자 실행 몫**: GitHub Environment `production` 생성(required reviewer `HomeDCP` 1명·배포 브랜치 `main` 한정) + "Allow administrators to bypass configured protection rules" 토글 **끔**. scribe 재현(읽기전용 API): `gh api repos/HomeDCP/gachinol/environments/production --jq '{can_admins_bypass,prevent_self_review,reviewers:[.protection_rules[].reviewers[]?.reviewer.login]}'` → `can_admins_bypass:`**`false`**(관리자 우회 차단 확정)·`prevent_self_review:false`(의도된 상태 — 켜면 혼자 쓰는 리포에서 아무도 배포 못 한다)·`reviewers:["HomeDCP"]` · `gh api repos/HomeDCP/gachinol/environments/production/deployment-branch-policies --jq '.branch_policies[].name'` → **`main`** 1건. **코드 몫**: `.github/workflows/deploy-web.yml`의 `deploy` 잡에 `environment: production` 배선 완료(조율자 PyYAML 파싱 인용: `deploy.environment='production'`·`preflight.if="github.event_name != 'pull_request'"`이라 PR마다 승인 요청이 쌓이지 않음·`purge.needs`에 `deploy` 포함이라 별도 게이트 불요). ⚠️ **이 배선은 아직 미커밋**이다(워크트리, 브랜치 `chore/deploy-approval-gate`) — scribe 재현 `git show origin/main:.github/workflows/deploy-web.yml \| grep -c "environment:"` → **0**(origin/main 기준, 2026-09-02, 커밋·PR·머지 대기). ⚠️ **승인 대기가 실제로 걸리는지는 다음 main 머지에서만 확인된다** — 이 문서는 그것을 검증된 것으로 적지 않는다 | **1-1**(api·워커 자동 배포) — ⚠️ **판단(2026-09-02 갱신)**: 사용자 실행·코드 배선 두 몫 모두 **내용상 완료**돼 **1-1 착수 차단은 해제**로 본다(설정·YAML 패턴 둘 다 확정됐고 남은 것은 커밋·머지라는 절차뿐, 설계·결정 공백이 아니다). 단 **권고 조건**: 1-1이 복제할 원본 패턴이 `chore/deploy-approval-gate`에 있으므로 **그 브랜치가 main에 병합된 뒤 1-1 PR을 열 것**(미병합 상태를 베끼면 다시 갈라진다) — 이 조건은 차단이 아니라 순서 권고다. ⚠️ **이 게이트 없이 api 자동 배포를 켜면 로컬 push와 프로덕션 사이에 아무 장치가 없는 상태로 사고 반경이 커진다**(DISCIPLINES §24-0) |
 | **D-2** | **카카오 실 송출 범위 결정** | **2단계 완료 시** | **3-1 → 4-1**. 게시자산 준비만 / YouTube 어댑터까지 / 전체 |
 | **D-3** | **도메인 확정**(G9 ①) | ✅ **충족(2026-09-01)** — 사용자가 `bapfull.com` 구입(C-1과 사실상 동일 항목이었다 — 위 각주 참조) | Tunnel 정규화(해소·#179·#187 참조) · presign 도달성(#169, 미해소 잔존) · CF 퍼지(deploy-web.yml purge 잡 첫 성공 2026-08-31 21:50 확인) |
 
@@ -126,8 +126,12 @@
 **위 #170이 0단계에 마지막으로 남아 있던 행이었다 — 표가 이제 완전히 비었다.** 절 자체는 지우지
 않는다(위 제거 이력이 "관측 계측기를 어떤 순서로 고쳤는가"의 근거이며, 규율 13대로 이력 보존).
 **다음 착수 대상은 1단계 1-1(대장 #180 — api·워커 배포 경로 신설)이다.** 그 행의 차단자
-"GitHub Environment 승인 게이트(사용자 실행)"는 아직 배선되지 않은 채 그대로다(아래 §D-1 참조) —
-1-1 착수 직전 시점에 **지금 도달**했다.
+"GitHub Environment 승인 게이트"는 **2026-09-02 해제됐다**(아래 §D-1 참조) — 사용자 실행 몫
+(Environment `production` 생성·required reviewer·main 한정·admin bypass 끔)과 코드 몫(`deploy`
+잡 `environment: production` 배선) 둘 다 내용상 완료됐다. **권고 조건(차단은 아니다)**: 배선이
+아직 브랜치 `chore/deploy-approval-gate`에 미커밋 상태이므로, 1-1이 그 web 잡 패턴을 복제하려면
+**그 브랜치가 main에 병합된 뒤 PR을 여는 편이 안전**하다(미병합 상태를 베끼면 다시 갈라진다) —
+근거는 §D-1 "판단" 칸과 동일.
 
 > **이력(0단계가 지나온 계측기 복구 순서, 규율 13)**: 舊 0-1(대장 #182 — daejang-recheck 자기검사)이
 > 맨 앞에 있었던 이유는 *"대장 해소를 재는 계측기 자체가 고장나 있었다"*이고, 그게 고쳐진 뒤(#191·#192
@@ -141,7 +145,7 @@
 
 | 순 | ID | 제목 | L | 선행 | 동반 의무 | 차단자 |
 |---|---|---|---|---|---|---|
-| 1-1 | 대장 #180 | **api·워커 배포 경로 신설**(web 잡 복제) | L1 | 없음(SHA 대조가 배포 성공 판정 — 대장 #186 해소로 이미 충족) | **규율 2 검사**(워크스페이스 의존 ⊆ Dockerfile COPY — #161이 배포를 3일 막았다) + **대장 #195 동반**(제온 `~/gachinol`이 git 체크아웃이 아니다 — "web 잡 복제"가 곧 "compose pull && up만 하고 compose 파일 자체는 안 갱신"하는 패턴 그대로 복제하는 것이라, 서버 config 동기화 경로 없이 그대로 베끼면 api·워커도 #195와 같은 처지가 된다. 2026-09-01 신규 채번. ⚠️ **2026-09-02 갱신**: #195는 그날 실제로 밟은 손편집 미동기 증상(cloudflared)만 커밋 `0fc1949`로 닫혀 **해소** 처리됐다 — 남은 구조적 몫("api·media-worker·ai-worker를 SSH로 pull·up하는 배포 잡 자체가 없다")은 #195 등재문이 그날 이미 이 1-1로 범위를 좁혀 뒀고 지금도 여기서 그대로 추적한다, PIVOT-PLAN 대장 #195 비고 참조) | GitHub Environment 승인 게이트(사용자 실행) |
+| 1-1 | 대장 #180 | **api·워커 배포 경로 신설**(web 잡 복제) | L1 | 없음(SHA 대조가 배포 성공 판정 — 대장 #186 해소로 이미 충족) | **규율 2 검사**(워크스페이스 의존 ⊆ Dockerfile COPY — #161이 배포를 3일 막았다) + **대장 #195 동반**(제온 `~/gachinol`이 git 체크아웃이 아니다 — "web 잡 복제"가 곧 "compose pull && up만 하고 compose 파일 자체는 안 갱신"하는 패턴 그대로 복제하는 것이라, 서버 config 동기화 경로 없이 그대로 베끼면 api·워커도 #195와 같은 처지가 된다. 2026-09-01 신규 채번. ⚠️ **2026-09-02 갱신**: #195는 그날 실제로 밟은 손편집 미동기 증상(cloudflared)만 커밋 `0fc1949`로 닫혀 **해소** 처리됐다 — 남은 구조적 몫("api·media-worker·ai-worker를 SSH로 pull·up하는 배포 잡 자체가 없다")은 #195 등재문이 그날 이미 이 1-1로 범위를 좁혀 뒀고 지금도 여기서 그대로 추적한다, PIVOT-PLAN 대장 #195 비고 참조) | ~~GitHub Environment 승인 게이트~~ — **해제(2026-09-02, §D-1 참조)**: 사용자 실행(Environment 생성·bypass 토글 끔)·코드 배선(`deploy` 잡 `environment: production`) 두 몫 모두 완료. **권고 조건(차단 아님)**: 복제 원본인 `chore/deploy-approval-gate`가 main에 병합된 뒤 1-1 PR을 열 것 |
 | 1-2 | 대장 #180 | **배포 후 스모크** — 미인증 요청의 `≠404`로 라우트 실재 판정. **없는 경로 음성 대조 필수** | L1 | 1-1 | — | — |
 | 1-3 | (미채번) | **가용성 감시 신설** — 인터넷 경로·배포 신선도·api 헬스. ⚠️ 대장 #72의 경보 7종과 **다른 것**이다 | L1 | 없음(舊 0-1 대상 — Quick Tunnel 재발 차단 — 이 2026-09-01 해소로 충족. 이력: #186 제거로 0-2였다가 #182 제거로 0-1이 됐고, **2026-09-01 그 0-1 자체(대장 #179·#187)가 named tunnel 전환으로 해소·제거**돼 지금의 "0-1"은 물리적으로 다른 태스크(#189)를 가리킨다 — 그래서 번호 참조 대신 충족 여부로 기재한다) | 채번 선행(규율 24-1) | — |
 

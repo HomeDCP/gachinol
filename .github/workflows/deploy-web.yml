@@ -17,11 +17,14 @@ name: Deploy Web
 # 누락 같은 빌드 컨텍스트 결함이 실배포 전에 PR에서 red가 된다.
 # 재현: `grep -c "Dockerfile.web" .github/workflows/*.yml` → ≥1.
 #
-# ── ③④는 지금 실행되지 않는다 (의도된 비활성) ──────────────────────────────────
-# T-NC-02 ②(제온 외부 노출 방식)·G9 ①(도메인)이 미확정이라 배포 대상 호스트도 CF 존도 존재하지 않는다.
-# 두 잡은 `preflight`가 계산한 출력에 걸려 있고, 그 계산은 **레포지토리 변수·시크릿이 실제로 설정돼
-# 있는지**만 본다 — 코드를 고치지 않고 설정만 하면 켜진다(절차는 아래 `preflight` 잡 주석 참조).
-# 현재 상태(2026-08-17 실측): `gh variable list`·`gh secret list` 모두 0건 → 두 잡은 스킵된다.
+# ── ③④ 실배포 게이트: preflight(변수·시크릿) + Environment(사람 승인) 2단 ───────────
+# ③(배포)·④(퍼지)는 `preflight`가 계산한 출력에 걸려 있고, 그 계산은 레포지토리 변수·시크릿
+# 설정 여부만 본다(절차는 아래 `preflight` 잡 주석 참조). ⚠️ 舊 "2026-08-17 실측 — 0건이라 스킵"
+# 서술은 stale이다 — 설정 완료 후 ③④는 2026-08-28부터 실가동 중(CLAUDE.md §11).
+# ⭐ 그 위에 사람 승인이 한 겹 더 얹혔다(2026-09-02): `deploy` 잡은 GitHub Environment
+# `production`(Required reviewer 1명)에 물려 있어 preflight가 deploy=true를 계산해도 **승인
+# 전에는 SSH가 나가지 않는다**(main 머지 → 빌드 → 승인 대기 → 배포, Actions 탭 "Review
+# deployments"). 재현 절차·purge 판단은 아래 `preflight` 잡 주석이 단일 원천.
 # ①②는 이 게이트와 무관하게 항상 돈다(비차단 — T-W0-03 N-1 문안 준용).
 
 on:
@@ -252,6 +255,16 @@ jobs:
   #       + gh secret set CLOUDFLARE_API_TOKEN / CLOUDFLARE_ZONE_ID
   #    6) main 푸시 또는 `gh workflow run deploy-web.yml -f deploy=true`
   #    → 1~4 중 하나라도 비면 ③이 스킵되고, 5가 비면 ④만 따로 스킵된다(사유가 잡 요약에 찍힌다).
+  #    7) (2026-09-02 추가) 승인 게이트: `deploy` 잡이 GitHub Environment `production`에 물려 있어
+  #       1~6이 전부 충족돼도 **승인자 1명이 Actions 실행 화면에서 "Review deployments"로 승인해야만**
+  #       SSH가 나간다(main 머지 → 빌드 → 승인 대기 → 배포). PR은 애초에 preflight가 안 돌아
+  #       (`if: github.event_name != 'pull_request'`) 승인 요청이 쌓이지 않는다. `purge`는 별도
+  #       Environment 없음 — `needs: deploy`로 승인 대기·거부가 구조적으로 전파된다(deploy가 막히면
+  #       purge도 안 돈다). 재현(설정을 잃었을 때, repo Settings → Environments → New environment):
+  #       이름 `production`(철자 고정) · Required reviewers: HomeDCP · Prevent self-review: 끔
+  #       (1인 운영이라 켜면 아무도 승인 못 함) · Deployment branches and tags: Selected → `main`만 ·
+  #       Environment secrets/variables: 비움(리포 레벨 값을 그대로 씀). 앞으로 추가될 프로덕션 배포
+  #       잡(api·워커, 대장 #180)도 같은 Environment를 쓴다.
   #    ▶ 도메인 확정 시 추가 작업(설계 메모): vars.WEB_EXPO_PUBLIC_API_URL 등 공개 URL 재정의(번들
   #      재빌드로 반영) + Cloudflare Tunnel을 제온에 배선(web·api 호스트네임) + 5) 설정 — 이 파일은 무변경.
   preflight:
@@ -336,6 +349,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, preflight]
     if: needs.preflight.outputs.deploy == 'true'
+    # GitHub Environment 승인 게이트(2026-09-02, CLAUDE.md §0-3) — 재현 절차·근거는 아래
+    # `preflight` 잡 주석 참조. purge 잡은 이 잡에 needs로 종속돼 있어 별도 Environment 불필요.
+    environment: production
     steps:
       # 배포 후 SHA 대조 스텝(맨 아래)이 러너 로컬의 infra/scripts/verify-deployed-sha.mjs를 돈다.
       - uses: actions/checkout@v4
