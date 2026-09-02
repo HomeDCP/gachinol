@@ -26,7 +26,9 @@ function loadSchemaObjectFactory(): unknown {
  * (전역 파이프/필터/가드는 AppModule providers에서 등록)
  */
 export function configureApp(app: INestApplication, opts: { nodeEnv: string }): void {
-  app.setGlobalPrefix('v1', { exclude: ['health/liveness', 'health/readiness'] });
+  app.setGlobalPrefix('v1', {
+    exclude: ['health/liveness', 'health/readiness', 'health/version'],
+  });
   app.enableShutdownHooks(); // Prisma 정리
 
   if (opts.nodeEnv !== 'production') {

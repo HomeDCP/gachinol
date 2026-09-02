@@ -37,14 +37,16 @@
 # (2026-08-08) + 4주 초과(2026-09-05) 시 승인 없으면 Tunnel 단독안으로 자동 확정된다. 사용자가 검토 중이라
 # 언급한 Tailscale은 이 2안 밖 후보라 **채택 전까지 구현하지 않는다**
 # (reviews/dod-evidence/w0/T-NC-02-g9-receipt.md ② 참조). 아래는 Tunnel 안을 08§D 자동 확정 방향에 맞춰
-# **설정 코드만 미리 작성**한 것 — 주석 해제 전까지는 `docker compose config`에도 이 서비스가 나타나지
-# 않는다(실제로 아무것도 적용되지 않은 상태). 활성화 절차(사용자 확정 후): ① Cloudflare Zero Trust에서
+# 작성한 것. 활성화 절차(사용자 확정 후): ① Cloudflare Zero Trust에서
 # 터널 생성 → 토큰 발급 ② infra/docker/env.example의 CLOUDFLARE_TUNNEL_TOKEN을 .env에 채움
 # ③ 아래 `services:` 블록 안의 `cloudflared:` 주석(각 행 맨 앞 `# ` 접두, 들여쓰기 2칸은 유지)을
 # 해제 ④ 터널 라우팅에서 각 서브도메인 → 이 compose 네트워크 내부의 web:80 / api:4000
 # (WS 포함)로 연결. 포트 개방을 택할 경우 이 서비스는 불필요 — 대신 nftables에 web(80)·api(4000)
 # LAN→인터넷 허용 규칙을 추가한다(OS 방화벽 설정이라 이 compose 파일의 소관이 아니다 — 별도 승인 필요,
 # 여기서는 그 대체 경로가 있다는 사실만 기록한다).
+# ⚠️ **갱신(2026-09-02, 대장 #195)**: 위 ①~④는 이미 실행됐다 — 아래 `cloudflared:` 블록은
+# 더 이상 "미리 작성한 초안"이 아니라 **활성화된 상태**다(제온 실물과 동기화 완료). 경위는
+# 블록 옆 주석 참조.
 #
 # ⚠️ 이 블록은 반드시 아래 `services:` 안에 있어야 한다(다른 서비스와 같은 2칸 들여쓰기).
 #    과거 버전(대장 #193)은 이 헤더 주석 영역(services: 바깥)에 블록을 둔 채 "③ 아래 블록 주석
@@ -174,9 +176,24 @@ services:
     # ⚠️ `image:`가 없으면 `docker compose pull web`이 "빌드 대상"이라며 건너뛰고 `up`이 **제온에서
     # 재빌드**를 시도한다 — DCP 파이프라인과 CPU를 공유하는 호스트에서 금지 사항이며, Dockerfile.web
     # 주석이 선언한 "CI가 만든 이미지를 pull && up으로 배포"가 성립하지 않는다(T-W1-11c 구현자 발견,
-    # 대장 #143). **기본값은 compose가 자동 생성하던 태그와 동일**하므로(프로젝트명 `gachinol-prod` +
-    # 서비스명 `web`) 로컬 빌드 흐름은 무회귀이고, CI 배포는 `WEB_IMAGE`로 GHCR 태그를 주입한다.
-    image: ${WEB_IMAGE:-gachinol-prod-web}
+    # 대장 #143).
+    # ⚠️ **정정(2026-09-02, 대장 #194)**: #143 해소 당시 이 자리에 있던 舊 문언 — "기본값은 compose가
+    # 자동 생성하던 로컬 태그(`gachinol-prod-web`)와 동일하므로 `WEB_IMAGE` 미설정 시 로컬에서
+    # 재빌드되니 무회귀" — 는 **사실과 다르다**. `docker compose up -d`는 `--build`를 주지 않는 한
+    # 재빌드하지 않고 **로컬 캐시에 남아 있는 옛 이미지를 그대로 재사용**한다. 2026-09-01 이 경로를
+    # 실제로 밟았다 — 사용자가 터널을 켜려 제온에서 `up -d`를 실행하자 **2026-08-21에 빌드된(10일
+    # 전) web 이미지가 조용히 인터넷에 그대로 서빙**됐다(대장 #194). `docker-compose.prod.yml`의
+    # api·media-worker·ai-worker는 애초부터 `${REGISTRY:-ghcr.io/homedcp}/gachinol-<서비스>:${IMAGE_TAG:-latest}`
+    # 형태라 폴백해도 GHCR을 가리키므로 이 사고를 피한다 — web만 로컬 태그로 폴백하는 예외였다.
+    # 그래서 기본값도 같은 레지스트리 한정 형태로 바꾼다(중첩 `${VAR:-default}`는 docker compose가
+    # 지원함을 `docker compose config`로 실증 — 아래 세 경로 모두 GHCR을 가리킨다):
+    #   ① CI(`deploy-web.yml` deploy 잡) — `WEB_IMAGE`에 **전체 이미지 참조**
+    #      (`ghcr.io/<owner>/gachinol-web:<GIT_SHA 전체>`)를 주입 → 그 값이 그대로 쓰인다(최우선).
+    #   ② 사람이 손으로 `up -d`하되 `.env.prod`에 `REGISTRY`/`IMAGE_TAG`를 설정한 경우(다른 3서비스와
+    #      동일 관례, infra/docker/README.md 참조) → `${REGISTRY:-ghcr.io/homedcp}/gachinol-web:${IMAGE_TAG:-latest}`로 조립.
+    #   ③ 아무것도 설정하지 않은 경우 → `ghcr.io/homedcp/gachinol-web:latest`.
+    # 세 경로 어디로 폴백해도 로컬 빌드 태그가 아니다 — 옛 이미지 조용한 재사용이 구조적으로 불가능해진다.
+    image: ${WEB_IMAGE:-${REGISTRY:-ghcr.io/homedcp}/gachinol-web:${IMAGE_TAG:-latest}}
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.web
@@ -209,22 +226,26 @@ services:
       resources:
         limits: { memory: 256m }
 
-  # Cloudflare Tunnel — 활성화 절차는 파일 헤더 주석(G9 ②) 참조. 주석 해제 시 각 행 맨 앞
-  # `# ` 만 지우고 2칸 들여쓰기는 유지할 것(web:·api:와 같은 레벨이어야 `services:` 하위로 인식된다).
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   restart: unless-stopped
-  #   command: tunnel run
-  #   environment:
-  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN 필요(.env) — Tunnel 채택 확정 후 설정}
-  #   depends_on:
-  #     web:
-  #       condition: service_healthy
-  #     api:
-  #       condition: service_healthy
-  #   deploy:
-  #     resources:
-  #       limits: { memory: 128m }
+  # Cloudflare Tunnel — 활성화 절차 이력은 파일 헤더 주석(G9 ②) 참조.
+  #
+  # ⚠️ **역동기화(2026-09-02, 대장 #195)**: 제온은 git 체크아웃이 아니라 파일이 일괄 복사되는
+  # 배포 대상이다 — 리포를 고쳐도 서버에 자동 반영되지 않는다. 그래서 터널을 급히 켜야 했던
+  # 사람이 서버에서 이 블록의 주석을 직접 풀었고, 리포는 갱신되지 않아 실물과 갈라졌다. 다음
+  # 배포가 그 손편집을 덮어써 터널을 죽이기 전에 여기서 리포를 실물에 맞춰 되돌린다.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN 필요(.env) — Tunnel 채택 확정 후 설정}
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { memory: 128m }
 
 volumes:
   # [A-2]에서 minio는 `/srv/dcpwork/minio` 바인드로 옮겼다(그 블록 주석 참조). 이 named volume은

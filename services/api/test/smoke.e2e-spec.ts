@@ -18,6 +18,15 @@ describe('스모크 (DB 무관)', () => {
     await request(app.getHttpServer()).get('/health/liveness').expect(200);
   });
 
+  it('GET /health/version → 200, 프리픽스 붙은 /v1/health/version → 404 (대장 #180 — verify-deployed-sha.mjs가 프리픽스 없는 경로를 전제)', async () => {
+    const res = await request(app.getHttpServer()).get('/health/version').expect(200);
+    expect(typeof res.body.sha).toBe('string');
+
+    // 두 단언은 서로 다른 실패 모드를 막는다 — 위 200 단언은 exclude 누락(이 결함,
+    // 뮤테이션으로 실증)을, 아래 404 단언은 이중 노출(양쪽 경로가 모두 200이 되는 경우)을 잡는다.
+    await request(app.getHttpServer()).get('/v1/health/version').expect(404);
+  });
+
   it('무토큰 GET /v1/auth/me → 401 + shared ApiError 형태', async () => {
     const res = await request(app.getHttpServer()).get('/v1/auth/me').expect(401);
     expect(res.body.code).toBe('unauthorized');
