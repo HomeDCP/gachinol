@@ -389,11 +389,18 @@ jobs:
           #    동작한다(없으면 pull이 건너뛰어지고 up이 제온에서 재빌드 — 금지 사항). 舊 주석은 #143
           #    해소 전 문언이 stale로 남은 것이었다(2026-08-26 정정 — 사용자가 이 주석을 근거로
           #    "compose 1줄 수정"을 지시했으나 실측 결과 이미 완료돼 있었다).
+          # ⚠️ `up`에 `--no-deps` 필수(2026-09-02 실발생, 대장 #180 직후 배포에서 재현): `web`은
+          #    `depends_on: api`라 `--no-deps` 없이 `up web`을 돌리면 compose가 `api`도 함께 평가한다.
+          #    이 셸에는 `IMAGE_TAG`가 없어 api 이미지가 `${IMAGE_TAG:-latest}`로 재계산되고, 그 값이
+          #    직전 build-images.yml 배포가 올려둔 sha 태그와 달라 **api가 제온에 캐시된 옛 `latest`로
+          #    재생성**됐다(`docker inspect`로 실측: 배포된 sha 이미지가 안 쓰이고 옛 코드가 응답).
+          #    postgres·redis·minio는 전부 `restart: unless-stopped`로 상시 가동 중이라(로그 `Running`)
+          #    `--no-deps`가 그것들을 못 띄우는 리스크는 없다. 지우지 말 것 — 지우면 이 사고가 재발한다.
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
             "set -euo pipefail; cd '$COMPOSE_DIR'; \
              export WEB_IMAGE='$WEB_IMAGE'; \
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml pull web; \
-             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build web; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build --no-deps web; \
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps web"
 
       # 배포 후 SHA 대조(대장 #186) — "pull && up이 성공"과 "실제로 이 커밋이 서빙된다"는 별개
