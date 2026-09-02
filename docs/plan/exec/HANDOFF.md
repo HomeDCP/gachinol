@@ -100,31 +100,34 @@ build api·build media-worker·build ai-worker 5잡)는 **둘 다 CI 전부 succ
 #88을 먼저 머지해야 한다.**
 
 ### 다음 1건
-**QUEUE 1-1 · 대장 #180 — api·워커 배포 경로 신설**(web 잡 복제). 0단계가 완주돼 순번이 넘어왔다.
+**QUEUE 1-1 · 대장 #180 — api·워커 배포 경로 신설**(web 잡 복제). 0단계가 완주돼 순번이 넘어왔고,
+**차단자(GitHub Environment 승인 게이트)는 2026-09-02 해제됐다**(QUEUE §D-1 참조 — 아래 상세).
 선행 없음(SHA 대조 인프라는 대장 #186 해소로 이미 충족). 동반 의무: **규율 2 검사**(워크스페이스
 의존 ⊆ Dockerfile COPY) + **대장 #195 잔여 범위**(SSH pull·up 배포 잡 자체가 api·media-worker·
-ai-worker엔 아직 없다). **차단자는 GitHub Environment 승인 게이트(required reviewer) → 사용자
-실행**(QUEUE §D-1) — 요청 시점 **"1-1 착수 직전"에 지금 도달했다**. scribe 재현: `grep -rn
-"environment:" .github/workflows/deploy-web.yml | wc -l` → **0**(2026-09-02, 미배선 확인).
-⚠️ **워크플로 배선(잡에 `environment:` 키 추가) 자체는 우리가 한다 — 사용자가 할 일은 GitHub 웹
-Settings → Environments에서 required reviewer를 설정하는 것뿐이다.**
+ai-worker엔 아직 없다).
+
+**차단 해제 근거**: 사용자 실행 몫(GitHub Environment `production` 생성·required reviewer
+`HomeDCP`·배포 브랜치 `main` 한정·"Allow administrators to bypass" 토글 끔)과 코드 몫(`deploy-web.yml`의
+`deploy` 잡에 `environment: production` 배선)이 **같은 날 모두 완료**됐다. scribe 재현(읽기전용 API):
+`gh api repos/HomeDCP/gachinol/environments/production --jq '{can_admins_bypass,reviewers:[.protection_rules[].reviewers[]?.reviewer.login]}'`
+→ `can_admins_bypass:false`·`reviewers:["HomeDCP"]`. ⚠️ **권고 조건(차단은 아니다)**: 그 YAML 배선은
+아직 브랜치 `chore/deploy-approval-gate`에 **미커밋**이다(`git show origin/main:.github/workflows/deploy-web.yml
+| grep -c "environment:"` → **0**, origin/main 기준) — 1-1이 복제할 원본 패턴이 그 브랜치에 있으므로
+**병합 후 1-1 PR을 여는 편이 안전**하다(미병합 상태를 베끼면 다시 갈라진다). 그리고 **승인 대기가 실제로
+걸리는지는 다음 main 머지에서만 검증된다** — 검증된 것으로 가정하고 착수하지 말 것.
 ⚠️ **§0-A 舊 문언("사용자가 '계획을 더 다듬는다'를 택해 개발 착수는 보류 중")은 더 이상 사실이 아니다**
 — 2026-08-31 착수했고 대장 #186 슬라이스가 실제로 완주했다(위 해소 근거). #182·#179·#187·#172·#189·
 #170·#194·#195도 그 뒤를 이어 완주했다.
 
 ### 사용자 대기 (일간보고서 ① 참조 — `docs/ops/daily/`)
-① **GitHub Environment 승인 게이트 설정**(QUEUE §D-1) — 요청 시점 "1-1 착수 직전"에 **지금
-도달했다(2026-09-02)**. 워크플로 배선은 우리가 한다, 사용자는 GitHub 웹에서 required reviewer만
-설정 ·
-② **옛 Quick Tunnel systemd 정지**(대장 #199, 2026-09-02 등재) — `gachinol-quick-tunnel.service`가
-`enabled`라 재부팅하면 되살아나고, 지금 노출을 막는 것은 nginx 444의 부수효과일 뿐이다. named
-tunnel(`bapfull-xeon`)이 이미 개통돼 존재 이유가 소멸했다 — 제온 호스트 쓰기라 사용자 실행 항목
-(`systemctl stop gachinol-quick-tunnel.service && systemctl disable gachinol-quick-tunnel.service`) ·
-③ 카카오 실 송출 범위(QUEUE §D-2)
+① 카카오 실 송출 범위(QUEUE §D-2) — 2단계 완료 시 요청.
 
-**이미 받은 승인 2건(2026-09-02)**: `DROP COLUMN` 마이그레이션 적용 승인 · 배포 묶음(제온 SSH
-풀스택 배포) 착수 승인 — 위 배포 슬라이스 종료 단락 참조. ~~Quick Tunnel 고정 방식~~은 2026-09-01
-충족(named tunnel + `bapfull.com`, QUEUE §C-1·D-3).
+**이미 받은 승인·완료된 요청(2026-09-02)**: `DROP COLUMN` 마이그레이션 적용 승인 · 배포 묶음(제온 SSH
+풀스택 배포) 착수 승인 · **GitHub Environment 승인 게이트 설정**(QUEUE §D-1 완전 충족 — 위 "다음 1건"
+참조) · **옛 Quick Tunnel systemd 정지**(대장 #199 해소 — `ssh 192.168.0.101 'sudo systemctl
+disable --now gachinol-quick-tunnel.service'` 실행, 조율자 검증 `is-enabled`=`disabled`·
+`is-active`=`inactive`). ~~Quick Tunnel 고정 방식~~은 2026-09-01 충족(named tunnel + `bapfull.com`,
+QUEUE §C-1·D-3).
 
 **⭐ 사업자등록 확보(2026-08-31)** — 사용자가 개인사업자 등록증(일반과세자, 업종에 "영화·비디오물
 및 방송 프로그램 제작 관련 서비스업" 포함)을 제공했다. QUEUE §B-1(병렬 트랙 리드타임 항목)·대장 #185가
@@ -164,14 +167,23 @@ tunnel(`bapfull-xeon`)이 이미 개통돼 존재 이유가 소멸했다 — 제
 
 | 항목 | 값 | 재현 |
 |---|---|---|
-| main | `3f8e873` (PR #87 머지 — "Merge pull request #87 from HomeDCP/fix/vars-url-validation") | `git fetch origin main && git log --oneline -1 origin/main` (§7-0 — 로컬 ref는 stale일 수 있다). ⚠️ 舊 기재 `99c1e4f`(PR #84)는 PR #85~#87 머지로 stale이 됐다 — 매 인계마다 재발하므로 착수 시 반드시 재실행할 것 |
-| 열린 PR | **2**(#88 문서, #89 배포 묶음 — 둘 다 CI 전부 success·머지 대기, #89는 #88 위에 쌓임) | `gh pr list --state open` |
-| 대장 | **199행 / 대기 59**(2026-09-02 scribe 재실측 — 배포 슬라이스로 #170·#194·#195 3건 해소(대기 이탈), #199는 이미 등재 상태로 반영돼 순증 없음) | 아래 §5 |
-| 코드 태스크 | **46건 중 27 완료 · 19 미착수 (59%)** — **불변**(총량 재실행 확인 48, 값 동일) — grep 원값 **34**(舊와 동일, 매치 재확인은 세션 내 T-W 커밋 0건이라 생략). 이번 슬라이스(배포 실증·문서 종료 기록)는 **E2 §C 코드 태스크 목록 밖**(코드 변경 0 — scribe는 코드를 고치지 않는다)이라 이 모수에 편입되지 않는다 — 원값 불변이 진척 없음을 뜻하지 않는다(§5 마지막 경고와 동일 원칙) | 아래 §5 |
+| main | `4368ba5` (PR #89 머지 — "Merge pull request #89 from HomeDCP/fix/xeon-deploy-bundle", #88도 그 직전에 병합) | `git fetch origin main && git log --oneline -1 origin/main` (§7-0 — 로컬 ref는 stale일 수 있다). ⚠️ 舊 기재 `3f8e873`(PR #87)는 PR #88·#89 머지로 stale이 됐다 — 매 인계마다 재발하므로 착수 시 반드시 재실행할 것 |
+| 열린 PR | **0**(#88·#89 둘 다 병합 완료) | `gh pr list --state open` |
+| 대장 | **199행 / 대기 58**(2026-09-02 scribe 재실측 — #199 해소로 대기 이탈(사용자가 옛 Quick Tunnel 정지), 신규 채번 0) | 아래 §5 |
+| 코드 태스크 | **46건 중 27 완료 · 19 미착수 (59%)** — **불변**(총량 재실행 확인 48, 값 동일) — grep 원값 **34**(舊와 동일, 매치 재확인은 세션 내 T-W 커밋 0건이라 생략). 이번 슬라이스(사용자 실행 2건 기록·D-1 판정)는 **E2 §C 코드 태스크 목록 밖**(코드 변경 0 — scribe는 코드를 고치지 않는다)이라 이 모수에 편입되지 않는다 — 원값 불변이 진척 없음을 뜻하지 않는다(§5 마지막 경고와 동일 원칙) | 아래 §5 |
 
 **착수 전에 이 네 줄을 먼저 돌린다.** 값이 다르면 이 문서가 stale인 것이므로, 문서를 믿지 말고 실측을 믿는다.
 
-**2026-09-02 scribe 재실측 결과**(규율 1, 배포 슬라이스 종료 기록 직후 — #170·#194·#195 해소 반영):
+**2026-09-02 scribe 재실측 결과**(규율 1, 사용자 실행 2건 기록 직후 — #199 해소 반영, D-1 판정 반영):
+main **4368ba5**(舊 3f8e873에서 전진 — `git fetch origin main && git log --oneline -1 origin/main`
+재확인, #88·#89가 이 세션 도중 병합됐다) · 열린 PR **0**(`gh pr list --state open` — #88·#89 모두 병합) ·
+대장 행수 `awk 'NR>=380' docs/plan/PIVOT-PLAN.md | grep -oE "^\| [0-9]+ \|" | grep -oE "[0-9]+" | sort -n
+| uniq | wc -l` → **199**(불변) · `node infra/scripts/daejang-recheck.mjs` → **"대상 58행"**(舊 59 —
+#199 해소로 대기 이탈, 신규 채번 0)·표 무결성 **0행**·어긋남 **0건**(일치 29 불변·수동 40→**38**,
+#199가 보유하던 verify-pair 2개가 함께 빠진 결과). 진행률은 위 표와 동일(불변, 총량 48만 재확인,
+이번 슬라이스는 코드 태스크 목록 밖 — QUEUE D-1 판정도 문서 갱신이라 코드 변경 0).
+
+**2026-09-02 scribe 재실측 결과**(규율 1, 배포 슬라이스 종료 기록 직후 — 이력, 위 값으로 교체됨):
 main **3f8e873**(불변, `git fetch origin main && git log --oneline -1 origin/main` 재확인 — #88·#89는
 아직 열린 PR이라 main 미반영) · 열린 PR **2**(`gh pr list --state open` — #88·#89) · 대장 행수
 `awk 'NR>=380' docs/plan/PIVOT-PLAN.md | grep -oE "^\| [0-9]+ \|" | grep -oE "[0-9]+" | sort -n | uniq
