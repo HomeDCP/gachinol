@@ -232,8 +232,15 @@ jobs:
       # 있어(web의 `WEB_IMAGE`와 동형) `IMAGE_TAG` 환경변수 주입만으로 `pull && up --no-build`가
       # 의도대로 동작한다 — compose 파일 자체는 이번 태스크에서 고치지 않는다(요구사항 밖).
       # `web`·`postgres`·`redis`·`minio`·`cloudflared`는 건드리지 않는다(deploy-web이 `web`만
-      # 건드리는 것과 같은 최소 반경 원칙 — 이미 실행 중인 의존 서비스는 `depends_on`으로 필요 시에만
-      # 딸려 온다. 이미 healthy로 떠 있으면 재기동되지 않는다).
+      # 건드리는 것과 같은 최소 반경 원칙).
+      # ⚠️ `up`에 `--no-deps` 필수 — `--no-deps` 없이 `up api ...`를 돌리면 compose가 **api의
+      #    의존 서비스**(postgres·redis·minio)까지 함께 평가한다(depends_on 그래프상 `web`은 `api`에
+      #    의존하는 쪽이라 api를 올려도 딸려 오지 않는다 — `docker compose config`로 실측 확인).
+      #    postgres·redis·minio는 IMAGE_TAG로 파라미터화돼 있지 않아 지금은 되돌아갈 값 자체가
+      #    없지만, 이 워크플로도 `web` 쪽과 같은 실수(2026-09-02, 대장 #180 직후 — `deploy-web.yml`이
+      #    `--no-deps` 없이 `up web`을 돌려 캐시된 옛 `latest` api로 되돌린 사고)를 원리적으로 반복할
+      #    수 있으므로 대칭으로 막는다. `pull`은 `--include-deps`를 주지 않는 한 기본이 대상 서비스만
+      #    당기므로(compose 기본 동작, `docker compose pull --help` 실측) 여기선 손댈 필요가 없다.
       - name: Deploy over SSH (docker compose pull + up — api·media-worker·ai-worker)
         env:
           SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
@@ -247,7 +254,7 @@ jobs:
             "set -euo pipefail; cd '$COMPOSE_DIR'; \
              export IMAGE_TAG='$IMAGE_TAG'; \
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml pull api media-worker ai-worker; \
-             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build api media-worker ai-worker; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build --no-deps api media-worker ai-worker; \
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps api media-worker ai-worker"
 
       # 배포 후 SHA 대조 — api (대장 #186 패턴, `infra/scripts/verify-deployed-sha.mjs --kind api`).
