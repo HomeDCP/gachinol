@@ -1,4 +1,4 @@
-# HANDOFF — 실행 인계 (기준: 2026-09-02)
+# HANDOFF — 실행 인계 (기준: 2026-09-03)
 
 > ⭐ **먼저 읽을 것**: [ROOT-CAUSE-2026-08.md](ROOT-CAUSE-2026-08.md) — 이 프로젝트가 정체된 이유의
 > 단일 원천이다(2026-08-30~31 전수 정독 결론). **개별 결함이 아니라 그 결함들이 왜 계속 생기는가**를 담는다.
@@ -99,28 +99,43 @@ build api·build media-worker·build ai-worker 5잡)는 **둘 다 CI 전부 succ
 `gh pr view 89 --json mergeable,mergeStateStatus` → `MERGEABLE`/`CLEAN`. **#89는 #88 위에 쌓여 있어
 #88을 먼저 머지해야 한다.**
 
-### 다음 1건
-**QUEUE 1-1 · 대장 #180 — api·워커 배포 경로 신설**(web 잡 복제). 0단계가 완주돼 순번이 넘어왔고,
-**차단자(GitHub Environment 승인 게이트)는 2026-09-02 해제됐다**(QUEUE §D-1 참조 — 아래 상세).
-선행 없음(SHA 대조 인프라는 대장 #186 해소로 이미 충족). 동반 의무: **규율 2 검사**(워크스페이스
-의존 ⊆ Dockerfile COPY) + **대장 #195 잔여 범위**(SSH pull·up 배포 잡 자체가 api·media-worker·
-ai-worker엔 아직 없다).
+### ⭐ 2026-09-03 — QUEUE 1-1(舊, 대장 #180) 완주 + 신규 결함 실발생·당일 해소(대장 #200)
 
-**차단 해제 근거**: 사용자 실행 몫(GitHub Environment `production` 생성·required reviewer
-`HomeDCP`·배포 브랜치 `main` 한정·"Allow administrators to bypass" 토글 끔)과 코드 몫(`deploy-web.yml`의
-`deploy` 잡에 `environment: production` 배선)이 **같은 날 모두 완료**됐다. scribe 재현(읽기전용 API):
-`gh api repos/HomeDCP/gachinol/environments/production --jq '{can_admins_bypass,reviewers:[.protection_rules[].reviewers[]?.reviewer.login]}'`
-→ `can_admins_bypass:false`·`reviewers:["HomeDCP"]`. ⚠️ **권고 조건(차단은 아니다)**: 그 YAML 배선은
-아직 브랜치 `chore/deploy-approval-gate`에 **미커밋**이다(`git show origin/main:.github/workflows/deploy-web.yml
-| grep -c "environment:"` → **0**, origin/main 기준) — 1-1이 복제할 원본 패턴이 그 브랜치에 있으므로
-**병합 후 1-1 PR을 여는 편이 안전**하다(미병합 상태를 베끼면 다시 갈라진다). 그리고 **승인 대기가 실제로
-걸리는지는 다음 main 머지에서만 검증된다** — 검증된 것으로 가정하고 착수하지 말 것.
-⚠️ **§0-A 舊 문언("사용자가 '계획을 더 다듬는다'를 택해 개발 착수는 보류 중")은 더 이상 사실이 아니다**
-— 2026-08-31 착수했고 대장 #186 슬라이스가 실제로 완주했다(위 해소 근거). #182·#179·#187·#172·#189·
-#170·#194·#195도 그 뒤를 이어 완주했다.
+**PR #91**(경로 신설 + 규율 2 기계화, 커밋 `76014bc`+`f95a9ee`, 병합 `5a5d56e` · 2026-09-02T15:12:48Z)이
+`.github/workflows/build-images.yml`에 api·media-worker·ai-worker deploy 잡을 신설했다(web 잡 패턴
+복제 — `pull && up -d --no-build`+SHA 대조). **병합 직후 첫 실배포(15:17~15:20)가 즉시 새 결함을
+드러냈다**: `docker compose up -d <service>`는 `--no-deps` 없이는 의존 서비스도 함께 처리하는데,
+`deploy-web.yml`이 `up -d --no-build web`을 돌리자 `depends_on: api`인 api까지 함께 평가돼 **api가
+`${IMAGE_TAG:-latest}`(제온 캐시된 옛 이미지)로 되돌아갔다**(신규 채번 **대장 #200**). SHA 대조는
+15:18에 정확히 통과했었다 — 2분 뒤 다른 워크플로가 덮었을 뿐이다. **같은 날 PR #92**(커밋 `63b7a05`,
+병합 `6651666` · 2026-09-03T04:59:44Z)로 두 워크플로의 `up`에 `--no-deps`를 대칭 적용해 수리했다.
+
+**최종 실배포 확인(2026-09-03, scribe 재현)**: `curl -s https://api.bapfull.com/health/version` →
+`{"sha":"665166691ae0d998e82f841978f1f7cb186d60d2"}`(舊 404). CI 잡 단위(`gh run view 33717077694
+--json jobs`): preflight✅·build api/media-worker/ai-worker✅·**deploy✅**(로그 원문 `SHA 일치
+확인(kind=api): 6651666...`·`(media-worker): 6651666...`·`(ai-worker): 6651666...`). **승인 게이트
+실동작**: build 종료 `05:02` → deploy 시작 `05:41`(약 39분 대기 — required reviewer 승인 두 건을
+오늘 각각 통과했다, build-images·deploy-web 워크플로 별도). 제온 컨테이너가 `latest`가 아니라
+커밋 SHA 태그로 뜬 것은 **조율자 실측 인용**(scribe SSH 금지, curl 재현분만 독자 확인).
+
+→ **QUEUE 1-1(대장 #180) 해소·행 제거, 번호가 당겨져 舊 1-2(배포 후 스모크)가 새 1-1로, 舊
+1-3(가용성 감시)이 새 1-2로 바뀌었다.** 상세는 PIVOT-PLAN 대장 #180·#200, QUEUE 1단계.
+
+### 다음 1건
+**QUEUE 1-1(새 번호) · 대장 #180 소유 — 배포 후 스모크**(미인증 요청의 `≠404`로 라우트 실재 판정,
+없는 경로 음성 대조 필수). 선행 없음(舊 1-1 해소로 충족). 동반 의무 없음.
+⚠️ **설계 시 원리적 한계를 전제할 것**(2026-09-03 대장 #200 실측 근거, QUEUE 1단계 각주 참조):
+배포 "직후" 검증은 그 순간의 참만 재고 **그 이후 다른 프로세스가 되돌리는 것을 원리적으로 못 잡는다**
+— 스모크만으로 "재발 방지 완결"이라 보고하지 말 것. 그 사각을 지속 감시로 덮는 것이 다음 순번인
+**QUEUE 1-2(미채번) — 가용성 감시 신설**이다.
 
 ### 사용자 대기 (일간보고서 ① 참조 — `docs/ops/daily/`)
 ① 카카오 실 송출 범위(QUEUE §D-2) — 2단계 완료 시 요청.
+
+**이미 받은 승인·완료된 요청(2026-09-03)**: **배포 승인 2건**(GitHub Environment `production`
+required reviewer 게이트를 실제로 통과 — Build Images 잡 `deploy (api·media-worker·ai-worker →
+제온)` 승인 1건 + Deploy Web 잡 `deploy (정적 산출물 → 제온 web 컨테이너)` 승인 1건, `gh run view
+--json jobs`의 `startedAt` 간격(build 종료 05:02 → deploy 시작 05:41, 약 39분)이 승인 대기의 정황).
 
 **이미 받은 승인·완료된 요청(2026-09-02)**: `DROP COLUMN` 마이그레이션 적용 승인 · 배포 묶음(제온 SSH
 풀스택 배포) 착수 승인 · **GitHub Environment 승인 게이트 설정**(QUEUE §D-1 완전 충족 — 위 "다음 1건"
@@ -167,14 +182,28 @@ QUEUE §C-1·D-3).
 
 | 항목 | 값 | 재현 |
 |---|---|---|
-| main | `4368ba5` (PR #89 머지 — "Merge pull request #89 from HomeDCP/fix/xeon-deploy-bundle", #88도 그 직전에 병합) | `git fetch origin main && git log --oneline -1 origin/main` (§7-0 — 로컬 ref는 stale일 수 있다). ⚠️ 舊 기재 `3f8e873`(PR #87)는 PR #88·#89 머지로 stale이 됐다 — 매 인계마다 재발하므로 착수 시 반드시 재실행할 것 |
-| 열린 PR | **0**(#88·#89 둘 다 병합 완료) | `gh pr list --state open` |
-| 대장 | **199행 / 대기 58**(2026-09-02 scribe 재실측 — #199 해소로 대기 이탈(사용자가 옛 Quick Tunnel 정지), 신규 채번 0) | 아래 §5 |
-| 코드 태스크 | **46건 중 27 완료 · 19 미착수 (59%)** — **불변**(총량 재실행 확인 48, 값 동일) — grep 원값 **34**(舊와 동일, 매치 재확인은 세션 내 T-W 커밋 0건이라 생략). 이번 슬라이스(사용자 실행 2건 기록·D-1 판정)는 **E2 §C 코드 태스크 목록 밖**(코드 변경 0 — scribe는 코드를 고치지 않는다)이라 이 모수에 편입되지 않는다 — 원값 불변이 진척 없음을 뜻하지 않는다(§5 마지막 경고와 동일 원칙) | 아래 §5 |
+| main | `6651666` (PR #92 머지 — "Merge pull request #92 from HomeDCP/fix/deploy-no-deps") | `git fetch origin main && git log --oneline -1 origin/main` (§7-0 — 로컬 ref는 stale일 수 있다). ⚠️ 舊 기재 `4368ba5`(PR #89)는 PR #91·#92 머지로 stale이 됐다 — 매 인계마다 재발하므로 착수 시 반드시 재실행할 것 |
+| 열린 PR | **0**(#91·#92 둘 다 병합 완료) | `gh pr list --state open` |
+| 대장 | **200행 / 대기 57**(2026-09-03 scribe 재실측 — #180 해소로 대기 이탈 + 신규 #200(같은 날 즉시 해소, 대기 순증 0), 총 행수 199→200) | 아래 §5 |
+| 코드 태스크 | **46건 중 27 완료 · 19 미착수 (59%)** — **불변**(총량 재실행 확인 48, 값 동일) — grep 원값 **34**(舊와 동일, 매치 재확인은 세션 내 T-W 커밋 0건이라 생략). 이번 슬라이스(PR #91·#92는 `.github/workflows/`·`infra/scripts/` 배포 인프라 — **E2 §C 코드 태스크 목록 밖**, 3앱·shared·api·worker 태스크 ID 매치 없음)이라 이 모수에 편입되지 않는다 — 원값 불변이 진척 없음을 뜻하지 않는다(§5 마지막 경고와 동일 원칙) | 아래 §5 |
 
 **착수 전에 이 네 줄을 먼저 돌린다.** 값이 다르면 이 문서가 stale인 것이므로, 문서를 믿지 말고 실측을 믿는다.
 
-**2026-09-02 scribe 재실측 결과**(규율 1, 사용자 실행 2건 기록 직후 — #199 해소 반영, D-1 판정 반영):
+**2026-09-03 scribe 재실측 결과**(규율 1, QUEUE 1-1 완주+대장 #200 기록 직후): main **6651666**(舊
+`4368ba5`에서 전진 — `git fetch origin main && git log --oneline -1 origin/main` 재확인, PR #91·#92가
+이 세션 도중 병합됐다) · 열린 PR **0**(`gh pr list --state open`) · 대장 행수 `awk 'NR>=380'
+docs/plan/PIVOT-PLAN.md | grep -oE "^\| [0-9]+ \|" | grep -oE "[0-9]+" | sort -n | uniq | wc -l` →
+**200**(舊 199 + 신규 #200) · `node infra/scripts/daejang-recheck.mjs` → **"대상 57행"**(舊 58 —
+#180 해소로 대기 이탈, #200은 등재와 동시에 해소돼 대기 순증 0)·표 무결성 **0행**·어긋남 **0건**·
+일치 29 불변·수동 38→**37**(#180이 보유하던 verify-pair 1개가 대기 이탈과 함께 빠진 결과). 진행률
+**원값 34/코드 태스크 27/46(59%) 불변**(`grep -oE "^\| (\*\*)?T-W[0-9]-[0-9]+[a-z]?"
+docs/plan/exec/E2-work-breakdown.md | grep -oE "T-W[0-9]-[0-9]+[a-z]?" | sort -u | wc -l` → **48**
+불변 · 매치 재확인(while-read 루프, ⚠️ 이 리포 셸은 **zsh** — `for id in $IDS`는 zsh 기본 옵션에서
+단어분리가 안 돼 루프가 1회만 돈다, `| while IFS= read -r id; do ...; done` 형태를 쓸 것) → **34**
+불변, PR #91·#92는 `.github/workflows/`·`infra/scripts/` 배포 인프라라 **E2 §C 코드 태스크 목록
+밖**(태스크 ID 매치 0)이라 이 모수에 편입되지 않는다).
+
+**2026-09-02 scribe 재실측 결과**(규율 1, 사용자 실행 2건 기록 직후 — #199 해소 반영, D-1 판정 반영, 이력):
 main **4368ba5**(舊 3f8e873에서 전진 — `git fetch origin main && git log --oneline -1 origin/main`
 재확인, #88·#89가 이 세션 도중 병합됐다) · 열린 PR **0**(`gh pr list --state open` — #88·#89 모두 병합) ·
 대장 행수 `awk 'NR>=380' docs/plan/PIVOT-PLAN.md | grep -oE "^\| [0-9]+ \|" | grep -oE "[0-9]+" | sort -n
@@ -401,6 +430,22 @@ git log origin/main --grep="<ID>" --pretty=%s | grep -qE "^(feat|fix|refactor|pe
    → 2026-08-21~23에 실제로 **배포가 3일간 막혀 있었다**(#161).
 5. **수치는 그 자리에서 재실행**한다(규율 1). 이 문서 §1 포함.
 
+## 7-0000. 2026-09-03 세션(QUEUE 1-1 완주·대장 #200)이 남긴 함정
+
+- **두 번째 자동 배포 경로가 생기는 순간 상호 되돌림이 원리적으로 성립한다.** `docker compose up -d
+  <service>`는 `--no-deps` 없이는 의존 서비스도 함께 처리한다 — `web`이 `depends_on: api`인데
+  `deploy-web.yml`이 `IMAGE_TAG` 없이 `up -d --no-build web`을 돌리자 함께 처리된 api가
+  `${IMAGE_TAG:-latest}`(옛 캐시)로 되돌아갔다(대장 #200). **배포 워크플로를 새로 추가할 때마다
+  기존 워크플로와의 `depends_on` 교차를 먼저 그려 볼 것** — 이번엔 하필 첫 실배포에서 바로 걸렸다.
+- **배포 직후 검증(SHA 대조·스모크)은 그 이후의 되돌림을 원리적으로 못 잡는다.** 15:18의 SHA 대조는
+  실제로 참이었고 2분 뒤 다른 프로세스가 덮었다 — "배포 후 1회 판정"과 "지속 감시"는 다른 층이다
+  (QUEUE 1단계 각주 참조). 스모크가 초록이라고 "재발 방지 완결"이라 보고하지 말 것.
+- **이 리포 환경의 Bash 도구 셸은 zsh다.** `for id in $VAR`(공백 없이 unquoted 다중행 변수)는 zsh
+  기본 옵션(`SH_WORD_SPLIT` 꺼짐)에서 **단어분리가 안 돼 루프가 1회만 돈다** — 여러 줄을 통째로 한
+  단어로 받아 마지막 반복만 실행된 것처럼 보인다(실측: 48개 ID 루프가 count=1로 나왔다). **여러 줄
+  데이터를 순회하려면 `... | while IFS= read -r x; do ... done`를 쓸 것.** bash 스크립트를 그대로
+  복붙하면 이 함정을 조용히 밟는다 — 카운트가 작게 나와도 에러가 안 나서 알아채기 어렵다.
+
 ## 7-000. 2026-08-30 재판정 세션이 남긴 함정
 
 - **규율 17에는 쌍둥이가 있다 — "너무 좁아 영구 미해소"의 반대편은 "너무 넓어 오해소"다.** #72의 재현 명령이
@@ -503,10 +548,10 @@ git log origin/main --grep="<ID>" --pretty=%s | grep -qE "^(feat|fix|refactor|pe
 - **정답 전사(ground truth)** — 도구·CER 준비 완료(`~/gachinol-inference/stt-eval/`, 52구간 중 5건 입력됨).
   확보 전에는 STT 설정 튜닝이 대리 지표(글자수·키워드)에 의존한다.
 - **T-NC-03 PoC**(실기기 18시행) · **T-NC-20 CF Stream 실계정**(지출) · **도메인 확정**(G9 ①)
-- ⭐ **제온 마이그레이션 `20260827203549` 적용 승인**(#170 동반 — 1순위 슬라이스의 배포 단계에서 필요).
-  **`DROP COLUMN` 2개로 비가역**이다: `contents.minor_consent_confirmed_at` · `..._by_user_id`.
-  T-W2-36(동의서 판단 게이트 해체, 대장 #166)이 의도적으로 버린 데이터이므로 **손실은 설계된 것**이지만,
-  프로덕션 파괴적 변경이라 승인 없이 적용하지 않는다. 복원점은 확보돼 있다(최신 덤프 `gachinol-20260830-040644.sql.gz`).
+- ~~⭐ 제온 마이그레이션 `20260827203549` 적용 승인~~ **✅ 충족·적용 완료(2026-09-02, 대장 #170 참조,
+  이력 보존)** — 舊 텍스트는 원문 보존: *"`DROP COLUMN` 2개로 비가역이다: `contents.minor_consent_confirmed_at`·
+  `..._by_user_id`. T-W2-36이 의도적으로 버린 데이터이므로 손실은 설계된 것이지만, 프로덕션 파괴적
+  변경이라 승인 없이 적용하지 않는다."* 사용자 승인 후 SSH 배포로 적용됨, 복원점 `gachinol-20260902-040924.sql.gz`.
 - **T-NC-08 스토어 계정 개설**(Apple Developer 조직 = D-U-N-S 선행 + Google Play Console) — **리드타임 W3 착수 8주 전**.
   이번 재판정에서 **T-W3-01·02·03·04 전부의 실질 차단자**로 확인됐다(§2-B). W3를 열려면 이것부터 시작해야 한다.
   ⚠️ **사실 정정(2026-09-01, 규율 13 — 원문 보존)**: 사용자가 개인사업자로 시작하기로 결정해 위 "D-U-N-S 선행·
