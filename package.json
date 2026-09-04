@@ -19,7 +19,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test && pnpm run test:scripts",
-    "test:scripts": "node --test infra/scripts/verify-deployed-sha.test.mjs && node --test infra/scripts/daejang-recheck.test.mjs && node --test infra/scripts/bundle-budget.test.mjs && node --test infra/scripts/dockerfile-workspace-deps.test.mjs",
+    "test:scripts": "node --test infra/scripts/verify-deployed-sha.test.mjs && node --test infra/scripts/daejang-recheck.test.mjs && node --test infra/scripts/bundle-budget.test.mjs && node --test infra/scripts/dockerfile-workspace-deps.test.mjs && node --test infra/scripts/check-destructive-migrations.test.mjs && node --test infra/scripts/deploy-smoke.test.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
