@@ -111,6 +111,16 @@ jobs:
     outputs:
       deploy: ${{ steps.gate.outputs.deploy }}
     steps:
+      - uses: actions/checkout@v4
+      # 파괴적 마이그레이션 사전 확인(대장 #180 잔여 ②) — Environment 승인 요청이 나가기 *전*에
+      # 돈다. 승인을 누른 뒤 실패하는 것보다 승인 요청 자체가 안 가는 편이 이르다(승인자는 "배포를
+      # 승인"할 뿐 그 마이그레이션이 파괴적인지 화면에서 알 방법이 없다). 이 스텝이 실패하면 이
+      # `preflight` 잡 전체가 실패하고, `deploy` 잡(`needs: [build, preflight]`)은 GitHub Actions의
+      # 암묵적 success() 결합 규칙에 따라 자동으로 skip된다(별도 조건 추가 불요, 기존 `if:
+      # needs.preflight.outputs.deploy == 'true'`가 이미 성공 전제다). `ci.yml`에도 같은 검사가
+      # 있다(PR 단계 조기 경보) — 여기는 그것이 어떤 이유로든 뚫렸을 때의 마지막 방어선이다.
+      - name: 파괴적 마이그레이션 사전 확인 (대장 #180)
+        run: node infra/scripts/check-destructive-migrations.mjs
       - name: 게이트 판정
         id: gate
         env:
@@ -285,6 +295,38 @@ jobs:
             "docker exec '$cid' node -e \"fetch('http://127.0.0.1:4000/health/version').then(r=>r.text()).then(t=>process.stdout.write(t))\"" \
             > api-version.json
           node infra/scripts/verify-deployed-sha.mjs --kind api --expect "$GIT_SHA" --body-file api-version.json
+
+      # 배포 후 라우트 스모크 — api (대장 #180 잔여분 ①, `infra/scripts/deploy-smoke.mjs`). SHA 대조
+      # 직후에 둔다. ⚠️ SHA 일치는 "무엇이 배포됐는가"만 확인하고 "그 안에 라우트가 실제로 있는가"는
+      # 원리적으로 못 잡는다 — 라우트를 빠뜨린 이미지도 SHA는 정확히 일치한다. 대장 #180이 스스로
+      # 적은 해소 판정 기준이 정확히 이것이다: "의도적으로 라우트를 빠뜨린 이미지를 배포했을 때
+      # 파이프라인이 red가 되는 것(뮤테이션 실증)". 위 SHA 대조 스텝과 **동일한 접근 방식**(SSH +
+      # `docker exec` — 러너→제온 직접 HTTP 가능 여부는 미확인이라 이미 확립된 경로를 재사용한다,
+      # 새 접근 경로를 발명하지 않는다)을 그대로 따른다: 컨테이너 **내부에서** 대상 라우트 4종
+      # (`/health/version`·`/v1/feed`·`/v1/contents`·`/v1/resident-uploads/<임의id>`) + 음성 대조
+      # 경로(`/v1/__smoke_absent__<임의id>` — 반드시 404가 나와야 판정이 유효하다)를 fetch해 상태
+      # 코드를 JSON으로 모으고, 그 결과만 로컬로 가져와 `deploy-smoke.mjs --status-file`로 판정한다
+      # (판정 로직은 순수 함수라 `infra/scripts/deploy-smoke.test.mjs`가 로컬 http 서버로 "라우트
+      # 누락"·"음성 대조 무력화" 두 뮤테이션 모두 exit 1이 되는지 이미 확인해뒀다).
+      - name: 배포 후 라우트 스모크 — api (대장 #180 잔여 ①)
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+        run: |
+          set -euo pipefail
+          cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q api")"
+          if [ -z "$cid" ]; then
+            echo "api 컨테이너 ID를 얻지 못함(compose ps -q api 결과 없음) — 스모크 확인 불가" >&2
+            exit 1
+          fi
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "docker exec '$cid' node -e \"(async()=>{const c=require('crypto');const paths=['/health/version','/v1/feed','/v1/contents','/v1/resident-uploads/'+c.randomUUID()];const absent='/v1/__smoke_absent__'+c.randomUUID();async function probe(p){try{const r=await fetch('http://127.0.0.1:4000'+p);return{path:p,status:r.status,error:null};}catch(e){return{path:p,status:null,error:String(e&&e.message?e.message:e)};}}const routes=[];for(const p of paths){routes.push(await probe(p));}const a=await probe(absent);process.stdout.write(JSON.stringify({routes:routes,absent:a}));})();\"" \
+            > smoke-status.json
+          node infra/scripts/deploy-smoke.mjs --status-file smoke-status.json
 
       # 배포 후 SHA 대조 — media-worker·ai-worker. 둘 다 HTTP를 노출하지 않는 순수 워커라
       # `verify-deployed-sha.mjs`는 이 케이스를 지원하지 않는다(`--kind`는 web|api만 — 스크립트는
