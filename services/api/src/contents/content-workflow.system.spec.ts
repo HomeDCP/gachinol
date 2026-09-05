@@ -212,6 +212,54 @@ describe('ContentWorkflowService — system·upload 전이 (media-worker 연동)
     });
   });
 
+  describe('failUploadTx — 업로드 실패 트랜잭션 버전 (대장 #168)', () => {
+    it('uploading→upload_failed: user 로그 기록 (beginPublishing과 동형 — 호출자 tx 사용)', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'uploading' }));
+      await service.failUploadTx(prisma, contentRow({ status: 'uploading' }), reporterUser());
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'c-1', status: 'uploading' } }),
+      );
+      const log = prisma.statusTransitionLog.create.mock.calls[0][0].data;
+      expect(log).toMatchObject({ actorType: 'user', toStatus: 'upload_failed' });
+    });
+
+    it('failUpload(비트랜잭션)과 동일한 CAS where절 — 두 경로가 같은 규칙을 탄다', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'uploading' }));
+      await service.failUploadTx(prisma, contentRow({ status: 'uploading' }), reporterUser());
+      expect(prisma.content.updateMany.mock.calls[0][0].data.status).toBe('upload_failed');
+    });
+
+    it('비소유 기자는 403 — DB를 치지 않는다', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'uploading', reporterId: 'u-other' }));
+      await expectDomainError(
+        service.failUploadTx(
+          prisma,
+          contentRow({ status: 'uploading', reporterId: 'u-other' }),
+          reporterUser(),
+        ),
+        'forbidden',
+      );
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('맵 불법(uploaded에서 failUploadTx)은 invalid_transition', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'uploaded' }));
+      await expectDomainError(
+        service.failUploadTx(prisma, contentRow({ status: 'uploaded' }), reporterUser()),
+        'invalid_transition',
+      );
+    });
+
+    it('경합 count=0 → conflict throw', async () => {
+      const { prisma, service } = setup(contentRow({ status: 'uploading' }));
+      prisma.content.updateMany.mockResolvedValue({ count: 0 });
+      await expectDomainError(
+        service.failUploadTx(prisma, contentRow({ status: 'uploading' }), reporterUser()),
+        'conflict',
+      );
+    });
+  });
+
   describe('resumePublishing — 채널 재시도 시 content 복귀', () => {
     it('publish_failed→publishing CAS(idempotent)', async () => {
       const { prisma, service } = setup(contentRow({ status: 'publish_failed' }));
