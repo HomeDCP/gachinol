@@ -302,13 +302,22 @@ jobs:
       # 적은 해소 판정 기준이 정확히 이것이다: "의도적으로 라우트를 빠뜨린 이미지를 배포했을 때
       # 파이프라인이 red가 되는 것(뮤테이션 실증)". 위 SHA 대조 스텝과 **동일한 접근 방식**(SSH +
       # `docker exec` — 러너→제온 직접 HTTP 가능 여부는 미확인이라 이미 확립된 경로를 재사용한다,
-      # 새 접근 경로를 발명하지 않는다)을 그대로 따른다: 컨테이너 **내부에서** 대상 라우트 4종
-      # (`/health/version`·`/v1/feed`·`/v1/contents`·`/v1/resident-uploads/<임의id>`) + 음성 대조
-      # 경로(`/v1/__smoke_absent__<임의id>` — 반드시 404가 나와야 판정이 유효하다)를 fetch해 상태
-      # 코드를 JSON으로 모으고, 그 결과만 로컬로 가져와 `deploy-smoke.mjs --status-file`로 판정한다
-      # (판정 로직은 순수 함수라 `infra/scripts/deploy-smoke.test.mjs`가 로컬 http 서버로 "라우트
-      # 누락"·"음성 대조 무력화" 두 뮤테이션 모두 exit 1이 되는지 이미 확인해뒀다).
-      - name: 배포 후 라우트 스모크 — api (대장 #180 잔여 ①)
+      # 새 접근 경로를 발명하지 않는다)을 그대로 따른다: 컨테이너 **내부에서** 대상 라우트 5종
+      # (`/health/version`·`/health/readiness`·`/v1/feed`·`/v1/contents`·
+      # `/v1/resident-uploads/<임의id>`) + 음성 대조 경로(`/v1/__smoke_absent__<임의id>` — 반드시
+      # 404가 나와야 판정이 유효하다)를 fetch해 상태 코드를 JSON으로 모으고, 그 결과만 로컬로
+      # 가져와 `deploy-smoke.mjs --status-file`로 판정한다(판정 로직은 순수 함수라
+      # `infra/scripts/deploy-smoke.test.mjs`가 로컬 http 서버로 "라우트 누락"·"음성 대조 무력화"
+      # 두 뮤테이션 모두 exit 1이 되는지 이미 확인해뒀다).
+      #
+      # ⭐ (대장 #204) `/health/readiness`는 DB `SELECT 1`까지 재는 유일한 라우트라 200/401/404/5xx를
+      # 전부 다르게 취급한다(`deploy-smoke.mjs` 판정 계약 — 정확히 200이어야 통과) + `content-type`도
+      # 함께 수집해 넘긴다(SPA 폴백이 200과 함께 text/html을 주는 오염을 판정 쪽에서 걸러낸다).
+      # **배포 직후 오탐 방지**: 컨테이너 `start_period`(Dockerfile HEALTHCHECK, 40s) 안에 이 스텝이
+      # 돌면 앱이 아직 DB 커넥션 풀을 못 열어 readiness가 일시적으로 503일 수 있다 — 그래서 readiness만
+      # **최대 3회, 10초 간격으로 재시도**한다(200이면 즉시 중단, 나머지 라우트는 기존과 동일하게
+      # 1회만 본다 — 5xx가 지속되면 그건 재시도로 덮을 문제가 아니라 실제 장애다).
+      - name: 배포 후 라우트 스모크 — api (대장 #180 잔여 ① · 대장 #204 — 5xx·readiness 편입)
         env:
           SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
           SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
@@ -324,7 +333,7 @@ jobs:
             exit 1
           fi
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
-            "docker exec '$cid' node -e \"(async()=>{const c=require('crypto');const paths=['/health/version','/v1/feed','/v1/contents','/v1/resident-uploads/'+c.randomUUID()];const absent='/v1/__smoke_absent__'+c.randomUUID();async function probe(p){try{const r=await fetch('http://127.0.0.1:4000'+p);return{path:p,status:r.status,error:null};}catch(e){return{path:p,status:null,error:String(e&&e.message?e.message:e)};}}const routes=[];for(const p of paths){routes.push(await probe(p));}const a=await probe(absent);process.stdout.write(JSON.stringify({routes:routes,absent:a}));})();\"" \
+            "docker exec '$cid' node -e \"(async()=>{const c=require('crypto');const paths=['/health/version','/health/readiness','/v1/feed','/v1/contents','/v1/resident-uploads/'+c.randomUUID()];const absent='/v1/__smoke_absent__'+c.randomUUID();async function probe(p){try{const r=await fetch('http://127.0.0.1:4000'+p);return{path:p,status:r.status,error:null,contentType:r.headers.get('content-type')};}catch(e){return{path:p,status:null,error:String(e&&e.message?e.message:e)};}}function sleep(ms){return new Promise(res=>setTimeout(res,ms));}async function probeReadiness(p){let last;for(let i=0;i<3;i++){last=await probe(p);if(last.status===200)return last;if(i<2)await sleep(10000);}return last;}const routes=[];for(const p of paths){routes.push(p==='/health/readiness'?await probeReadiness(p):await probe(p));}const a=await probe(absent);process.stdout.write(JSON.stringify({routes:routes,absent:a}));})();\"" \
             > smoke-status.json
           node infra/scripts/deploy-smoke.mjs --status-file smoke-status.json
 
