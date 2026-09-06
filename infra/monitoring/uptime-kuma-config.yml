@@ -115,6 +115,7 @@ monitors:
 # 이 리포 밖(무료 티어 후보: UptimeRobot / Better Uptime / Freshping — 택1, 서비스
 # 선정 자체는 결정 대기 상태로 둔다. 무지출 원칙(EXEC-DECISIONS #8)과 정합 — 전부
 # 무료 티어로 충분한 요구사항).
+# 이 절은 대장 #203로 대체됨(2026-09-06) — 벤더 선정·개설은 QUEUE §C C-5
 external_uptime_check:
   candidates: [UptimeRobot, Better Uptime, Freshping]
   selection_status: 미확정 — 무료 티어 중 택1(운영 결정 대기, 도메인 확정 후 등록)
