@@ -74,6 +74,36 @@ describe('MediaAssetsService — 멱등 생성·키 규약', () => {
     expect(call.data.sizeBytes).toBe(BigInt(42));
   });
 
+  /**
+   * 대장 #168 — markFailed는 기본 `this.prisma`(단독 호출)로 동작하되, 호출자가 트랜잭션 클라이언트를
+   * 넘기면 **그 tx로** 쓴다(UploadService.completeUpload가 ContentWorkflowService.failUploadTx와
+   * 같은 트랜잭션에 묶기 위해 이 인자를 쓴다). 기본값 경로가 조용히 깨지지 않는지도 함께 고정한다.
+   */
+  it('markFailed: 인자 없으면 this.prisma로, tx를 넘기면 그 tx로 update한다', async () => {
+    const { prisma, service } = setup();
+    prisma.mediaAsset.update.mockResolvedValue({});
+    await service.markFailed('contents/c-1/g1/original.mp4');
+    expect(prisma.mediaAsset.update).toHaveBeenCalledWith({
+      where: { bucket_storageKey: { bucket: 'gachinol-media', storageKey: 'contents/c-1/g1/original.mp4' } },
+      data: { status: 'failed' },
+    });
+
+    const tx = { mediaAsset: { update: jest.fn().mockResolvedValue({}) } };
+    await service.markFailed('contents/c-1/g1/original.mp4', tx as never);
+    expect(tx.mediaAsset.update).toHaveBeenCalledWith({
+      where: { bucket_storageKey: { bucket: 'gachinol-media', storageKey: 'contents/c-1/g1/original.mp4' } },
+      data: { status: 'failed' },
+    });
+    // this.prisma는 두 번째 호출 시 추가로 불리지 않는다(정확히 tx로만 갔다)
+    expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('markFailed: 행 부재(원본 미생성)여도 예외를 던지지 않는다(무해)', async () => {
+    const { prisma, service } = setup();
+    prisma.mediaAsset.update.mockRejectedValue(new Error('Record to update not found'));
+    await expect(service.markFailed('contents/c-1/g1/original.mp4')).resolves.toBeUndefined();
+  });
+
   it('findOriginal: kind=original, generation=1, failed 배제 + createdAt desc 결정적 조회', async () => {
     const { prisma, service } = setup();
     prisma.mediaAsset.findFirst.mockResolvedValue(null);

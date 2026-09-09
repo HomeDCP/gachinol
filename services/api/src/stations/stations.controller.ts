@@ -23,12 +23,14 @@ export class StationsController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: '지사 목록 (관리 화면용 — 구독자 공개 목록은 후속 subscriber DTO)' })
+  @Roles('center_operator')
+  @ApiOperation({ summary: '지사 목록 (관리 화면용 — 구독자 공개 목록은 GET /v1/feed/stations)' })
   list(@Query() query: StationListQueryDto): Promise<Paginated<Station>> {
     return this.stations.list(query);
   }
 
   @Get(':id')
+  @Roles('reporter', 'center_operator')
   @ApiOperation({ summary: '지사 단건 조회' })
   get(@Param('id') id: string): Promise<Station> {
     return this.stations.get(id);

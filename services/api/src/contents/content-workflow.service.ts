@@ -426,6 +426,26 @@ export class ContentWorkflowService {
     return this.userHop(contentId, user, 'upload_failed');
   }
 
+  /**
+   * 업로드 실패(트랜잭션 버전) — `failUpload`과 규칙은 같지만 호출자가 이미 로드한 `content`와
+   * 트랜잭션 클라이언트를 받아 **다른 쓰기와 원자적으로** 묶는다.
+   *
+   * 대장 #168: `UploadService.completeUpload`의 HEAD 부재(오브젝트 미검증) 분기가
+   * `MediaAssetsService.markFailed`(자산 failed 표기) → `failUpload`(콘텐츠 upload_failed 전이)
+   * 순으로 **별개 커밋**을 냈다. 그 사이에 프로세스가 죽으면(실기에서 api 재생성과 경합해 실제 발생)
+   * 자산만 failed로 남고 콘텐츠는 uploading 교착 — 재발급은 ISSUABLE(draft·upload_failed) 밖이라
+   * 409, `findOriginal`이 failed 행을 제외해 완료 경로까지 영구 차단됐다(실기 2건, 가드된 조건부 UPDATE로
+   * 수동 복원). `beginPublishing`/`resumePublishing`과 같은 골격 — 호출자가 `this.prisma.$transaction`을
+   * 열고 이 메서드와 `markFailed(storageKey, tx)`를 그 안에서 함께 부른다.
+   */
+  async failUploadTx(tx: Tx, content: ContentRow, user: User): Promise<void> {
+    const from = content.status as ContentStatus;
+    const to: ContentStatus = 'upload_failed';
+    this.requireOwnerReporter(content, user);
+    this.assertAllowed(from, to);
+    await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
+  }
+
   private async userHop(contentId: string, user: User, to: ContentStatus): Promise<ContentRow> {
     const content = await this.load(contentId);
     const from = content.status as ContentStatus;

@@ -1,4 +1,4 @@
-# HANDOFF — 실행 인계 (기준: 2026-09-05)
+# HANDOFF — 실행 인계 (기준: 2026-09-10)
 
 > ⭐ **먼저 읽을 것**: [ROOT-CAUSE-2026-08.md](ROOT-CAUSE-2026-08.md) — 이 프로젝트가 정체된 이유의
 > 단일 원천이다(2026-08-30~31 전수 정독 결론). **개별 결함이 아니라 그 결함들이 왜 계속 생기는가**를 담는다.
@@ -179,11 +179,91 @@ deploy 시작 사이 약 53~54분 대기가 있었다(§1 재현 명령의 `gh r
   구조 판정 명령 — 통합 후 "1"이 기대값) · `grep -n "^| 1-1 " docs/plan/exec/QUEUE.md`(새 1-1 현재
   기재 상태) · `grep -n "^| 202 " docs/plan/PIVOT-PLAN.md`(#202 전문).
 
-### 다음 1건(옛 표기 — 위 판정 질문으로 대체됨)
+> ⭐ **해소(2026-09-06)** — 다음 세션이 아니라 계획 수립으로 판정됐다. 조율자가
+> `~/Claude/plans/transient-cuddling-scroll.md`(리포 밖, PR #96 브랜치에 커밋 예정)를 승인했고 결론은
+> **묶지 않는다**였다: 새 1-1(가용성 감시)은 **대장 #203**으로 채번해 1단계 그대로 진행하고, #202
+> (배포 승인 구조 2회)는 **별도로 존치**한다(계획 §4-6 "이번에 하지 않는 것" — "두 워크플로 통합은
+> report-only 종료 후 별도 슬라이스"). 이유: #202를 먼저 풀면 새 1-1이 감시할 대상의 형태가 바뀔 수
+> 있다는 위 우려(줄 172-176)를 계획이 설계로 반박했다 — 새 1-1의 판정 로직(`monitor.yml`)은 기존
+> `verify-deployed-sha.mjs`·`deploy-smoke.mjs`를 그대로 재사용하도록 설계돼 워크플로 개수와 무관하다
+> (계획 §4-2 S3 상세). 상세는 아래 새 절.
+
+### ⭐ 2026-09-06 — 감시체계 재설계 계획 승인 + 대장 #203·#204·#205 채번 (S0, PR #96)
+
+**조율자가 계획 문서(`~/Claude/plans/transient-cuddling-scroll.md`, 리포 밖)를 승인했다** — 결론:
+감시는 축마다 지점이 다르다(① 도달성=집 밖 프로브 · ②③④ 배포 신선도/의도 vs 실물=GitHub Actions
+cron·승인 게이트 밖 · ⑤ 감시 자신의 생존=GitHub 밖 하트비트 수신기). 슬라이스 S0~S5로 쪼갰고,
+**S0(코드 0줄, 채번·편입만)**을 scribe가 이번에 반영했다: 대장 **#203**(시간축 관측 0 — 배포 이후
+아무도 지속 확인하지 않는다) · **#204**(`deploy-smoke.mjs`가 5xx를 통과시킨다) · **#205**(제온 안에서만
+보이는 축이 밖으로 보고 안 됨, 2단계 — 규율 24-1로 지금 채번). QUEUE 1단계 1-1의 `(미채번)` →
+`대장 #203`(동반 의무 `#204` 같은 슬라이스), §C에 사용자 실행 C-4(Healthchecks.io)·C-5(외부 프로브)
+신설.
+
+**scribe가 그 자리에서 재확인(2026-09-06, 계획 §1-0과 동일 명령을 하루 뒤 재실행)**: `git fetch
+origin main --quiet && git rev-parse --short origin/main` → **`9d2a9d8`**(어제와 동일 — main이 하루째
+정지) vs `curl -s https://api.bapfull.com/health/version` → **`1776c46...`**(서빙 SHA 불일치 지속) ·
+`gh api "repos/HomeDCP/gachinol/actions/runs?status=waiting" --jq '.workflow_runs[].html_url'` →
+`https://github.com/HomeDCP/gachinol/actions/runs/33964788538`(Build Images)·
+`https://github.com/HomeDCP/gachinol/actions/runs/33964788536`(Deploy Web) — 둘 다
+`2026-09-05T11:59:40Z` 생성 그대로 **여전히 대기 중**(만 하루 경과, 오늘 일간보고서 ① 참조) · 대장
+#204 재현 명령을 그 자리에서 실행 → **`exit=0`**(`/health/version` 500 픽스처인데도 `판정: PASS` —
+결함 실재 확인, 대장 #204 행에 명령·출력 동봉).
+
+상세는 오늘 일간보고서(`docs/ops/daily/2026-09-06.md`) ①·②.
+
+### ⭐ 2026-09-10 — 데드맨 실증 확인(대장 #203 ⓑ) + 3일간 상태 무변화 확인 (scribe, PR #96 머지 전)
+
+**PR #96(HEAD `c57f92a`)에 S1·S2·S3가 전부 실려 머지 대기 중이던 사흘(2026-09-07 08:44 KST~09-09)
+동안, 이 리포에는 아무 변동이 없었다** — origin/main **`9d2a9d8`** 불변(2026-09-05 20:59 KST 머지
+이후 5일째, `git log -1 --format=%ad --date=format:'%Y-%m-%d %H:%M %z' 9d2a9d8`) · PR #96 활동은
+`c57f92a` 커밋 시각(2026-09-07 08:44 KST, `gh pr view 96 --json updatedAt`과 일치) 이후 정지 ·
+대기 중인 승인 게이트 런 **0건**(`gh api "repos/HomeDCP/gachinol/actions/runs?status=waiting"
+--jq '.workflow_runs|length'`). 그 사이 **리포 밖에서 실물 사건이 하나 있었다**: 사용자가
+2026-09-07 Healthchecks.io 텔레그램을 연결(06:01 AM)하고 수동으로 첫 ping을 보낸 뒤(06:49경),
+**DOWN 알림이 07:34 AM에 도착**했다(period 15분+grace 30분 = 정확히 45분 후 발화, `Total Pings: 1`·
+`All the other checks are up` 둘 다 설계대로) — 대장 #203의 확인 방법 두 건 중 **ⓑ("주기 신호
+부재를 감시 밖 수신기가 인시던트로 만든 기록")가 이걸로 충족됐다**. **ⓐ(집 밖 관측점의 실패 알림
+도달)는 인터넷 경로가 계속 정상(200)이라 아직 미충족** — S4의 의도적 장애 뮤테이션을 거쳐야 한다.
+**대장 #203 상태 칸은 "미수신"으로 유지한다** — 머지 전이고, 확인 방법 두 건 중 하나만 찼다.
+같은 세션에서 QUEUE §C의 **C-4를 완료로 갱신**(`gh secret list --repo HomeDCP/gachinol --json name
+--jq 'length'` → 9건, `MONITOR_HEARTBEAT_URL` 포함)하고 **C-5는 "개설 완료·실패 도달 미확인"으로
+구분 갱신**했다(완료로 뭉뚱그리지 않음). 상세는 대장 #203 비고(`docs/plan/PIVOT-PLAN.md`), 오늘
+일간보고서(`docs/ops/daily/2026-09-10.md`) ①·②·④.
+
+### 다음 1건(舊 표기 — 위 판정 질문으로 대체됨, 규율 13 이력 보존)
 ~~**QUEUE 1-1(새 번호) · 대장 #180 소유 — 배포 후 스모크**~~는 2026-09-05 PR #94로 해소·행 제거됐다
 (위 참조). 이 자리에 있던 舊 문언은 이력으로만 남긴다(규율 13): *"배포 직후 검증은 그 순간의 참만
 재고 그 이후 다른 프로세스가 되돌리는 것을 원리적으로 못 잡는다 — 스모크만으로 '재발 방지 완결'이라
 보고하지 말 것."* 이 한계가 바로 위 판정 질문에서 새 1-1(가용성 감시)의 존재 이유다.
+
+### ⭐ 지금의 다음 1건 (2026-09-10 갱신) — PR #96 머지 → 첫 스케줄 런 확인 → S4
+
+**S1·S2·S3는 전부 끝났다 — 남아 있던 것은 머지뿐이다.** 계획 §4-2 순서(S0→S1→S2→S3→S4)대로 이
+세션 전에 이미 S1·S2·S3가 완료돼 PR #96(브랜치 `fix/station-gate-upload-atomicity`, HEAD
+`c57f92a`)에 실려 있다 — 아래 세 항목은 **다시 만들지 말 것**:
+
+1. **S1 완료** — `deploy-smoke.mjs` 5xx 실패 처리(대장 #204, 커밋 `5204348`). 舊 "착수 전 재확인"
+   지시는 이걸로 소화됐다.
+2. **S2 완료(사용자 실행)** — C-4(Healthchecks 계정·체크·텔레그램·시크릿)는 사용자 실측(2026-09-07
+   텔레그램 스크린샷, DOWN 알림 07:34 AM)으로 확인됐다. `gh secret list --repo HomeDCP/gachinol
+   --json name --jq 'length'` → **9**건(`MONITOR_HEARTBEAT_URL` 포함, 값은 안 보임). C-5(외부
+   프로브)는 **개설 완료·실패 도달은 아직 미확인**(S4에서 의도적 뮤테이션으로 확인 예정). 상세는
+   [QUEUE.md](QUEUE.md) §C·PIVOT-PLAN 대장 #203 비고.
+3. **S3 완료** — `monitor.yml` 신설(커밋 `c57f92a`). `environment:`를 선언하지 않아 대장 #202의
+   승인 게이트를 타지 않는다(커밋 본문에 근거 명시).
+
+**다음 1건은 코드가 아니라 머지다**:
+
+1. **PR #96 머지 승인**(사용자, CLAUDE.md §0-3 ⑩ — 예외 없음). `gh pr view 96 --json
+   state,mergeable` → `OPEN`/`MERGEABLE`(이 문서 기준일 시점, 재확인할 것). 머지 후 배포 승인
+   **2건**이 또 뜬다(대장 #202 미해소 — Build Images·Deploy Web 각각 `production` 환경 승인,
+   `monitor.yml` 자체는 이 게이트 밖).
+2. **머지 후 첫 스케줄 런 확인** — `gh run list --workflow monitor.yml -L 3`. `monitor.yml`은
+   승인 없이 15분 주기로 자동 실행되므로, 첫 런이 실제로 도는지·판정이 PASS인지를 이 명령으로
+   확인한다(대장 #203의 ②③④ 축이 실물로 도는 첫 순간).
+3. **확인되면 S4(2주 report-only 관찰) 착수** — 계획 §4-2. 그 전엔 착수하지 않는다.
+
+가변 값(정확한 승인 시각·첫 스케줄 런 결과)은 여기 적지 않는다 — 위 확인 명령으로 그 자리에서 잰다.
 
 ### 열린 항목 (다음 세션이 알아야 할 것 — 판정 대기, QUEUE 편입 여부 미정)
 
@@ -204,6 +284,10 @@ deploy 시작 사이 약 53~54분 대기가 있었다(§1 재현 명령의 `gh r
 
 ### 사용자 대기 (일간보고서 ① 참조 — `docs/ops/daily/`)
 ① 카카오 실 송출 범위(QUEUE §D-2) — 2단계 완료 시 요청.
+② **`9d2a9d8` 대기 런 2건 승인**(2026-09-06 요청, 오늘 일간보고서 ① 참조) — 확인:
+`gh api "repos/HomeDCP/gachinol/actions/runs?status=waiting" --jq '.workflow_runs[]|{name,created_at}'`.
+③ **C-4(Healthchecks.io)·C-5(외부 프로브) 개설**(QUEUE §C, 대장 #203 관련, 2026-09-06 요청) — S3
+`monitor.yml` 머지 전 필요, 리드타임 각 30~45분.
 
 ⚠️ **머지마다 승인이 2회 필요하다(대장 #202가 등재한 바로 그 구조)** — main에 새 커밋이 올라갈
 때마다 Build Images·Deploy Web 두 워크플로가 각각 `production` 환경 승인을 요구한다. **다음 세션이

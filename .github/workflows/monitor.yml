@@ -1,0 +1,277 @@
+name: Monitor Freshness
+
+# 의도(main HEAD) vs 실물(서빙 SHA·라우트·readiness·배포 파이프라인 상태) 주기 대조 — 대장 #203, S3.
+# docs/plan/exec/ROOT-CAUSE-MONITORING-2026-09.md가 근거다. 배포 이후 시간축 위에 아무도 없어서
+# #170(이미지 12~24일 스테일)·#200(배포 2분 뒤 되돌림)·#202(승인 26시간 방치)가 전부 "사람이
+# 다른 일을 하다 우연히" 발견됐다 — 이 워크플로는 그 시간축에 서는 첫 자동 관측자다.
+#
+# ── 왜 승인 게이트 밖인가(대장 #202) ────────────────────────────────────────────────────
+# `build-images.yml`·`deploy-web.yml`은 둘 다 `environment: production`(사람 승인)에 걸려 있고,
+# 그 승인이 26시간 넘게 방치돼도 아무도 몰랐다(§1-0 실측). 이 워크플로가 그 방치 자체를 감시해야
+# 하므로 **이 워크플로 자신은 `environment:`를 선언하지 않는다** — 선언하면 감시자가 감시 대상과
+# 같은 승인 대기열에 갇혀 정작 방치를 알리지 못한다(자기 자신을 감시할 수 없는 구조적 함정,
+# ROOT-CAUSE 문서 §1-5 패턴 ⓕ). 필요한 시크릿도 하트비트 URL 1개뿐 — `WEB_DEPLOY_*`(SSH·
+# Tailscale) 시크릿을 참조하지 않는다.
+#
+# ── 왜 Tailscale이 불요한가(공개 경로 실측) ─────────────────────────────────────────────
+# 이 워크플로가 대조하는 값(main HEAD·`/health/version`·web build-sha·라우트 스모크·readiness)은
+# 전부 `bapfull.com`(Cloudflare Tunnel 경유) 공개 인터넷 경로에 있다. 제온에 직접 SSH할 필요가
+# 없다 — 오히려 "러너가 Tailscale 없이 공개 인터넷(Cloudflare)에 실제로 닿는가" 자체가 이 리포에서
+# 한 번도 검증된 적 없어서(`deploy-web.yml`·`build-images.yml` 주석이 스스로 "미실측"이라 적었다)
+# 아래 `pull_request` 트리거가 그 실증 역할을 겸한다.
+#
+# ── 왜 15분인가 ─────────────────────────────────────────────────────────────────────────
+# GitHub Actions `schedule`의 최단 주기는 5분이지만, 공식 문서가 "정각 부근은 지연·드롭 가능"이라
+# 명시한다(고부하 시 큐잉된 잡이 아예 드롭될 수 있음) — 그래서 ⓐ 정각을 피해 7,22,37,52분에 걸고
+# ⓑ 실제 감지 목표(15~30분, 계획 §0)에 여유(grace)를 두기 위해 5분이 아니라 15분 간격을 쓴다.
+# 정각 회피 자체가 지연·드롭에 대한 방어이지, 15분이라는 숫자가 GitHub의 하한이라서가 아니다.
+#
+# ── 60일 무활동 자동 비활성화는 누가 잡는가 ─────────────────────────────────────────────
+# 공개 리포의 scheduled 워크플로는 60일간 커밋이 없으면 GitHub가 자동으로 비활성화한다(공식 문서
+# 확인됨). 이 워크플로 **자신**은 그 비활성화를 볼 수 없다(죽은 감시자는 자기 죽음을 보고 못 한다
+# — ROOT-CAUSE §1-5 패턴 ⓕ의 재판). 그래서 최종 하트비트 핑이 "감시 자신의 생존 신호"를 겸한다 —
+# 핑이 끊기면(60일 비활성화든, GitHub 장애든, 이 잡 자체의 실패든) **집 밖 하트비트 수신기**가
+# "오지 않음"을 인시던트로 만든다(S2, Healthchecks.io). #72·#160이 반복한 "선언은 있고 구동은
+# 없다"를 감시 자신에게 재생산하지 않는 유일한 장치.
+#
+# ── PR 트리거의 목적 ─────────────────────────────────────────────────────────────────────
+# 이 워크플로나 판정 스크립트를 고치는 PR은 **머지 전에** "러너 → Cloudflare 터널 → 4개 앱"
+# 실제 도달을 실증한다(위 "Tailscale 불요" 절 참조) — 배포 후 승인 대기가 다시 방치돼도 PR 체크
+# 자체는 정상 동작해야 하므로 `secrets.MONITOR_HEARTBEAT_URL`을 요구하지 않고, PR에서는 하트비트
+# 핑도 보내지 않는다(마지막 스텝의 `if` 참조 — PR은 도달성 실증용이지 운영 신호가 아니다).
+#
+# ── 승인 대기 런이 이 워크플로 자신의 조회량에 묻히지 않도록(설계 보강) ────────────────────
+# 이 워크플로가 15분마다 돌기 시작하면 `?per_page=30`(전 워크플로 공통) 결과가 이 워크플로 자신의
+# 실행 이력으로 몇 시간 안에 채워질 수 있다 — 그러면 #202형 승인 방치(대기 시간 단위 = 시간~일)가
+# 조회 창 밖으로 밀려 규칙 4가 무력화된다. 그래서 대기(waiting) 런은 `status=waiting` **서버측
+# 필터**로 별도 조회한다(대기 중인 런은 항상 몇 건 안 되므로 이 필터는 이 워크플로의 조회량과
+# 무관하게 안정적이다). 배포 런 conclusion(규칙 5·6)은 `per_page=30` 일반 목록을 그대로 쓴다 —
+# `Build Images`/`Deploy Web`만 골라내면(정규화 층, `DEPLOY_WORKFLOW_NAMES`) 이 워크플로 자신의
+# 잦은 실행이 섞여도 오탐(예: CI 실패를 배포 실패로 오판)이 나지 않는다.
+#
+# ── 조회창 한계(실측·대장 #203 S3 게이트② 부차 결함) — 채택하지 않은 이유 포함 ───────────────
+# 위 단락은 "오탐(false positive)"을 다루지만, 별개 축으로 "누락(false negative)"이 있다:
+# `?per_page=30`(전 워크플로 공통, `fetch-runs`의 recent.json)은 이 워크플로가 15분마다 실가동을
+# 시작하면 몇 시간 안에 recent.json 30건이 이 워크플로 자신의 실행 이력으로 채워져, 배포 런
+# 조회창이(게이트② 독립검증 실측 — `gh api .../actions/runs?per_page=30`, 2026-09-02~09-06 약
+# 4일을 덮음) **약 7시간**으로 좁아질 것으로 추산됐다. HEAD가 7시간 넘게 정체되면(정확히
+# 규칙 5·6이 잡으려는 시나리오) 대상 배포 런이 창 밖으로 밀려날 수 있다.
+# ⚠️ 완전 실명은 아니다 — 규칙 1·2(SHA 스테일)가 `staleHours`(기본 2h)에서 먼저 발동해 `api-stale`/
+# `web-stale`로 FAIL한다. 좁아져서 사라지는 것은 **"왜 스테일인지"의 진단 정밀도**(deploy-failed/
+# deploy-skipped라는 구체적 사유)이지 감지 자체가 아니다.
+# 검토한 대안과 기각 사유:
+#   ① `?event=push` 필터 추가 — recent.json에서 이 워크플로 자신의 schedule 런은 제외돼 창이
+#      넓어지지만, `build-images.yml`·`deploy-web.yml` 둘 다 `workflow_dispatch` 트리거도 갖고
+#      있다(사람이 수동으로 재배포를 실행하는 통로). event=push로 거르면 **수동 재배포 런이
+#      조회 자체에서 빠져** 그 배포가 실패하거나 deploy 잡이 skipped여도 규칙 5·6이 원리적으로
+#      볼 수 없게 된다 — 창을 넓히려다 이 슬라이스가 막으려는 것과 같은 종류의 무음 사각을
+#      새로 만드는 것이라 **기각**.
+#   ② `GET /repos/{owner}/{repo}/actions/workflows/{file}/runs`(워크플로 파일별 스코프 조회)로
+#      `recent.json`을 대체 — event 유형과 무관하게 두 배포 워크플로 자신의 최근 30건만 보므로
+#      ①의 사각이 없고 창도 훨씬 넓어진다(다른 워크플로 실행량과 완전히 분리). **기술적으로는
+#      더 낫지만 이번 슬라이스에서는 채택하지 않는다** — 구현하려면 이 파일의 `fetch-runs`
+#      스텝(규칙 7 센티널의 원본 조회) 자체를 수정해야 하는데, 그 스텝은 이번 게이트②
+#      독립검증에서 이미 "절대 건드리지 마라"로 확정된 검증 통과분이다. 별도 슬라이스(그
+#      스텝이 명시적으로 검토 범위에 들어간 PR)에서 다루는 것이 안전하다 — 지금 손대면 이번
+#      수리(jobs 폴백 대칭화)와 무관한 회귀 위험을 같은 diff에 섞게 된다.
+# 후속 제안(미착수, 기록만 남김): ②를 별도 슬라이스에서 `fetch-runs`에 적용.
+#
+# ── 권한은 읽기 전용 — 자동 복구를 넣지 않는다 ──────────────────────────────────────────
+# `permissions: {contents: read, actions: read}`뿐이다. 이 워크플로는 판정하고 알릴 뿐 재배포·재승인
+# 등 어떤 쓰기 동작도 하지 않는다(승인된 계획 Q5-a) — 감시가 스스로 배포를 트리거하면 사람이 검토
+# 없이 되돌리기 어려운 변경이 자동으로 반복될 위험이 생긴다.
+#
+# ── concurrency 블록을 넣지 않는다 ───────────────────────────────────────────────────────
+# 기본 동작(각 스케줄 틱이 독립 실행)이 이미 겹침을 막고, `cancel-in-progress`를 켜면 늦게 도착한
+# 틱이 먼저 것을 취소해 하트비트 핑에 공백을 만들 수 있다.
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      expect_sha_override:
+        description: >-
+          기대 SHA를 강제 지정(40자, 예: 뮤테이션 검증 gh workflow run -f
+          expect_sha_override=000...0). 비우면 github.sha(main HEAD)를 쓴다.
+        required: false
+        type: string
+  pull_request:
+    paths:
+      - '.github/workflows/monitor.yml'
+      - 'infra/scripts/monitor-*.mjs'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  monitor:
+    name: 의도(main HEAD) vs 실물 대조
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 0(전체 히스토리) — expect가 workflow_dispatch 오버라이드로 임의 커밋을 가리킬 수 있어
+          # `git log -1 --format=%ct <sha>`가 그 커밋을 반드시 찾을 수 있어야 한다(얕은 클론은
+          # 체크아웃된 커밋 하나만 갖는다).
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: expect SHA 확인(github.sha는 항상 40자 — 단축 SHA 함정 방지, §1-0 실측)
+        id: expect
+        env:
+          GH_SHA: ${{ github.sha }}
+          OVERRIDE_SHA: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.expect_sha_override) || '' }}
+        run: |
+          set -euo pipefail
+          sha="$OVERRIDE_SHA"
+          if [ -z "$sha" ]; then
+            sha="$GH_SHA"
+          fi
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expect SHA가 40자 hex가 아님: '$sha' (길이 ${#sha}) — 단축 SHA는 GitHub API가 조용히 0건을 주는 함정(§1-0)" >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: HEAD 나이 계산
+        id: head-age
+        env:
+          EXPECT_SHA: ${{ steps.expect.outputs.sha }}
+        run: |
+          set -euo pipefail
+          commit_epoch="$(git log -1 --format=%ct "$EXPECT_SHA")"
+          now_epoch="$(date -u +%s)"
+          age_seconds=$(( now_epoch - commit_epoch ))
+          age_hours=$(awk -v s="$age_seconds" 'BEGIN { printf "%.4f", s / 3600 }')
+          echo "hours=$age_hours" >> "$GITHUB_OUTPUT"
+
+      - name: 최근 워크플로 런 수집(대기 상태필터 + 일반 목록)
+        id: fetch-runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          fetch_failed=false
+
+          # 대기(waiting) 런은 서버측 status 필터로 별도 조회한다 — 위 헤더 주석 "승인 대기 런이
+          # 이 워크플로 자신의 조회량에 묻히지 않도록" 참조.
+          if ! gh api "repos/${REPO}/actions/runs?status=waiting&per_page=30" > waiting.json; then
+            fetch_failed=true
+          fi
+          if ! gh api "repos/${REPO}/actions/runs?per_page=30" > recent.json; then
+            fetch_failed=true
+          fi
+
+          if [ "$fetch_failed" = true ]; then
+            # 규칙 7(api-unreachable) 입력 — 유효한 JSON이되 workflow_runs가 없는 센티널이라
+            # "입력 파싱 실패"가 아니라 "GitHub API 호출 자체 실패"로 정규화된다(monitor-freshness.mjs
+            # normalizeRuns). 이 스텝을 그냥 죽게 두면(set -e) job.status가 실패로 남아 아래
+            # 하트비트 스텝이 어차피 /fail을 보내지만, 이렇게 하면 판정 스크립트가 이유(api-unreachable)를
+            # 구조화해서 로그에 남긴다 — "조용한 grace 폴백 금지"의 실제 구현.
+            echo '{"gachinolFetchFailed": true}' > runs.json
+          else
+            jq -s '{workflow_runs: ((.[0].workflow_runs // []) + (.[1].workflow_runs // []))}' \
+              waiting.json recent.json > runs.json
+          fi
+
+      - name: 배포 런의 잡 수집(규칙 6 — deploy 잡 skipped 판정용)
+        id: fetch-jobs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EXPECT_SHA: ${{ steps.expect.outputs.sha }}
+        run: |
+          set -euo pipefail
+          echo '{"jobs": [], "attemptedRunIds": [], "unreachableRunIds": []}' > jobs.json
+
+          # Build Images/Deploy Web(대장 #180·#202 승인 게이트가 걸린 두 워크플로) 런의 이름
+          # 필드로 걸러 그중 expect와 head_sha가 같은 런만 잡 목록을 조회한다 — 이 워크플로
+          # 자신의 런(name: "Monitor Freshness")은 여기서 걸러진다. ⚠️ 아래에서 조회하는 "잡"
+          # 이름은 YAML 키 'deploy'가 아니라 `deploy (...)` 커스텀 표시값이다 — monitor-freshness.mjs
+          # 상단 주석 참조(실측 2026-09-07).
+          mapfile -t run_ids < <(jq -r --arg sha "$EXPECT_SHA" \
+            '.workflow_runs[]? | select(.head_sha == $sha and (.name == "Build Images" or .name == "Deploy Web")) | .id' \
+            runs.json)
+
+          if [ "${#run_ids[@]}" -eq 0 ]; then
+            exit 0
+          fi
+
+          combined="[]"
+          unreachable_ids=()
+          for run_id in "${run_ids[@]}"; do
+            run_conclusion=$(jq -r --arg id "$run_id" \
+              '.workflow_runs[]? | select((.id|tostring) == $id) | (.conclusion // "null")' runs.json)
+            # ⚠️ 실측: `gh api --jq`는 jq CLI 전체가 아니라 필터 문자열 인자 1개만 받는다 —
+            # `--arg`를 붙이면 "accepts 1 arg(s), received 4"로 죽는다(gh 자체 옵션 파서가
+            # --arg를 gh의 인자로 오인). 그래서 `gh api`는 원본 JSON만 받고, 변수 주입이 필요한
+            # 가공은 실 jq 바이너리(파이프)로 넘긴다.
+            # shellcheck disable=SC2016  # $rc는 셸이 아니라 jq --arg 변수 — 의도된 홑따옴표.
+            #
+            # ⚠️ 개별 run의 jobs 조회 실패(gh api 비정상 종료·jq 파싱 실패)를 舊 `|| one='[]'`로
+            # 조용히 흡수하지 않는다 — fetch-runs의 gachinolFetchFailed 센티널과 대칭(대장 #203
+            # S3 게이트②에서 반증된 지점). 조용히 흡수하면 "그 런의 deploy 잡이 원래 skipped
+            # 없이 정상"과 "확인 자체를 못 함"이 구분 불가능해져 규칙 6이 조용히 무력화된다.
+            # 실패한 run_id는 unreachable_ids에 남겨 monitor-freshness.mjs(규칙 6')가 판정한다.
+            # `if cmd; then` 형태라 이 실패가 set -e로 스텝 전체를 죽이지 않는다(의도적 — fetch-runs와
+            # 동형으로 judge 스텝까지는 항상 도달시켜 구조화된 사유를 로그에 남긴다).
+            if one=$(gh api "repos/${REPO}/actions/runs/${run_id}/jobs" | \
+              jq --arg rc "$run_conclusion" '[.jobs[]? | {name, conclusion, runConclusion: $rc}]'); then
+              combined=$(jq -s '.[0] + .[1]' <(printf '%s' "$combined") <(printf '%s' "$one"))
+            else
+              echo "::warning::gachinol jobs fetch failed for run ${run_id} — recorded as unreachable (not silently dropped)" >&2
+              unreachable_ids+=("$run_id")
+            fi
+          done
+
+          attempted_json=$(printf '%s\n' "${run_ids[@]}" | jq -R . | jq -s .)
+          if [ "${#unreachable_ids[@]}" -gt 0 ]; then
+            unreachable_json=$(printf '%s\n' "${unreachable_ids[@]}" | jq -R . | jq -s .)
+          else
+            unreachable_json='[]'
+          fi
+
+          jq -n --argjson jobs "$combined" --argjson attempted "$attempted_json" --argjson unreachable "$unreachable_json" \
+            '{jobs: $jobs, attemptedRunIds: $attempted, unreachableRunIds: $unreachable}' > jobs.json
+
+      - name: 판정(monitor-freshness) — 새 로직은 임계·대기 런 나이·ping뿐, 추출·라우트 판정은 기존 자산 재사용
+        id: judge
+        env:
+          EXPECT_SHA: ${{ steps.expect.outputs.sha }}
+          API_URL: ${{ vars.WEB_EXPO_PUBLIC_API_URL }}
+          WEB_URL: ${{ vars.WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL }}
+          HEAD_AGE_HOURS: ${{ steps.head-age.outputs.hours }}
+        run: |
+          set -euo pipefail
+          node infra/scripts/monitor-freshness.mjs \
+            --expect "$EXPECT_SHA" \
+            --api-url "$API_URL" \
+            --web-url "$WEB_URL" \
+            --head-age-hours "$HEAD_AGE_HOURS" \
+            --runs-file runs.json \
+            --jobs-file jobs.json
+
+      - name: 하트비트 보고(집 밖 수신기 — Healthchecks.io, S2)
+        if: always() && (github.event_name != 'pull_request')
+        env:
+          URL: ${{ secrets.MONITOR_HEARTBEAT_URL }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          # PR에서는 이 스텝 자체가 안 돈다(위 if) — "PR 트리거의 목적" 헤더 주석 참조.
+          # 존재만으로 통과시키지 않는다(규율 21) — 시크릿이 비면 즉시 실패.
+          if [ -z "${URL:-}" ]; then
+            echo "MONITOR_HEARTBEAT_URL 시크릿이 비어 있음 — 존재만으로 통과 금지(규율 21)" >&2
+            exit 1
+          fi
+          if [ "$JOB_STATUS" = "success" ]; then
+            curl -fsS -m 10 --retry 3 "$URL"
+          else
+            curl -fsS -m 10 --retry 3 "$URL/fail"
+          fi

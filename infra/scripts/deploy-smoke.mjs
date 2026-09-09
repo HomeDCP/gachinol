@@ -19,11 +19,31 @@
  * **정말로 404를 주는지**도 함께 확인한다. 음성 대조가 404가 아니면 판정 자체가 불능이므로 exit 1이다
  * (이 경우는 "실재 확인 실패"가 아니라 "확인 방법 자체가 무효"라는 뜻 — 통과가 아니다).
  *
+ * ⭐ (대장 #204) **5xx도 실패다.** 舊 판정식은 `status === 404`만 봐서 DB가 죽어 `/v1/feed`가
+ * 500을 내도 "라우트 실재"로 통과시켰다 — 라우트 존재와 서버 정상은 다른 질문인데 하나로 뭉개고
+ * 있었다. `judgeResults`가 `status >= 500`도 `routeFailures`에 포함하고, `printResults`는
+ * "라우트 부재(404)"와 "서버 오류(5xx)"를 **다른 사고로 구분 출력**한다(사람이 로그를 볼 때 원인
+ * 추정이 갈린다 — 404는 배포 누락, 5xx는 런타임 장애).
+ *
  * ── 대상 라우트(최소, 하드코딩 — `resolveDefaultRoutes`) ──────────────────────────
- *   /health/version · /v1/feed · /v1/contents · /v1/resident-uploads/<임의id>
+ *   /health/version · /health/readiness · /v1/feed · /v1/contents · /v1/resident-uploads/<임의id>
  * `/v1/resident-uploads/<id>`가 **반드시** 포함돼야 한다 — 이 라우트의 404가 대장 #180의 발견
- * 경로였다. `findMissingRequiredRoutes`가 입력 라우트 목록에서 이 4종의 부재를 별도로 잡는다
+ * 경로였다. `findMissingRequiredRoutes`가 입력 라우트 목록에서 이 5종의 부재를 별도로 잡는다
  * (— `--status-file` 입력이 이 필수 라우트를 빠뜨려도 조용히 통과하지 않도록).
+ *
+ * ⭐ (대장 #204) **`/health/readiness`는 나머지 4종과 판정 계약이 다르다.** 나머지는 "라우트가
+ * 매치되는가"(≠404)만 보지만, readiness는 `services/api/src/health/health.controller.ts`가
+ * `PrismaHealthIndicator.pingCheck`(DB `SELECT 1`) 하나만 재는 terminus 헬스체크라 **정확히
+ * 200이어야 통과**다(401·404·5xx 전부 실패 — DB가 죽으면 terminus가 503을 낸다). 이 라우트는
+ * 코드에 있었지만 **아무도 호출하지 않았다**(규율 21 "있는 척") — 지금 이 스크립트가 그 유일한
+ * 호출자다.
+ *
+ * ⭐ (대장 #204·대장 #91형) **선택 필드 `contentType`** — `--status-file` JSON의 각 route 항목에
+ * `contentType`(예: `"application/json; charset=utf-8"`)이 있으면, readiness 항목에 한해
+ * `application/json`이 아닐 때도 실패로 잡는다(SPA 폴백이 200과 함께 `text/html`을 주는 오염을
+ * 구조적으로 차단 — 대장 #91이 web 쪽에서 겪은 패턴의 재발 방지). **필드가 없으면 그 항목은
+ * content-type 판정을 하지 않는다**(舊 status-file 입력과의 호환 — 필드 부재를 실패로 취급하지
+ * 않는다).
  *
  * ── 입력 모드 2종(`verify-deployed-sha.mjs`와 동형) ─────────────────────────────
  *   --base-url <url>     : 직접 fetch(테스트·로컬 재현용. 러너에서 제온으로 직접 HTTP가 가는지는
@@ -33,13 +53,24 @@
  *                           `build-images.yml`의 SHA 대조 스텝이 이미 확립한 SSH+`docker exec`
  *                           경로로 컨테이너 **내부에서** 라우트를 수집하고, 이 스크립트는 그 결과만
  *                           판정한다). JSON 형태: `{"routes":[{"path":"...","status":200|null,
- *                           "error":"..."|null}, ...], "absent":{"path":"...","status":...,"error":...}}`.
+ *                           "error":"..."|null,"contentType":"..."|undefined}, ...],
+ *                           "absent":{"path":"...","status":...,"error":...}}`.
  *   두 옵션이 함께 주어지면 `--status-file`이 우선한다(`verify-deployed-sha.mjs`의 body-file 우선과 동일).
  *
  * ── fail-closed ─────────────────────────────────────────────────────────────────
- * 대상 라우트 중 하나라도 404 또는 요청 실패/타임아웃 → exit 1. 필수 라우트(위 4종) 중 목록에서
- * 빠진 것이 있음 → exit 1. 음성 대조가 404가 아니거나 요청 실패 → exit 1(판정 불능도 통과 아님).
- * 대상 라우트 목록이 비어 있음 → exit 1. `--status-file` 파싱 실패 → exit 1.
+ * 대상 라우트 중 하나라도 404·5xx 또는 요청 실패/타임아웃 → exit 1. readiness는 정확히 200이
+ * 아니면(401·404·5xx 포함) → exit 1, 200이어도 `contentType`이 있고 JSON이 아니면 → exit 1.
+ * 필수 라우트(위 5종) 중 목록에서 빠진 것이 있음 → exit 1. 음성 대조가 404가 아니거나 요청 실패
+ * → exit 1(판정 불능도 통과 아님). 대상 라우트 목록이 비어 있음 → exit 1. `--status-file` 파싱
+ * 실패 → exit 1.
+ *
+ * ── 규율 24 예외 사유(신규 게이트 2주 report-only 미적용) ───────────────────────────
+ * `DISCIPLINES.md` 규율 24는 새 게이트에 2주 report-only를 요구하지만, 이 변경은 **새 게이트가
+ * 아니다**: ⓐ 이미 blocking으로 살아있는 게이트(대장 #180)의 **판정식 확장**이다(규율 23 "검사
+ * 범위 확장은 순서가 아니라 동반 의무"). ⓑ 2026-09-06 조율자 실측(인터넷 경로, 무토큰) — 대상
+ * 6경로(`/health/version`·`/health/readiness`·`/v1/feed`·`/v1/contents`·
+ * `/v1/resident-uploads/<uuid>`·부재경로) 중 **5xx가 0건**이라 이번 확장이 false positive를
+ * 낼 여지가 없다(실측: 200/200/200/401/401/404). 이 두 근거가 없으면 즉시 blocking은 규율 위반이다.
  *
  * ── 사용법 ────────────────────────────────────────────────────────────────────────
  *   node deploy-smoke.mjs --base-url https://example.com
@@ -52,8 +83,17 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 // ── 기본 라우트 — 순수 데이터/함수 ────────────────────────────────────────────────
 
-/** `{id}` 자리에 랜덤 id가 채워진다. */
-const ROUTE_TEMPLATES = ['/health/version', '/v1/feed', '/v1/contents', '/v1/resident-uploads/{id}'];
+/** `{id}` 자리에 랜덤 id가 채워진다. `/health/readiness`는 DB까지 재는 유일한 라우트(대장 #204). */
+const ROUTE_TEMPLATES = [
+  '/health/version',
+  '/health/readiness',
+  '/v1/feed',
+  '/v1/contents',
+  '/v1/resident-uploads/{id}',
+];
+
+/** readiness는 나머지 4종과 판정 계약이 달라(정확히 200) 여러 곳에서 참조하는 상수로 뺐다. */
+const READINESS_PATH = '/health/readiness';
 
 /**
  * @param {() => string} idGenerator 테스트에서 결정적 값 주입용(기본 randomUUID)
@@ -72,7 +112,7 @@ export function resolveDefaultAbsentPath(idGenerator = randomUUID) {
 }
 
 /**
- * 대상 라우트 목록이 대장 #180이 지목한 4종 패턴을 전부 포함하는지 확인한다. 특히
+ * 대상 라우트 목록이 대장 #180·#204가 지목한 5종 패턴을 전부 포함하는지 확인한다. 특히
  * `/v1/resident-uploads/<id>`는 정확한 문자열이 아니라 **패턴**으로 확인한다(랜덤 id가 매번 다르다).
  * @param {{path: string}[]} routeResults
  * @returns {string[]} 누락된 라우트 라벨(빈 배열=전부 포함)
@@ -81,6 +121,7 @@ export function findMissingRequiredRoutes(routeResults) {
   const paths = (routeResults ?? []).map((r) => r.path);
   const requirements = [
     { label: '/health/version', test: (p) => p === '/health/version' },
+    { label: READINESS_PATH, test: (p) => p === READINESS_PATH },
     { label: '/v1/feed', test: (p) => p === '/v1/feed' },
     { label: '/v1/contents', test: (p) => p === '/v1/contents' },
     {
@@ -120,7 +161,11 @@ export async function probeRoutes({
     const url = new URL(path, baseUrl).toString();
     try {
       const res = await fetchWithTimeout(fetchImpl, url, timeoutMs);
-      return { path, status: res.status, error: null };
+      // contentType: 테스트가 주입하는 목(mock) fetchImpl은 `.headers`가 없을 수 있어
+      // optional chaining으로 보호한다(대장 #204 — readiness의 SPA 폴백 오염 판정에 쓰인다.
+      // 값이 없으면 그 판정을 건너뛴다, judgeResults 참조).
+      const contentType = typeof res.headers?.get === 'function' ? res.headers.get('content-type') : null;
+      return { path, status: res.status, error: null, contentType };
     } catch (err) {
       return { path, status: null, error: String(err && err.message ? err.message : err) };
     }
@@ -136,8 +181,52 @@ export async function probeRoutes({
 
 // ── 판정 — 순수 함수 ───────────────────────────────────────────────────────────────
 
+/** `contentType` 문자열이 JSON 계열인지(대소문자·charset 파라미터 무관하게 판단). */
+function isJsonContentType(contentType) {
+  return typeof contentType === 'string' && contentType.toLowerCase().includes('application/json');
+}
+
 /**
- * @param {{ routeResults: {path:string,status:number|null,error:string|null}[], absentResult: {path:string,status:number|null,error:string|null} }} input
+ * 라우트 1건의 실패 여부·분류를 판정한다(대장 #204). `null`이면 실패가 아니다.
+ * - `/health/readiness`는 나머지와 판정 계약이 다르다: **정확히 200**이어야 하고(401·404·5xx
+ *   전부 실패), `contentType` 필드가 있으면 JSON이 아닐 때도 실패다(필드가 없으면 그 검사는
+ *   생략 — 舊 status-file 호환).
+ * - 그 외 라우트는 기존과 동일하게 "매치되는가"(≠404)만 보되, **5xx도 이번에 실패로 추가**한다
+ *   (舊 판정식은 500을 "라우트 실재"로 통과시켰다).
+ * @param {{path:string,status:number|null,error:string|null,contentType?:string|null}} r
+ * @returns {'request_failed'|'route_missing'|'server_error'|'readiness_status'|'readiness_content_type'|null}
+ */
+function classifyRouteFailure(r) {
+  if (r.error != null) return 'request_failed';
+  if (r.path === READINESS_PATH) {
+    if (r.status !== 200) return 'readiness_status';
+    if (r.contentType != null && !isJsonContentType(r.contentType)) return 'readiness_content_type';
+    return null;
+  }
+  if (r.status === 404) return 'route_missing';
+  if (typeof r.status === 'number' && r.status >= 500) return 'server_error';
+  return null;
+}
+
+const FAILURE_KIND_LABELS = {
+  request_failed: '요청 실패',
+  route_missing: '라우트 부재(404)',
+  server_error: '서버 오류(5xx)',
+  readiness_status: 'readiness 상태코드 이상(200 아님)',
+  readiness_content_type: 'readiness content-type 이상(JSON 아님)',
+};
+
+/** `routeFailures`를 종류별로 묶어 "라우트 부재"와 "서버 오류"를 구분한 요약 문구를 만든다. */
+function summarizeRouteFailures(routeFailures) {
+  const counts = new Map();
+  for (const r of routeFailures) {
+    counts.set(r.failureKind, (counts.get(r.failureKind) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([kind, n]) => `${FAILURE_KIND_LABELS[kind] ?? kind} ${n}건`).join(', ');
+}
+
+/**
+ * @param {{ routeResults: {path:string,status:number|null,error:string|null,contentType?:string|null}[], absentResult: {path:string,status:number|null,error:string|null} }} input
  */
 export function judgeResults({ routeResults, absentResult }) {
   const routes = routeResults ?? [];
@@ -153,7 +242,9 @@ export function judgeResults({ routeResults, absentResult }) {
   }
 
   const missingRequiredRoutes = findMissingRequiredRoutes(routes);
-  const routeFailures = routes.filter((r) => r.error != null || r.status === 404);
+  const routeFailures = routes
+    .map((r) => ({ ...r, failureKind: classifyRouteFailure(r) }))
+    .filter((r) => r.failureKind != null);
 
   const absentFailed = !absentResult || absentResult.error != null;
   const absentNot404 = !absentFailed && absentResult.status !== 404;
@@ -167,7 +258,7 @@ export function judgeResults({ routeResults, absentResult }) {
   } else if (missingRequiredRoutes.length > 0) {
     reason = `필수 라우트 누락: ${missingRequiredRoutes.join(', ')}`;
   } else if (routeFailures.length > 0) {
-    reason = `라우트 부재/요청 실패 ${routeFailures.length}건`;
+    reason = `라우트 실패 ${routeFailures.length}건 (${summarizeRouteFailures(routeFailures)})`;
   } else if (absentFailed) {
     reason = `음성 대조 요청 실패: ${absentResult ? absentResult.error : '결과 없음'}`;
   } else {
@@ -232,10 +323,20 @@ function parseArgs(argv) {
 
 function printResults({ routeResults, absentResult, verdict }) {
   for (const r of routeResults) {
-    if (r.error != null) {
+    // 대장 #204: "라우트 부재"(404)와 "서버 오류"(5xx)는 사람이 볼 때 다른 사고다 — 구분 출력.
+    const kind = classifyRouteFailure(r);
+    if (kind === 'request_failed') {
       console.error(`  ✘ ${r.path}: 요청 실패 — ${r.error}`);
-    } else if (r.status === 404) {
+    } else if (kind === 'route_missing') {
       console.error(`  ✘ ${r.path}: HTTP 404 (라우트 부재)`);
+    } else if (kind === 'server_error') {
+      console.error(`  ✘ ${r.path}: HTTP ${r.status} (서버 오류 — 5xx, 대장 #204)`);
+    } else if (kind === 'readiness_status') {
+      console.error(`  ✘ ${r.path}: HTTP ${r.status} (readiness는 정확히 200이어야 함 — DB 등 이상 의심)`);
+    } else if (kind === 'readiness_content_type') {
+      console.error(
+        `  ✘ ${r.path}: HTTP ${r.status}, content-type "${r.contentType}" (JSON 아님 — SPA 폴백 오염 의심)`,
+      );
     } else {
       console.log(`  ✔ ${r.path}: HTTP ${r.status} (라우트 실재)`);
     }

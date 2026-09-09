@@ -80,10 +80,15 @@ export class MediaAssetsService {
     });
   }
 
-  /** 업로드 검증 실패 시 original을 failed 표기 */
-  async markFailed(storageKey: string): Promise<void> {
+  /**
+   * 업로드 검증 실패 시 original을 failed 표기.
+   * `db`는 기본이 `this.prisma`(단독 호출)이고, 호출자가 트랜잭션 안에서 다른 쓰기와 원자적으로
+   * 묶어야 하면 `tx`를 넘긴다(대장 #168 — UploadService.completeUpload의 head 부재 분기가
+   * 이 쓰기와 `ContentWorkflowService.failUploadTx`를 한 트랜잭션으로 묶는다).
+   */
+  async markFailed(storageKey: string, db: Prisma.TransactionClient = this.prisma): Promise<void> {
     const bucket = this.s3.bucket;
-    await this.prisma.mediaAsset
+    await db.mediaAsset
       .update({
         where: { bucket_storageKey: { bucket, storageKey } },
         data: { status: 'failed' },

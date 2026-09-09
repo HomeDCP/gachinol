@@ -6,6 +6,7 @@ import { ContentWorkflowService } from '../contents/content-workflow.service';
 import { ContentsService } from '../contents/contents.service';
 import { MediaAssetsService } from '../media/media-assets.service';
 import { S3Service } from '../media/s3.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { QueueProducerService } from '../queue/queue-producer.service';
 import type { CompleteUploadDto, IssueUploadUrlDto } from './schemas/upload.schemas';
 
@@ -30,6 +31,7 @@ export class UploadService {
     private readonly assets: MediaAssetsService,
     private readonly s3: S3Service,
     private readonly producer: QueueProducerService,
+    private readonly prisma: PrismaService,
   ) {}
 
   private requirePipeline(): void {
@@ -86,9 +88,14 @@ export class UploadService {
 
     const head = await this.s3.headObject(dto.storageKey);
     if (!head) {
-      // 오브젝트 부재 → 사용자 실패로 표기(재-issue로 복구). uploading 교착 회피
-      await this.assets.markFailed(dto.storageKey);
-      await this.workflow.failUpload(id, user);
+      // 오브젝트 부재 → 사용자 실패로 표기(재-issue로 복구). uploading 교착 회피.
+      // 대장 #168 — 자산 markFailed와 콘텐츠 failUpload를 별개 커밋으로 내면 그 사이 프로세스가 죽었을 때
+      // 자산만 failed로 남고 콘텐츠는 uploading에 영구 고착한다(재발급은 ISSUABLE 밖 → 409, findOriginal이
+      // failed 자산을 제외 → 완료 경로도 막힘. 실기 2건). 한 트랜잭션으로 묶어 부분 실패를 없앤다.
+      await this.prisma.$transaction(async (tx) => {
+        await this.assets.markFailed(dto.storageKey, tx);
+        await this.workflow.failUploadTx(tx, content, user);
+      });
       throw new DomainException('validation_failed', '업로드된 오브젝트를 찾을 수 없습니다');
     }
 
