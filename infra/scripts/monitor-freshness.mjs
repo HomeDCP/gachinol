@@ -76,6 +76,33 @@ import { readFileSync } from 'node:fs';
 import { extractSha } from './verify-deployed-sha.mjs';
 import { judgeResults, probeRoutes, resolveDefaultRoutes, resolveDefaultAbsentPath } from './deploy-smoke.mjs';
 
+// ── STALE_HOURS=2h 재검토(2026-09-10, monitor.yml 실가동이 15분이 아니라 2~5시간 간격으로
+// 돈다는 게 실측으로 드러난 뒤) — 판단: 그대로 둔다(ⓐ). monitor.yml 헤더의 "실가동 실측" 절
+// 참조. 이 상수가 관여하는 것은 규칙 1·2·4·8뿐이다(api-stale·web-stale·approval-stale·
+// deploying 경계) — 규칙 3·4'·5·6·6'·7(라우트/readiness·뒤처진 waiting 런·배포 런 실패·deploy
+// 잡 skipped·jobs 조회 실패·runs API 불능)은 전부 "grace 무관 즉시 실패/경고"라 이 값과 무관하다.
+//
+// **왜 이 값이 이 워크플로 자신의 폴링 빈도와 별개 축인가**: staleHours가 재는 것은 "SHA 불일치·
+// 승인 대기가 실제로 몇 시간 지속됐는지"(headAgeHours·waitingRun.ageHours — 둘 다 GitHub API의
+// 실 타임스탬프와 판정 시각의 차이로, 이 워크플로가 몇 분마다 도는지와 무관하게 계산된다)이지,
+// "이 워크플로가 그 사실을 몇 분 만에 알아채는지"가 아니다. 후자는 순전히 **다음 틱이 언제
+// 오는가**로 결정된다 — 그래서 staleHours를 올려도 "다음 틱까지 기다려야 한다"는 구조는 그대로다.
+//
+// **실효 유예 계산(가정 — 표본 3건뿐)**: 명목 grace는 2h지만, 판정은 다음 틱이 돌 때까지 미뤄
+// 진다. 불일치가 t0에 시작해 t0+2h에 staleHours를 넘겨도, 그 사실을 알리는 것은 그 이후 첫 틱
+// 이다. 관측된 최대 틱 간격(~5시간12분, monitor.yml 헤더 참조)을 더하면 **최악 실효 유예는 명목
+// 2h가 아니라 최대 약 7시간12분**(2h + 관측 최대 gap)까지 늘어날 수 있다 — 새 Healthchecks
+// 무응답 한도(1h+6h=7h, monitor.yml 헤더 참조)와 자릿수는 비슷하지만 완전히 다른 메커니즘이다
+// (이쪽은 "판정이 언제 내려지는가", Healthchecks 쪽은 "판정이 아예 안 왔을 때 언제 알아채는가").
+// 표본이 3건(관측 시작 하루 미만)뿐이라 실제 최대 gap은 이보다 클 수 있다 — 확정치가 아니다.
+//
+// **그래도 2h를 유지하는 근거**: ① staleHours를 올려도 실효 유예의 하한(틱 간격 자체)은 줄지
+// 않는다 — 틱이 뜸한 게 병목이지 staleHours가 병목이 아니라서, 값을 올리면 순수 추가 지연만
+// 생긴다. ② 실가동 3건은 전부 SHA 일치(`fresh`)라 staleHours가 아예 켜진 적이 없다 — 이 기본값이
+// 오탐을 낸 사례가 (표본 부족 하에서도) 지금까지 없다. ③ #202(승인 26시간 방치)류는 2h든 7h든
+// 결국 다음 틱에서 잡힌다 — staleHours는 "얼마나 방치돼야 방치로 볼지"의 정책값이지 스케줄
+// 불규칙성을 상쇄하는 손잡이가 아니다. 관측 gap이 앞으로 더 벌어지면(예: 하루 1건 수준으로
+// 떨어지면) 이 판단은 재검토 대상이다.
 const DEFAULT_STALE_HOURS = 2;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_RETRY_DELAY_MS = 30_000;
