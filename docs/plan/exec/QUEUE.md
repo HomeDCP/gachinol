@@ -76,8 +76,8 @@
 | **C-1** | **Quick Tunnel 고정 방식** | ✅ **충족(2026-09-01)** — 사용자가 도메인 `bapfull.com` 구입 + named tunnel `bapfull-xeon` 개통(ⓐ 채택). scribe 재현: `curl -s -o /dev/null -w "%{http_code}" https://watch.bapfull.com` → 200 | 舊 **0-1**(해소·제거됨 — PIVOT-PLAN 대장 #179·#187 참조) | ⓐ named tunnel(무료·~~도메인 불요~~·고정 호스트, **권장**) ⓑ 로그에서 호스트를 읽어 재기입하는 스크립트 — ⚠️ **사실 정정(2026-09-01, 규율 13 — 원문 보존)**: "도메인 불요"는 틀렸다. named tunnel도 Public Hostname 라우팅에 **도메인이 필요**했고, 실제로 사용자가 `bapfull.com`을 구입해야 했다. **C-1과 D-3(도메인 확정)은 사실상 하나의 항목이었다** — named tunnel을 고르는 순간 도메인 확정이 동반 필수였다 |
 | **C-2** | **Actions vars 교정** | ✅ **충족(2026-09-01)** — `gh variable list` 재확인: `WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL` = `https://watch.bapfull.com`(placeholder 아닌 실값) | 舊 **0-2**(부분 해소 — PIVOT-PLAN 대장 #172 참조. 같은 행의 #189는 미해소 잔존, 0-1로 이관) | `WEB_EXPO_PUBLIC_SUBSCRIBER_WEB_URL` 실값 교체 **또는 삭제**(삭제 시 경로 표시로 정직 강등) — 실값 교체로 해소 |
 | **C-3** | **제온 `DROP COLUMN` 마이그레이션 승인** | ✅ **충족(2026-09-02)** — 사용자가 승인했고, 조율자가 SSH로 `docker compose pull + up -d --no-build api ai-worker media-worker`를 실행하자 api 엔트리포인트의 `RUN_MIGRATIONS:-true`가 부팅 전 `prisma migrate deploy`를 자동 실행해 **적용까지 완료됐다**(PIVOT-PLAN 대장 #170 참조). 재현은 **ⓗ 명시적 수동**(제온 SSH 필요, scribe 재현 불가): `cd ~/gachinol/infra/docker && docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml pull api ai-worker media-worker && docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml up -d --no-build api ai-worker media-worker`. scribe 독립 재현(인터넷 경로, SSH 아님): `curl -s https://api.bapfull.com/v1/health/version` → SHA가 main HEAD와 일치(대장 #170 참조) | **0단계 완주**(舊 0-1 — 대장 #170이 이것으로 해소·행 제거됐다) | **적용됨.** `contents.minor_consent_confirmed_at`·`..._by_user_id` 두 컬럼 **drop 완료**(비가역). T-W2-36이 의도적으로 버린 데이터라 손실은 설계된 것이었고, 적용 전 실측으로 해당 두 컬럼 NOT NULL 손실 0건 확인 + 복원점(`gachinol-20260902-040924.sql.gz`) 확보 후 진행됐다 |
-| **C-4** | **Healthchecks.io 계정** — 체크 2개(`gachinol-monitor` period 15m/grace 30m · `gachinol-backup` period 1d/grace 3h) · 텔레그램 채널 연결 · 리포 시크릿 `MONITOR_HEARTBEAT_URL` · 읽기 전용 API 키(ops-prober 위임용, 리포에는 넣지 않음) | ✅ **완료(2026-09-07)** — 계정 개설·체크 2개·텔레그램 연결·시크릿 등록 전부 완료. scribe 재확인(2026-09-10): `gh secret list --repo HomeDCP/gachinol --json name --jq 'length'` → **9**건(`MONITOR_HEARTBEAT_URL` 포함, 값은 비공개 — `gh secret list --repo HomeDCP/gachinol --json name --jq '.[].name'`로 이름만 확인). 텔레그램 도달 실증(DOWN 알림 2026-09-07 07:34 AM, period 15분+grace 30분 정합)은 대장 #203 비고 참조(사용자 스크린샷 — 조율자 확인, scribe는 원본 미접근). ⚠️ **설정값 갱신(2026-09-10, 사용자 실행 — ⓗ 명시적 수동, SaaS 대시보드값이라 리포 명령으로 재현 불가)**: `gachinol-monitor` 체크 period **15분→1시간**·grace **30분→6시간**(이 행 앞 칸의 15m/30m은 등재 당시 스펙, 규율 13 보존 — 현재값은 여기가 최신). 근거: monitor.yml 실가동 첫날(2026-09-09~10) 관측된 스케줄 런 간격 1.34h·2.02h·5.20h가 옛 문턱 45분(15분+30분)을 매번 넘겨 상시 오탐(DOWN 4회, 대장 #203 비고 참조)을 냈다 — 새 문턱 7시간(1시간+6시간)이 관측 최대 공백 5.20h를 삼킨다. **첫날 3건 표본 기반 임시 하한이며 최종값이 아니다** — 2주 report-only 관찰(S4 이후) 후 재조정 예정 | **S3** `monitor.yml` 머지(계획 §4-2) | 무료 티어(체크 20개)만으로 충분 — 벤더 자체는 이미 확정(계획 §2-2 1순위), 택일 항목 아님. 절차: 가입 → 프로젝트 1 → 체크 2개 생성 → Integrations에서 텔레그램 연결 → 읽기 전용 API 키 발급(Settings) → 리포 시크릿에 `gachinol-monitor` ping URL 등록 |
-| **C-5** | **외부 프로브 개설**(Q2) — 4 URL(`watch.` · `reporter.` · `center.bapfull.com` · `api.bapfull.com/health/readiness`) · 같은 알림 채널(텔레그램/이메일) | 🟡 **개설 완료·실패 도달 미확인(2026-09-10)** — Better Stack 프로브 4개 등록(조율자 확인, C-5 절차대로) · **아직 실패를 잡은 적은 없다**(인터넷 경로가 계속 정상이라 관측할 실패 사건 자체가 없었다. scribe 재확인 2026-09-10: `curl -s -o /dev/null -w "%{http_code}" https://watch.bapfull.com` → 200 · `reporter.bapfull.com` → 200 · `center.bapfull.com` → 200 · `api.bapfull.com/health/readiness` → 200). **"개설"과 "대장 #203 확인 방법 ⓐ 충족"은 다르다** — ⓐ는 의도적 장애 뮤테이션(S4, 계획 §4-2)을 거쳐야 확정된다 | **대장 #203 확인 방법 ⓐ**(집 밖 관측점의 실패 알림 도달 실증) | ⓐ **Better Stack Free** — 가입 전 Free 열에서 ⓵ 모니터 ≥4개 ⓶ 주기(3~5분) ⓷ 텔레그램 또는 webhook 3가지를 사용자가 화면에서 직접 확인 후 채택 ⓑ 하나라도 어긋나면 **Upptime**(GitHub Actions 기반, 별도 리포 필요 — 계획 §2-2 2순위) |
+| **C-4** | **Healthchecks.io 계정** — 체크 2개(`gachinol-monitor` period 15m/grace 30m · `gachinol-backup` period 1d/grace 3h) · 텔레그램 채널 연결 · 리포 시크릿 `MONITOR_HEARTBEAT_URL` · 읽기 전용 API 키(ops-prober 위임용, 리포에는 넣지 않음) | ✅ **완료(2026-09-07)** — 계정 개설·체크 2개·텔레그램 연결·시크릿 등록 전부 완료. scribe 재확인(2026-09-10): `gh secret list --repo HomeDCP/gachinol --json name --jq 'length'` → **9**건(`MONITOR_HEARTBEAT_URL` 포함, 값은 비공개 — `gh secret list --repo HomeDCP/gachinol --json name --jq '.[].name'`로 이름만 확인). 텔레그램 도달 실증(DOWN 알림 2026-09-07 07:34 AM, period 15분+grace 30분 정합)은 대장 #203 비고 참조(사용자 스크린샷 — 조율자 확인, scribe는 원본 미접근). ⚠️ **설정값 갱신(2026-09-10, 사용자 실행 — ⓗ 명시적 수동, SaaS 대시보드값이라 리포 명령으로 재현 불가)**: `gachinol-monitor` 체크 period **15분→1시간**·grace **30분→6시간**(이 행 앞 칸의 15m/30m은 등재 당시 스펙, 규율 13 보존 — 현재값은 여기가 최신). 근거: monitor.yml 실가동 첫날(2026-09-09~10) 관측된 스케줄 런 간격 1.34h·2.02h·5.20h가 옛 문턱 45분(15분+30분)을 매번 넘겨 상시 오탐(DOWN 4회, 대장 #203 비고 참조)을 냈다 — 새 문턱 7시간(1시간+6시간)이 관측 최대 공백 5.20h를 삼킨다. **첫날 3건 표본 기반 임시 하한이며 최종값이 아니다** — 2주 report-only 관찰(S4 이후) 후 재조정 예정. ⭐ **갱신(2026-09-10, scribe)**: 대장 #203이 확인 방법 ⓐⓑ 모두 실증으로 해소됐다(PIVOT-PLAN 대장 #203 참조). scribe 재실행(2026-09-10T22:26:48Z): `gh run list --branch main --workflow monitor.yml --limit 60 --json event,createdAt,conclusion --jq '.[] \| select(.event=="schedule" or .event=="workflow_dispatch") \| [.createdAt,.event,.conclusion] \| @tsv' \| sort` → 간격 7개 최소 1.34h·최대 5.21h·평균 3.31h(7h 허용치 여유 1.79h, 설정 변경 이후 3개 간격 전부 허용치 안). ⚠️ 여전히 **첫날 표본 기반 임시값**이며 선언(15분)-실측(평균 3.31h) 괴리는 미해소 — 2주 report-only 종료 후 재조정 | **S3** `monitor.yml` 머지(계획 §4-2) | 무료 티어(체크 20개)만으로 충분 — 벤더 자체는 이미 확정(계획 §2-2 1순위), 택일 항목 아님. 절차: 가입 → 프로젝트 1 → 체크 2개 생성 → Integrations에서 텔레그램 연결 → 읽기 전용 API 키 발급(Settings) → 리포 시크릿에 `gachinol-monitor` ping URL 등록 |
+| **C-5** | **외부 프로브 개설**(Q2) — 4 URL(`watch.` · `reporter.` · `center.bapfull.com` · `api.bapfull.com/health/readiness`) · 같은 알림 채널(텔레그램/이메일) | ✅ **완료(2026-09-10, 확인 방법 ⓐ 실증)** — 舊 🟡 개설 완료·실패 도달 미확인 표기는 아래 보존(규율 13). Better Stack 프로브 4개 등록(조율자 확인, C-5 절차대로) · **아직 실패를 잡은 적은 없다**(인터넷 경로가 계속 정상이라 관측할 실패 사건 자체가 없었다. scribe 재확인 2026-09-10: `curl -s -o /dev/null -w "%{http_code}" https://watch.bapfull.com` → 200 · `reporter.bapfull.com` → 200 · `center.bapfull.com` → 200 · `api.bapfull.com/health/readiness` → 200). **"개설"과 "대장 #203 확인 방법 ⓐ 충족"은 다르다** — ⓐ는 의도적 장애 뮤테이션(S4, 계획 §4-2)을 거쳐야 확정된다. ⭐ **ⓐ 실증 완료(2026-09-10, scribe 기록)**: 사용자가 Better Stack에 존재하지 않는 URL(`https://api.bapfull.com/__monitor_test_404__`, scribe 재확인 2026-09-10T22:26:48Z: `curl -s -o /dev/null -w "%{http_code}" https://api.bapfull.com/__monitor_test_404__` → **404**)로 3분 주기 임시 모니터를 만들어 실패 알림 수신을 확인한 뒤 즉시 삭제했다(사용자 보고 원문: *"알림 왔다 확인 후 삭제도 했다"*, scribe는 Better Stack 대시보드 미접근). 채널은 텔레그램이 아니라 Better Stack 앱 푸시·이메일이었다(Better Stack은 텔레그램 미지원 — scribe 재확인: `curl -s -o /dev/null -w "%{http_code}" -L https://betterstack.com/docs/uptime/integrations/telegram` → **404**) — "운영자 휴대폰 도달"은 채널 무관하게 충족한다. **대장 #203 확인 방법 ⓐ가 이 실증으로 충족됐다.** | **대장 #203 확인 방법 ⓐ**(집 밖 관측점의 실패 알림 도달 실증) | ⓐ **Better Stack Free** — 가입 전 Free 열에서 ⓵ 모니터 ≥4개 ⓶ 주기(3~5분) ⓷ 텔레그램 또는 webhook 3가지를 사용자가 화면에서 직접 확인 후 채택 ⓑ 하나라도 어긋나면 **Upptime**(GitHub Actions 기반, 별도 리포 필요 — 계획 §2-2 2순위) |
 
 > **舊 0-1(#186)·舊 0-1(#182)은 사용자 실행이 필요 없었다** — A-1(머지)만 되면 바로 갔다.
 > ⚠️ **이 문장은 2026-09-01부로 stale이다(규율 13, 이력 보존)**: 舊 0-1(#182, daejang-recheck
@@ -180,9 +180,15 @@
 > 판정은 그 이후의 되돌림을 원리적으로 못 잡는다)은 **여전히 유효**하며 소실시키지 않는다 —
 > 지금의 1-1(가용성 감시)이 정확히 그 사각을 메우는 층이라는 근거로 아래 각주에 남긴다.
 
-| 순 | ID | 제목 | L | 선행 | 동반 의무 | 차단자 |
-|---|---|---|---|---|---|---|
-| 1-1 | 대장 #203 | **가용성 감시 신설** — 인터넷 경로·배포 신선도·api 헬스. ⚠️ 대장 #72의 경보 7종과 **다른 것**이다. **舊 1-1(배포 후 스모크, 2026-09-05 해소·제거)의 사각을 지속 감시로 덮는 층(아래 각주)** | L1 | 없음(舊 0-1 대상 — Quick Tunnel 재발 차단 — 이 2026-09-01 해소로 충족. 이력: #186 제거로 0-2였다가 #182 제거로 0-1이 됐고, **2026-09-01 그 0-1 자체(대장 #179·#187)가 named tunnel 전환으로 해소·제거**돼 지금의 "0-1"은 물리적으로 다른 태스크(#189)를 가리킨다 — 그래서 번호 참조 대신 충족 여부로 기재한다) | **#204(스모크 5xx 통과) 같은 슬라이스**(규율 23 D1 — 2026-09-06 채번 완료, 계획 `~/Claude/plans/transient-cuddling-scroll.md` §4-2 S0·S1) | — |
+> **1-1(대장 #203 — 가용성 감시 신설)은 2026-09-10 해소돼 행을 제거했다**(확인 방법 ⓐⓑ 모두 실증
+> — PIVOT-PLAN 대장 #203 참조, PR #96·#97 병합·병합커밋 `e0e65d4`). scribe 재현(2026-09-10T22:26:48Z):
+> `curl -s -o /dev/null -w "%{http_code}" https://api.bapfull.com/__monitor_test_404__` → **404**
+> (ⓐ가 두드린 부재 URL — Better Stack 임시 모니터가 이 URL의 실패를 잡아 운영자 휴대폰에 도달시켰고
+> 즉시 삭제됐다) · `gh run list --branch main --workflow monitor.yml --limit 60 --json
+> event,createdAt,conclusion` 재실행 → 간격 7개 최소 1.34h·최대 5.21h·평균 3.31h(7h 허용치 여유
+> 1.79h). ⚠️ **미해소로 남는 것**: 선언 주기(15분)와 실측 평균 간격(3.31h)의 괴리, 현재 임계
+> (1h/6h)가 첫날 표본 기반 임시값이라는 것 — 둘 다 2주 report-only 관찰(HANDOFF.md 참조) 후
+> 재조정 대상이다. 상세는 PIVOT-PLAN 대장 #203 비고.
 
 > ⚠️ **검증이 잡은 오귀속**: 검증 전 지금의 1-1(番호 변경 이력: 舊 1-3 → 舊 1-2 → 지금 1-1)은
 > *"대장 #72 모니터링 최소 구현"*이었다. 그런데 실측하니
@@ -211,6 +217,24 @@
 > 스모크가 더 작아 순서를 유지했다("오늘 실측은 한계를 드러냈을 뿐 순서를 뒤집을 근거로는 부족하다").
 > 舊 1-1이 2026-09-05 해소돼 지금은 1단계에 가용성 감시 하나만 남아 이 비교 자체가 이력이 됐다 —
 > **다음 착수 여부·순서는 여전히 조율자 판단 몫**이며 scribe는 이 갱신에서 순서를 바꾸지 않았다.
+
+### ⭐ 1단계 완주(2026-09-10)
+
+**위 #203이 1단계에 마지막으로 남아 있던 행이었다 — 표가 이제 완전히 비었다.** 절 자체는 지우지
+않는다(위 제거 이력·각주가 "가용성 감시를 어떤 순서로 세웠는가"의 근거이며, 규율 13대로 이력
+보존). **다음 착수 대상은 2단계 2-1(대장 #173·#188 — 기자 웹 촬영(`<input capture>`) + `app/**`
+로직 금지 린트)이다.** 순서는 QUEUE가 이미 정해 둔 것이고 이 갱신은 순서를 바꾸지 않았다 —
+착수 시점은 조율자 판단 몫이다.
+
+> ⚠️ **완주 ≠ 관찰 종료**: 대장 #203 해소가 채운 것은 "묻는 주체가 없다"이고, 2주 report-only
+> 관찰(HANDOFF.md "다음 1건" 참조 — schedule 간격 분포·DOWN 발화 건수·`monitor-freshness` 판정
+> 분포를 추적)은 이 완주와 별개로 계속된다. 6h 넘는 공백이 실측되면 임계 재조정이 필요하다.
+
+> **이력(1단계가 지나온 감시 정착 순서, 규율 13)**: 舊 1-1(대장 #180 — api·워커 배포 경로 신설)이
+> 2026-09-03 해소 → 舊 1-1(배포 후 스모크, `deploy-smoke.mjs`)이 2026-09-05 해소 → 지금의 1-1
+> (대장 #203 — 가용성 감시 신설, `monitor.yml`)이 2026-09-10 해소로 마지막 행이 빠졌다. 세 층 모두
+> "고쳤는데 도달하지 않는다"는 같은 문제의 다른 단면이었다 — 배포 경로 자체 → 배포 직후 1회 판정 →
+> 배포 이후 지속 감시.
 
 ## 2단계 — L2 결함 수리 + 검사 범위 확장
 
