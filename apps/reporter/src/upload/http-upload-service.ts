@@ -7,6 +7,7 @@ import type {
 } from '@gachinol/shared';
 import type { ApiClient } from '../api/client';
 import { UploadAbortedError } from './mock-upload-service';
+import { assertRealVideoInput } from './upload-service';
 import type { UploadInput, UploadProgress, UploadResult, UploadService } from './upload-service';
 // ②·③ 실패/중단 후 서버측 복구 통지 — 정의·근거 주석은 xhr-upload-service.ts(T-W2-02에서 이동).
 // 웹 어댑터와 같은 복구 의미론을 공유해야 하는데(사본 금지), 웹 해석에서 이 모듈 경로는
@@ -29,6 +30,15 @@ export function createHttpUploadService(client: ApiClient): UploadService {
       signal?: AbortSignal,
     ): Promise<UploadResult> {
       if (signal?.aborted) throw new UploadAbortedError();
+      // 유령 미디어 방어 ①(uri·mimeType) — 근거는 upload-service.ts의 assertRealVideoInput 주석.
+      assertRealVideoInput(input);
+      // 방어 ②(0바이트) — 네이티브는 웹처럼 여기서 본문을 재측정하지 않아(스트림 업로드 태스크에
+      // 위임) input.sizeBytes를 그대로 신뢰해야 한다. 그래서 여기서만 sizeBytes까지 확인한다
+      // (웹 쪽은 xhr-upload-service.ts가 Blob 실측치로 재검사하므로 input.sizeBytes=0도 통과시킨다
+      // — "아직 실측 전"이 웹에서는 합법이지만 네이티브에서는 이 지점이 마지막 기회다).
+      if (input.sizeBytes <= 0) {
+        throw new Error('영상 크기를 확인할 수 없습니다 — 다시 촬영하거나 선택해주세요');
+      }
 
       // ① 업로드 URL 발급 — draft|upload_failed → uploading (서버 전이. 클라 전이 흉내 금지)
       const issued = await client.request<IssueUploadUrlResponse>(

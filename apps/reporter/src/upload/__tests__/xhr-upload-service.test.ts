@@ -132,6 +132,46 @@ test('성공 경로 — ① 바디·② XHR PUT(진행률 매핑)·③ 완료 �
   expect(progresses[progresses.length - 1]!.ratio).toBe(1);
 });
 
+test('유령 미디어 방어 — 빈 fileUri는 fetch도 시도하지 않고 서버 무접촉으로 차단한다 (대장 #173)', async () => {
+  // 배경(패치 전 실측, 이 테스트로 재현·고정): expo-camera 웹의 record()는 { uri: '' }만 반환한다.
+  // 그 빈 uri를 resolveBody(웹은 fetch(uri))에 그대로 넘기면 브라우저가 **빈 문자열을 현재 SPA
+  // 페이지로 상대경로 해석**해 res.ok=true·HTML 셸 blob(size>0)을 돌려줬고, 그 blob이 구 sizeBytes
+  // 폴백(body.size>0 ? body.size : input.sizeBytes)과 서버 zod(positive)까지 그대로 통과했다
+  // (패치 전 이 자리의 테스트가 그 성공 경로를 실증했다 — svc.upload가 fileUri:''로도
+  // { storageKey } resolve, upload-url이 sizeBytes:612로 호출됨을 확인). 지금은 assertRealVideoInput이
+  // resolveBody 호출 전에 끊는다.
+  const { client, request } = makeClient();
+  const env = makeEnv(blob(612)); // 방어가 없다면 fetch('')가 돌려줬을 HTML 셸 크기(조사자 실측 예시)
+  const svc = createXhrUploadService(client, env);
+
+  await expect(svc.upload({ ...input, fileUri: '' }, () => {})).rejects.toThrow(
+    '영상 데이터가 없습니다',
+  );
+  expect(env.resolveBody).not.toHaveBeenCalled(); // fetch('') 자체를 시도하지 않는다
+  expect(request).not.toHaveBeenCalled(); // upload-url(①)도 호출되지 않는다 — 서버 무접촉
+});
+
+test('유령 미디어 방어 — mimeType이 video/가 아니면 차단한다', async () => {
+  const { client, request } = makeClient();
+  const env = makeEnv(blob(1000));
+  const svc = createXhrUploadService(client, env);
+
+  await expect(
+    svc.upload({ ...input, mimeType: 'text/html' }, () => {}),
+  ).rejects.toThrow('영상 파일이 아닙니다');
+  expect(env.resolveBody).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('유령 미디어 방어 — 실측 Blob이 0바이트면 input.sizeBytes로 폴백하지 않고 차단한다', async () => {
+  const { client, request } = makeClient();
+  const env = makeEnv(blob(0)); // 실측 Blob 자체가 0바이트(폴백하던 예전 구멍)
+  const svc = createXhrUploadService(client, env);
+
+  await expect(svc.upload(input, () => {})).rejects.toThrow('비어 있습니다');
+  expect(request).not.toHaveBeenCalled(); // ①(upload-url)도 호출되지 않는다
+});
+
 test('sizeBytes 폴백 — 호출부가 0을 줘도 Blob 실측 크기로 ①을 보낸다 (서버 zod positive)', async () => {
   const { client, request } = makeClient();
   const env = makeEnv(blob(2048));

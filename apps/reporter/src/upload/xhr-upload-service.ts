@@ -7,6 +7,7 @@ import type {
 } from '@gachinol/shared';
 import type { ApiClient } from '../api/client';
 import { UploadAbortedError } from './mock-upload-service';
+import { assertRealVideoInput } from './upload-service';
 import type { UploadInput, UploadProgress, UploadResult, UploadService } from './upload-service';
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -167,12 +168,22 @@ export function createXhrUploadService(client: ApiClient, env: XhrUploadEnv): Up
       signal?: AbortSignal,
     ): Promise<UploadResult> {
       if (signal?.aborted) throw new UploadAbortedError();
+      // 유령 미디어 방어 ①(uri·mimeType) — 근거는 upload-service.ts의 assertRealVideoInput 주석.
+      // 빈 fileUri는 fetch()조차 시도하지 않고 여기서 끊는다(서버 무접촉, ①(upload-url) 미호출).
+      assertRealVideoInput(input);
 
       // ⓪ 본문 확보 — 실패 시 서버 무접촉(위 주석)
       const body = await env.resolveBody(input.fileUri);
-      // 웹 픽커는 fileSize를 안 주는 경우가 있어(호출부 `asset.fileSize ?? 0`) 실측 Blob 크기를
-      // 우선한다 — 서버 zod가 sizeBytes positive를 요구해 0이면 ①부터 400이다.
-      const sizeBytes = body.size > 0 ? body.size : input.sizeBytes;
+      // 유령 미디어 방어 ②(0바이트) — Blob은 항상 동기적으로 정확한 size를 알므로(진행률 이벤트의
+      // lengthComputable과는 무관한 별개 개념) "측정 불가"란 없다. 예전엔 body.size<=0이면
+      // input.sizeBytes로 **폴백**했는데, 그 폴백 자체가 조사자가 짚은 구멍이었다 — fetch('')가
+      // 성공한 HTML 셸도 size>0이라 이 분기를 타지 않고 그대로 통과했었다(재현:
+      // xhr-upload-service.test.ts "유령 미디어 방어 — 빈 fileUri는..." 테스트 주석의 배경 설명).
+      // 0바이트는 폴백하지 말고 여기서 확정적으로 차단한다 — 실측 Blob을 신뢰한다.
+      if (body.size <= 0) {
+        throw new Error('선택한 영상이 비어 있습니다 — 다시 선택해주세요');
+      }
+      const sizeBytes = body.size;
 
       // ① 업로드 URL 발급 — draft|upload_failed → uploading (서버 전이. 클라 전이 흉내 금지)
       const issued = await client.request<IssueUploadUrlResponse>(
