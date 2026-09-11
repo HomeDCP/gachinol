@@ -1,4 +1,4 @@
-# HANDOFF — 실행 인계 (기준: 2026-09-10)
+# HANDOFF — 실행 인계 (기준: 2026-09-11)
 
 > ⭐ **먼저 읽을 것**: [ROOT-CAUSE-2026-08.md](ROOT-CAUSE-2026-08.md) — 이 프로젝트가 정체된 이유의
 > 단일 원천이다(2026-08-30~31 전수 정독 결론). **개별 결함이 아니라 그 결함들이 왜 계속 생기는가**를 담는다.
@@ -271,6 +271,41 @@ S4보다 먼저 끼어들었다).
 docs/infrastructure.md`에 "감시"·"Healthchecks"·"monitor" 관련 표제 0건). 실제 원천은 QUEUE.md
 §C C-4이며, 같은 정정이 `monitor.yml` 커밋(`c49499a`) 주석에도 이미 반영돼 있다.
 
+### ⭐ 2026-09-11 — 대장 #203 해소 + QUEUE 1단계 완주 (scribe)
+
+**PR #97은 이미 머지돼 있었다**(`e0e65d4`, `mergedAt: 2026-09-10T11:12:59Z` — `gh pr view 97 --json
+mergedAt,mergeCommit` 재확인). 이 세션이 시작한 브랜치(`docs/monitor-203-closeout`)의 base가 이미
+그 머지커밋이다. 이 세션이 한 일은 새 코드가 아니라, **사용자가 그다음 실행한 확인 방법 ⓐ를
+정본에 반영**하는 것이었다.
+
+**확인 방법 ⓐ 실증(사용자 실행, 2026-09-10)** — Better Stack에 존재하지 않는 URL
+(`https://api.bapfull.com/__monitor_test_404__`, scribe 재확인: `curl -s -o /dev/null -w
+"%{http_code}" https://api.bapfull.com/__monitor_test_404__` → **404**)로 3분 주기 임시 모니터를
+만들어 **알림 수신을 확인한 뒤 즉시 삭제**했다(사용자 보고 원문: *"알림 왔다 확인 후 삭제도
+했다"*). 채널은 텔레그램이 아니라 **Better Stack 앱 푸시·이메일**이었다(Better Stack은 텔레그램을
+지원하지 않는다 — scribe 재확인: `curl -s -o /dev/null -w "%{http_code}" -L
+https://betterstack.com/docs/uptime/integrations/telegram` → **404**). ⓐ가 요구한 것은 "실패가
+운영자 휴대폰에 도달"이므로 채널이 ⓑ(텔레그램)와 달라도 충족이다.
+
+**결과 — 대장 #203 해소, QUEUE 1단계 완주.** 확인 방법 ⓐⓑ가 모두 채워져 결함 본문 세 축(인터넷
+도달성·배포 신선도·api readiness를 묻는 주체)이 전부 채워졌다고 보아 상태 칸을 해소로 바꿨다
+(`docs/plan/PIVOT-PLAN.md` 대장 #203). QUEUE 1단계(`docs/plan/exec/QUEUE.md`)의 유일하게 남아 있던
+행(1-1)이 이것으로 제거돼 **1단계 자체가 완주**됐다 — 다음 착수 후보는 2단계 2-1(대장 #173·#188,
+순서는 QUEUE.md가 이미 정한 것으로 이 세션이 바꾸지 않았다).
+
+⚠️ **해소되지 않은 것(지우지 않고 남긴다)**: ① **선언(15분 cron)과 실제(평균 3.31h) 사이 괴리는
+그대로다** — 닫힌 것은 "묻는 주체가 없다"이지 "주기가 선언대로 돈다"가 아니다. scribe 재실행
+(2026-09-10T22:26:48Z): `gh run list --branch main --workflow monitor.yml --limit 60 --json
+event,createdAt,conclusion --jq '.[] | select(.event=="schedule" or .event=="workflow_dispatch") |
+[.createdAt,.event,.conclusion] | @tsv' | sort` → 간격 7개 최소 1.34h·최대 5.21h·평균 3.31h(7h
+허용치 대비 여유 1.79h, 설정 변경 이후 3개 간격 3.59h·3.25h·2.56h 전부 허용치 안·추세는 짧아지는
+중). ② **현재 임계(period 1h·grace 6h)는 첫날 3건 표본 기반 임시값**이다 — 여유가 1.79h뿐이라 6h
+넘는 공백이 한 번이라도 나오면 오탐이 재개된다.
+
+변경 파일(scribe 소관, git 쓰기 없음 — 커밋·PR은 조율자 몫): `docs/plan/PIVOT-PLAN.md`(대장 #203
+상태 칸+비고) · `docs/plan/exec/QUEUE.md`(1-1 행 제거+완주 서술·§C C-4·C-5) ·
+`docs/ops/daily/2026-09-11.md`(신규) · 이 문서(HANDOFF.md).
+
 ### 다음 1건(舊 표기 — 위 판정 질문으로 대체됨, 규율 13 이력 보존)
 ~~**QUEUE 1-1(새 번호) · 대장 #180 소유 — 배포 후 스모크**~~는 2026-09-05 PR #94로 해소·행 제거됐다
 (위 참조). 이 자리에 있던 舊 문언은 이력으로만 남긴다(규율 13): *"배포 직후 검증은 그 순간의 참만
@@ -308,7 +343,7 @@ docs/infrastructure.md`에 "감시"·"Healthchecks"·"monitor" 관련 표제 0�
 **⚠️ 이 절 전체가 이제 舊 표기다(헤더 참조)** — 실행해 보니 "첫 스케줄 런 확인"이 단순 확인으로
 끝나지 않고 주기 전제 반증(위 "2026-09-10(PR #96 머지 후)" 절)을 낳아 아래 절로 대체됐다.
 
-### ⭐ 지금의 다음 1건 (2026-09-10 PR #97 세션 갱신) — PR #97 머지 → 다음 ping UP 전환 확인 → 뮤테이션 A·D(ⓐ 충족) → 2주 report-only
+### 舊 다음 1건 (2026-09-10 PR #97 세션 갱신 — PR #97 머지·확인 방법 ⓐ 실증 완료로 아래 절에 대체됨, 규율 13 이력 보존)
 
 **PR #96은 머지됐다(`32ff7ec`). 그 직후 실가동이 위 절의 발견(주기 전제 반증·데드맨 4회)을 낳았고,
 그 수리가 PR #97이다.** 위 "舊 다음 1건"이 예정했던 "첫 스케줄 런 확인 → S4"는 첫 스케줄 런들이
@@ -331,6 +366,38 @@ Healthchecks 재설정)이 먼저 끼어들었다** — 다음 1건은 이 갱�
 
 가변 값(정확한 승인 시각·다음 ping 결과·뮤테이션 결과)은 여기 적지 않는다 — 위 확인 명령/절차로
 그 자리에서 잰다.
+
+### ⭐ 지금의 다음 1건 (2026-09-11 scribe 갱신) — PR 머지 → 2주 report-only 관측 → 2단계 착수
+
+**대장 #203 해소 + QUEUE 1단계 완주를 반영한 이 슬라이스(브랜치 `docs/monitor-203-closeout`)가 아직
+PR로 열리지 않았다**(`gh pr list --head docs/monitor-203-closeout --json number --jq 'length'` →
+**0**, scribe 재확인 2026-09-10T22:26:48Z). 다음 1건은 셋으로 나뉜다:
+
+1. **이 슬라이스 PR 머지 승인**(사용자, CLAUDE.md §0-3 ⑩ — 예외 없음). 문서만 바뀐 슬라이스라
+   로컬 3게이트·CI 영향은 없을 것으로 예상되나, PR을 열고 CI 결과를 그 자리에서 확인한 뒤 머지할
+   것.
+2. **2주 report-only 관측 착수** — 계획 §4-2 S4. 머지 시점을 기산일로 아래 항목을 추적한다(가변
+   값은 여기 적지 않는다 — 재현 명령으로 그 자리에서 잰다):
+   - **schedule 간격 분포(최대·평균)** — `gh run list --branch main --workflow monitor.yml --limit
+     100 --json event,createdAt,conclusion --jq '.[] | select(.event=="schedule" or
+     .event=="workflow_dispatch") | [.createdAt,.event,.conclusion] | @tsv' | sort`로 타임스탬프를
+     뽑아 연속 간격을 계산한다. 지금까지 실측(2026-09-09~10, 7개 간격): 최소 1.34h·최대 5.21h·
+     평균 3.31h. **6h를 넘는 간격이 한 번이라도 나오면 임계(현재 period 1h·grace 6h) 재조정이
+     필요하다.**
+   - **DOWN 발화 건수와 사유별 분류(진짜 공백 vs 오탐)** — Healthchecks.io 대시보드 값(SaaS,
+     scribe 재현 불가). "진짜 공백" = 위 간격 분포가 7h(1h+6h)를 실제로 넘긴 경우, "오탐" = 넘기지
+     않았는데도 DOWN이 발화한 경우(설정 오류·판정 로직 결함 신호) — 이 구분 없이 건수만 세면
+     상시 오탐이 알림을 무력화했던 #202류 경로를 다시 못 잡는다.
+   - **`monitor-freshness` 판정 분포** — 판정 코드 전종(scribe 재확인: `grep -n "code: '"
+     infra/scripts/monitor-freshness.mjs` → PASS: `fresh`·`deploying` / FAIL: `bad-sha`·
+     `api-stale`·`web-stale`·`approval-stale`·`approval-behind`·`deploy-failed`·`deploy-skipped`·
+     `jobs-unreachable`·`api-unreachable` / WARN: `jobs-partial-unreachable`). 2주간 어떤 코드가
+     실제로 관측되는지 기록할 것 — `approval-stale`·`approval-behind`류가 잦으면 배포 승인 지연
+     (대장 #202류)이 감시에 그대로 잡힌다는 뜻이다.
+3. **관측 종료 후 2단계 착수** — QUEUE.md "1단계 완주" 참조, 다음 후보는 2단계 2-1(대장
+   #173·#188). 관측 중 임계 재조정이 필요해지면 그것부터 처리한 뒤 착수한다.
+
+가변 값(정확한 관측 결과·재조정 여부)은 여기 적지 않는다 — 위 재현 명령으로 그 자리에서 잰다.
 
 ### 열린 항목 (다음 세션이 알아야 할 것 — 판정 대기, QUEUE 편입 여부 미정)
 
