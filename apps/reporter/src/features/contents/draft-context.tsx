@@ -13,7 +13,13 @@ export interface DraftMedia {
   uri: string;
   fileName: string;
   mimeType: string;
-  /** 알 수 없으면 0 (Mock 업로드라 실제 전송 없음) */
+  /**
+   * 실 업로드(대장 #173)가 전제라 0은 더 이상 무해하지 않다 — 서버 zod가 positive를 요구해
+   * upload-url(①)이 400을 낸다. `src/capture/video-capture.ts`의 `assertRealCapturedVideo`가
+   * 촬영 경로(카메라)에서 0을 미리 막고, `upload-service.ts`의 `assertRealVideoInput`이
+   * 업로드 호출의 최종 관문에서 다시 막는다(갤러리 선택 경로처럼 여기 타입만으로는 강제되지
+   * 않는 진입점 포함).
+   */
   sizeBytes: number;
   durationSec?: number;
 }

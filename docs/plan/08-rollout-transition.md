@@ -75,12 +75,16 @@
 **라이브 슬라이스와의 관계**: 라이브 시청·채팅·프롬프터는 이미 웹 호환 스택(socket.io·HLS)이므로 W1·W2에 포함되어 함께 전환된다. Cloudflare Stream 실계정 연동(스트림 키 발급)은 W2와 병렬로 진행하되 04 문서의 리허설 절차를 통과해야 첫 방송을 연다.
 
 **T-AI 병렬 트랙과의 관계(사실 정정 + 범위 분리, ROUND-2-DECISIONS Y1)**: 이 로드맵(W0~W4)은 **배포 형태 전환**만
-다룬다. 실 STT(RTZR)·비전 제공자 주입과 `auto_edit` 자동편집은 W0~W4 어느 단계의 DoD에도 포함되지 않으며,
-별도 병렬 트랙 **T-AI**로 분리한다 — 실측: ai-worker 기본 제공자는 `stub`(`app/config.py:14`), `openai` 어댑터는
-`NotImplementedError`(`app/analyzers/openai_provider.py:21`), RTZR 연동 코드는 리포에 없다. `auto_edit`는
-`packages/shared`의 잡타입 상수와 media-worker 주석("auto_edit 도입 시 edited_master 추가")뿐 구현이 없다.
+다룬다. 실 STT(로컬 whisper.cpp+Silero VAD, 舊 RTZR — **2026-08-20 사용자 결정으로 로컬 전환**, 근거는
+비용이 아니라 **데이터 주권**, `CLAUDE.md` §12)·비전 제공자 주입과 `auto_edit` 자동편집은 W0~W4 어느 단계의
+DoD에도 포함되지 않으며, 별도 병렬 트랙 **T-AI**로 분리한다 — 실측: ai-worker 기본 제공자는 `stub`(`app/config.py:14`),
+`openai` 어댑터는 `NotImplementedError`(`app/analyzers/openai_provider.py:21`), 로컬 STT(whisper.cpp) 연동
+코드는 리포에 없다(舊 RTZR 연동 코드도 마찬가지로 없었다 — 바뀐 것은 목표 제공자명이지, T-AI-1 착수 여부가
+아니다). `auto_edit`는 `packages/shared`의 잡타입 상수와 media-worker 주석("auto_edit 도입 시 edited_master
+추가")뿐 구현이 없다.
 
-- **T-AI-1**: RTZR STT + 비전 실 제공자 주입. 기존 `POST /analyze` 계약(`packages/shared/src/analysis/analysis-job.ts`)을
+- **T-AI-1**: 로컬 STT(whisper.cpp+Silero VAD, 舊 RTZR — 2026-08-20 데이터 주권 근거로 전환) + 비전 실
+  제공자 주입. 기존 `POST /analyze` 계약(`packages/shared/src/analysis/analysis-job.ts`)을
   유지한 채 어댑터만 교체하므로 웹 피벗 설계와 충돌하지 않는다.
 - **T-AI-2**: `auto_edit` 자동편집 마스터(`edited_master`) 구현 — 기존 로드맵 후보 2(CLAUDE.md §11)를 그대로 인용.
 - **W 게이트 비의존**: 02 §B의 ai-worker "재사용 100%" 판정은 T-AI 착수 여부와 무관하다 — 현행 **결정적 스텁**

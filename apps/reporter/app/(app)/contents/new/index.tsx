@@ -1,18 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
-import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useNavigation } from 'expo-router';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
+import {
+  GhostMediaError,
+  captureVideoViaImagePicker,
+  fileNameFromUri,
+  toCapturedRecordedVideo,
+} from '../../../../src/capture/video-capture';
 import { useDraft } from '../../../../src/features/contents/draft-context';
 import { Button } from '../../../../src/ui/button';
 import { Screen } from '../../../../src/ui/screen';
 import { colors, radii, spacing, typo } from '../../../../src/ui/theme';
 import { showToast } from '../../../../src/ui/toast';
 
-/** URI 마지막 세그먼트를 파일명으로 (없으면 기본값) */
-function fileNameFromUri(uri: string): string {
-  const last = uri.split('/').pop();
-  return last && last.length > 0 ? last : 'video.mp4';
+/** 촬영/녹화 실패(유령 미디어 방어 포함)의 사용자 안내 — 방어가 준 메시지는 그대로, 그 외는 일반 문구 */
+function captureFailureMessage(err: unknown): string {
+  return err instanceof GhostMediaError ? err.message : '촬영에 실패했습니다 — 다시 시도해주세요';
 }
 
 /** ③-1 촬영/갤러리 — media는 세션 메모리에만 (재시작 시 유실: open question) */
@@ -52,6 +58,19 @@ export default function CaptureScreen(): React.JSX.Element {
   };
 
   const openCamera = async (): Promise<void> => {
+    if (Platform.OS === 'web') {
+      // expo-camera의 CameraView.recordAsync()는 웹에서 { uri: '' }만 준다(동작하지 않는다 —
+      // src/capture/video-capture.ts 헤더 주석 상세). 임베디드 프리뷰(cameraOpen=true 분기)를
+      // 열어봐야 막다른 길이라, 곧장 실제로 동작하는 경로(ImagePicker의 <input capture> 기반
+      // launchCameraAsync)로 보낸다. 네이티브는 아래 else 경로(기존 임베디드 녹화 UX) 그대로.
+      try {
+        const captured = await captureVideoViaImagePicker(ImagePicker);
+        if (captured) setMedia(captured);
+      } catch (err) {
+        showToast(captureFailureMessage(err));
+      }
+      return;
+    }
     if (await ensurePermissions()) setCameraOpen(true);
   };
 
@@ -67,12 +86,14 @@ export default function CaptureScreen(): React.JSX.Element {
     try {
       const video = await camera.recordAsync();
       if (video) {
-        setMedia({
-          uri: video.uri,
-          fileName: fileNameFromUri(video.uri),
-          mimeType: 'video/mp4',
-          sizeBytes: 0, // recordAsync는 크기를 주지 않음 — Mock 업로드라 무해
-        });
+        try {
+          // recordAsync는 크기를 주지 않는다 — 서버 zod가 sizeBytes positive를 요구해 0은
+          // upload-url(①)에서 400이므로 getInfoAsync로 직후 실측한다(구 "Mock이라 무해" 주석은
+          // 실업로드 전환 후 거짓이 됐다 — toCapturedRecordedVideo가 실측 + 유령 미디어 방어를 겸한다).
+          setMedia(await toCapturedRecordedVideo(FileSystem, video));
+        } catch (err) {
+          showToast(captureFailureMessage(err));
+        }
       }
       setCameraOpen(false);
     } finally {

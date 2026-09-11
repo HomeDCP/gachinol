@@ -96,6 +96,35 @@ test('업로드 URL 바디·presigned PUT·완료 통지 정확, storageKey 반�
   expect(progresses.at(-1)?.ratio).toBe(1);
 });
 
+test('유령 미디어 방어 — 빈 fileUri는 upload-url조차 호출하지 않고 차단한다 (대장 #173)', async () => {
+  const { client, request } = makeClient();
+  const svc = createHttpUploadService(client);
+  await expect(svc.upload({ ...input, fileUri: '' }, () => {})).rejects.toThrow(
+    '영상 데이터가 없습니다',
+  );
+  expect(request).not.toHaveBeenCalled();
+  expect(FileSystem.createUploadTask).not.toHaveBeenCalled();
+});
+
+test('유령 미디어 방어 — mimeType이 video/가 아니면 차단한다', async () => {
+  const { client, request } = makeClient();
+  const svc = createHttpUploadService(client);
+  await expect(
+    svc.upload({ ...input, mimeType: 'text/html' }, () => {}),
+  ).rejects.toThrow('영상 파일이 아닙니다');
+  expect(request).not.toHaveBeenCalled();
+});
+
+test('유령 미디어 방어 — sizeBytes<=0(옛 recordAsync 0바이트 주석)은 차단한다', async () => {
+  const { client, request } = makeClient();
+  const svc = createHttpUploadService(client);
+  await expect(
+    svc.upload({ ...input, sizeBytes: 0 }, () => {}),
+  ).rejects.toThrow('영상 크기를 확인할 수 없습니다');
+  expect(request).not.toHaveBeenCalled();
+  expect(FileSystem.createUploadTask).not.toHaveBeenCalled();
+});
+
 test('시작 전 abort → UploadAbortedError, upload-url 미호출', async () => {
   const { client, request } = makeClient();
   const controller = new AbortController();
