@@ -44,6 +44,7 @@
         "AI_*"
       ]
     },
+    "test:web": {},
     "clean": {
       "cache": false
     }
