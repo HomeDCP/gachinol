@@ -12,15 +12,17 @@
  * **새 판정 로직을 만들지 않는다** — 임계(STALE_HOURS) 비교·대기 런 나이 계산·GitHub Actions
  * runs API 정규화 3가지만 신규이고, SHA 추출·라우트 판정은 기존에 이미 게이트①을 통과한 자산을
  * 그대로 import한다:
- *   - `extractSha`      ← verify-deployed-sha.mjs (대장 #186)
- *   - `judgeResults`    ← deploy-smoke.mjs (대장 #180·#204 — 5xx·readiness 판정 포함)
+ *   - `extractSha`             ← verify-deployed-sha.mjs (대장 #186)
+ *   - `judgeResults`           ← deploy-smoke.mjs (대장 #180·#204 — 5xx·readiness 판정 포함)
+ *   - `checkMediaReachability` ← media-reachability.mjs (대장 #169 — 공개 미디어 URL이 인터넷에서
+ *     실제로 열리는가. 사설 IP·http 스킴·403/404/5xx/타임아웃·content-type 불일치를 fail-closed로 판정)
  *
  * ── 입력 검증 먼저 — 단축 SHA 함정 (실측) ─────────────────────────────────────────────
  * `gh api ".../actions/runs?head_sha=9d2a9d8"`(단축 SHA)는 **조용히 0건**을 반환하지만
  * 40자 전체 SHA는 정상적으로 매치한다(§1-0 실측). 그래서 `expect`·`api`·`web` 서빙 SHA
  * 3가지가 **전부 40자 hex가 아니면 다른 어떤 규칙보다 먼저 `bad-sha`로 FAIL**한다(§0).
  *
- * ── 판정 규칙 8종 + 6' (+ 규칙 0 bad-sha 사전검증) ────────────────────────────────────
+ * ── 판정 규칙 9종 + 4'·6' (+ 규칙 0 bad-sha 사전검증) ─────────────────────────────────
  *   1  api SHA ≠ expect 이면서 HEAD 나이 ≥ STALE_HOURS         → FAIL api-stale
  *   2  web build-sha 동일 조건                                  → FAIL web-stale
  *   3  judgeResults로 라우트·readiness 실패                     → FAIL route / readiness
@@ -32,8 +34,19 @@
  *      부분 실패(대장 #203 S3 게이트② 반증분 — 조용한 `|| one='[]'` 흡수를 대칭화) → WARN jobs-partial-unreachable
  *   7  GitHub API(runs) 호출 자체가 실패                         → FAIL api-unreachable(조용한 grace 폴백 금지)
  *   8  불일치이나 HEAD 나이 < STALE_HOURS                        → PASS deploying
+ *   9  checkMediaReachability로 공개 미디어 URL 도달 불가(대장 #169) → FAIL media-unreachable
+ *      (판정 자체에 empty-feed 등 WARN이 섞여 있으면 그 WARN만 전체 `warnings`로 승격 — FAIL 아님)
  * ⭐ 규칙 5·6·6'·7이 이 슬라이스의 핵심이다 — 없으면 대장 #165(Deploy Web 도입 이래 성공 0회)·
  * #156·#161(CI 연속 실패 방치) 유형이 어느 분기로도 가지 않는다.
+ *
+ * ── ⭐ 규칙 9(대장 #169) — staleHours 무관 즉시 실패 + 이미 실가동 중인 게이트로 편입됨 ─────
+ * 규칙 3(라우트·readiness)과 같은 이유로 grace를 안 둔다 — 사설 호스트·http 스킴은 "배포 전파
+ * 중이라 잠시 다른 값"이 아니라 **설정값 자체가 틀린 것**이라 시간이 지나도 저절로 고쳐지지 않는다.
+ * `checkMediaReachability`는 이미 필수 인자인 `--api-url`(monitor.yml이 항상 넘기는
+ * `vars.WEB_EXPO_PUBLIC_API_URL`)로 호출하므로, **워크플로 파일을 전혀 고치지 않아도 이 규칙은
+ * 다음 15분(실가동은 더 뜸함) 틱부터 바로 살아난다.** 이 슬라이스 작성 시점(2026-09-12) 기준
+ * `S3_PUBLIC_ENDPOINT`가 사설 IP였다가 작업 도중 공개 도메인으로 정정되는 것을 직접 관측했다 —
+ * 즉 이 규칙은 "새로 만든 이론"이 아니라 실측으로 왕복(FAIL→PASS)까지 확인된 판정이다.
  *
  * ── 규칙 6'의 전량/부분 구분 근거(심각도 판단) ────────────────────────────────────────
  * `fetch-jobs` 스텝이 매치한 배포 런(N개) 중 jobs 조회가 **전부** 실패하면 규칙 6은 그 틱에서
@@ -75,6 +88,7 @@
 import { readFileSync } from 'node:fs';
 import { extractSha } from './verify-deployed-sha.mjs';
 import { judgeResults, probeRoutes, resolveDefaultRoutes, resolveDefaultAbsentPath } from './deploy-smoke.mjs';
+import { checkMediaReachability } from './media-reachability.mjs';
 
 // ── STALE_HOURS=2h 재검토(2026-09-10, monitor.yml 실가동이 15분이 아니라 2~5시간 간격으로
 // 돈다는 게 실측으로 드러난 뒤) — 판단: 그대로 둔다(ⓐ). monitor.yml 헤더의 "실가동 실측" 절
@@ -268,6 +282,7 @@ function normalizeJobEntries(rawJobs) {
  *   apiSha: string|null,
  *   webSha: string|null,
  *   routeVerdict?: {ok:boolean,reason:string,routeFailures?:object[],missingRequiredRoutes?:string[]}|null,
+ *   mediaVerdict?: {ok:boolean,reason:string,warnings?:object[]}|null,
  *   headAgeHours: number,
  *   staleHours: number,
  *   waitingRuns?: {headSha:string,ageHours:number,htmlUrl?:string|null,workflowName?:string|null}[],
@@ -285,6 +300,7 @@ export function judgeFreshness(input) {
     apiSha,
     webSha,
     routeVerdict = null,
+    mediaVerdict = null,
     headAgeHours,
     staleHours,
     waitingRuns = [],
@@ -420,6 +436,23 @@ export function judgeFreshness(input) {
       code: 'api-unreachable',
       message: 'GitHub API(actions/runs) 조회 자체가 실패함 — 대기 런·배포 런 상태를 알 수 없음(조용한 grace 폴백 금지)',
     });
+  }
+
+  // ── 규칙 9 — 공개 미디어 URL 도달성(대장 #169, checkMediaReachability 재사용 — grace 무관 즉시 실패) ──
+  // 규칙 3(라우트)과 동일 사고: 사설 호스트·http 스킴은 "배포 전파 중"이 아니라 설정값 자체가 틀린
+  // 것이라 staleHours를 기다려도 저절로 고쳐지지 않는다. mediaVerdict 내부 warnings(예: 피드 0건)는
+  // ok:true여도 침묵시키지 않고 이 판정의 `warnings`로 그대로 승격한다(규칙 6'과 동일한 "침묵 금지").
+  if (mediaVerdict) {
+    if (mediaVerdict.ok === false) {
+      failures.push({
+        rule: 9,
+        code: 'media-unreachable',
+        message: `공개 미디어 URL 도달성 검사 실패(대장 #169): ${mediaVerdict.reason}`,
+      });
+    }
+    for (const w of mediaVerdict.warnings ?? []) {
+      warnings.push({ rule: 9, code: w.code, message: `[미디어 도달성] ${w.message}` });
+    }
   }
 
   const ok = failures.length === 0;
@@ -646,11 +679,31 @@ async function main() {
   const absentPath = resolveDefaultAbsentPath();
   const { verdict: routeVerdict } = await probeRoutesWithRetry({ baseUrl: opts.apiUrl, routes, absentPath });
 
+  // ⭐ 대장 #169 — 공개 미디어 URL 도달성. `opts.apiUrl`은 이미 필수 인자라 워크플로 무변경으로
+  // 다음 틱부터 실동작한다(파일 헤더 "규칙 9" 절 참조). checkMediaReachability 자체는 내부에서
+  // fetch 실패를 전부 흡수하지만(feedFetchFailed 등으로 정규화), 방어적으로 한 번 더 감싼다 —
+  // 이 스크립트가 15분마다 도는 무인 모니터라 예기치 못한 예외로 죽으면 그 틱 전체가 침묵한다.
+  let mediaVerdict;
+  try {
+    mediaVerdict = await checkMediaReachability({ apiBaseUrl: opts.apiUrl });
+  } catch (err) {
+    mediaVerdict = {
+      ok: false,
+      status: 'FAIL',
+      primaryCode: 'media-check-crashed',
+      reason: `미디어 도달성 검사 실행 자체가 실패: ${err.message}`,
+      failures: [{ code: 'media-check-crashed', message: err.message }],
+      warnings: [],
+      targets: [],
+    };
+  }
+
   const result = judgeFreshness({
     expectSha: opts.expect,
     apiSha,
     webSha,
     routeVerdict,
+    mediaVerdict,
     headAgeHours,
     staleHours,
     waitingRuns,
@@ -672,6 +725,8 @@ async function main() {
     runsUnreachable,
     jobsAttemptedRunIds: jobsInfo.attemptedRunIds,
     jobsUnreachableRunIds: jobsInfo.unreachableRunIds,
+    mediaOk: mediaVerdict.ok,
+    mediaPrimaryCode: mediaVerdict.primaryCode,
   });
 
   process.exitCode = result.ok ? 0 : 1;

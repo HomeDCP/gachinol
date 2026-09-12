@@ -628,6 +628,49 @@ test('judgeFreshness: STALE_HOURS=0이면 어떤 불일치도 즉시 stale로 �
   assert.equal(result.primaryCode, 'api-stale');
 });
 
+// ── ⭐ 규칙 9(대장 #169) — checkMediaReachability 재사용, grace 무관 즉시 실패 ─────────────
+
+test('judgeFreshness: mediaVerdict가 없으면(null, 舊 호출부) 규칙 9는 관여하지 않는다(무회귀)', () => {
+  const result = judgeFreshness(baseInput({ mediaVerdict: null }));
+  assert.equal(result.ok, true);
+  assert.equal(result.primaryCode, 'fresh');
+});
+
+test('⭐ judgeFreshness: mediaVerdict.ok=false면 headAgeHours=0이어도 즉시 FAIL media-unreachable(staleHours 무관 — 규칙 3과 동형)', () => {
+  const mediaVerdict = {
+    ok: false,
+    reason: 'private-host: feed.thumbnailUrl(http://192.168.0.101:9000/x.jpg) 도달 불가 — [private-host, insecure-scheme] ...',
+    warnings: [],
+  };
+  const result = judgeFreshness(baseInput({ headAgeHours: 0, staleHours: 2, mediaVerdict }));
+  assert.equal(result.ok, false);
+  assert.equal(result.primaryCode, 'media-unreachable');
+  assert.match(result.reason, /private-host/);
+});
+
+test('judgeFreshness: mediaVerdict.ok=true인데 warnings가 있으면(예: empty-feed) FAIL은 아니고 전체 warnings로 승격된다(침묵 금지)', () => {
+  const mediaVerdict = {
+    ok: true,
+    reason: 'published 콘텐츠 0건 — 검사할 미디어 URL이 없어 도달성 미검증',
+    warnings: [{ code: 'empty-feed', message: 'published 콘텐츠 0건 — 검사할 미디어 URL이 없어 도달성 미검증' }],
+  };
+  const result = judgeFreshness(baseInput({ mediaVerdict }));
+  assert.equal(result.ok, true);
+  assert.ok(result.warnings.some((w) => w.code === 'empty-feed'));
+  assert.match(result.reason, /empty-feed|검사할 미디어 URL이 없어/);
+});
+
+test('judgeFreshness: 미디어 실패 + 다른 축(api-stale) 실패가 동시에 있으면 failures 양쪽에 다 담긴다', () => {
+  const mediaVerdict = { ok: false, reason: 'forbidden: playback.hlsUrl 도달 불가', warnings: [] };
+  const result = judgeFreshness(
+    baseInput({ apiSha: SHA_B, headAgeHours: 5, staleHours: 2, mediaVerdict }),
+  );
+  assert.equal(result.ok, false);
+  const codes = result.failures.map((f) => f.code);
+  assert.ok(codes.includes('api-stale'));
+  assert.ok(codes.includes('media-unreachable'));
+});
+
 // ── probeRoutesWithRetry — 일시적 블립 내성(30초 후 1회 재프로브) ─────────────────────
 
 function instantSleep() {
@@ -845,6 +888,15 @@ function createApiServer(sha) {
       res.end(JSON.stringify({ status: 'ok' }));
       return;
     }
+    // ⭐ 대장 #169 — checkMediaReachability가 규칙 9로 항상 이 경로를 실제로 친다(`--api-url` 재사용,
+    // 워크플로 무변경으로 실동작하는 것과 동형으로 이 종단 테스트에서도 실제 네트워크 왕복시킨다).
+    // 빈 피드(items:[])로 응답 — emptyFeed는 ok:true(경고만 추가)라 기존 5개 CLI 종단 테스트의
+    // exit code 기대값을 하나도 건드리지 않는다(라우트/SHA/jobs 축과 독립적인 축이라는 설계 증명).
+    if (url === '/v1/feed?limit=1') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ items: [] }));
+      return;
+    }
     if (url === '/v1/feed' || url === '/v1/contents' || url.startsWith('/v1/resident-uploads/')) {
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ message: 'unauthorized' }));
@@ -1002,6 +1054,66 @@ test('⭐ CLI 종단: --jobs-file이 부분 unreachable이면 exit 0(판정: PAS
       assert.equal(code, 0, stdout);
       assert.match(stdout, /"primaryCode": "fresh"/);
       assert.match(stdout, /jobs-partial-unreachable/);
+    });
+  } finally {
+    await closeAsync(apiServer);
+    await closeAsync(webServer);
+  }
+});
+
+test('⭐ CLI 종단(대장 #169): 라우트·SHA·jobs 전부 정상이어도 미디어 URL이 사설 호스트면 exit 1(판정: FAIL media-unreachable)', async () => {
+  // createApiServer를 그대로 쓰지 않는다 — 이 테스트만 /v1/feed?limit=1이 사설 IP를 가리키는
+  // 피드 항목을 내줘야 한다(대장 #169 실물 재현). 나머지 라우트는 정상(createApiServer와 동형).
+  const apiServer = createServer((req, res) => {
+    const url = req.url ?? '';
+    if (url === '/health/version') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ sha: SHA_A }));
+      return;
+    }
+    if (url === '/health/readiness') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+    if (url === '/v1/feed?limit=1') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({ items: [{ contentId: 'c1', thumbnailUrl: 'http://192.168.0.101:9000/x.jpg' }] }),
+      );
+      return;
+    }
+    if (url === '/v1/feed/c1/playback') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ hlsUrl: 'http://192.168.0.101:9000/720p.mp4' }));
+      return;
+    }
+    if (url === '/v1/feed' || url === '/v1/contents' || url.startsWith('/v1/resident-uploads/')) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ message: 'unauthorized' }));
+      return;
+    }
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ message: 'not found' }));
+  });
+  const webServer = createWebServer(SHA_A);
+  const apiPort = await listenAsync(apiServer);
+  const webPort = await listenAsync(webServer);
+  try {
+    await withTempDir(async (dir) => {
+      const runsFile = join(dir, 'runs.json');
+      writeFileSync(runsFile, JSON.stringify({ workflow_runs: [] }), 'utf8');
+      const { code, stdout } = await runCliAsync([
+        '--expect', SHA_A,
+        '--api-url', `http://127.0.0.1:${apiPort}`,
+        '--web-url', `http://127.0.0.1:${webPort}/`,
+        '--head-age-hours', '0',
+        '--runs-file', runsFile,
+      ]);
+      assert.equal(code, 1, stdout);
+      assert.match(stdout, /"primaryCode": "media-unreachable"/);
+      assert.match(stdout, /private-host/);
+      assert.match(stdout, /insecure-scheme/);
     });
   } finally {
     await closeAsync(apiServer);
