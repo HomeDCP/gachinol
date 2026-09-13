@@ -317,14 +317,32 @@ jobs:
       # 돌면 앱이 아직 DB 커넥션 풀을 못 열어 readiness가 일시적으로 503일 수 있다 — 그래서 readiness만
       # **최대 3회, 10초 간격으로 재시도**한다(200이면 즉시 중단, 나머지 라우트는 기존과 동일하게
       # 1회만 본다 — 5xx가 지속되면 그건 재시도로 덮을 문제가 아니라 실제 장애다).
-      - name: 배포 후 라우트 스모크 — api (대장 #180 잔여 ① · 대장 #204 — 5xx·readiness 편입)
+      - name: 배포 후 라우트 스모크 — api (대장 #180 잔여 ① · 대장 #204 — 5xx·readiness 편입 · 대장 #169 — 미디어 도달성)
         env:
           SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
           SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
           SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
           COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          # ⭐ 대장 #169 — infra/scripts/media-reachability.mjs(monitor-freshness.mjs와 동일 판정
+          # 함수 재사용, 사본 없음)가 이 값으로 GET /v1/feed·GET /v1/feed/:id/playback을 **러너에서
+          # 직접**(SSH/docker exec 경유 아님 — 아래 마지막 줄의 deploy-smoke.mjs 호출은 이 잡의
+          # 러너에서 그대로 실행된다) 호출해, 그 응답에 실린 미디어 URL(thumbnailUrl·hlsUrl·
+          # posterUrl)이 인터넷에서 실제로 도달 가능한지 검사한다. 컨테이너 내부(docker exec)에서
+          # 돌리면 안 된다 — 제온과 같은 LAN이라 사설 IP도 멀쩡히 열려 원 결함(#169)이 다시 숨는다
+          # (LAN 내부에서는 통과하고 인터넷에서는 막히는 것이 애초의 사고였다). WEB_EXPO_PUBLIC_API_URL은
+          # monitor.yml의 --api-url과 동일 변수(시크릿 아님 — variable. 값은 바로 아래 echo로 로그에
+          # 남긴다, 대장 #180 preflight의 "시크릿 값은 출력하지 않는다"와 대칭되는 이유: 이건 애초에
+          # 시크릿이 아니다).
+          MEDIA_BASE_URL: ${{ vars.WEB_EXPO_PUBLIC_API_URL }}
         run: |
           set -euo pipefail
+          # 틀린(빈) 변수를 넘기면 deploy-smoke.mjs가 "--media-base-url 미지정"과 구분 못 하고
+          # 조용히 건너뛴다(규율 21 "있는 척") — 그래서 여기서 먼저 fail-closed로 막는다.
+          echo "미디어 도달성 검사 대상(--media-base-url): ${MEDIA_BASE_URL:-<비어있음>}"
+          if [ -z "$MEDIA_BASE_URL" ]; then
+            echo "vars.WEB_EXPO_PUBLIC_API_URL이 비어 있음 — 미디어 도달성 검사를 조용히 건너뛸 수 없음(fail-closed, 대장 #169)" >&2
+            exit 1
+          fi
           cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
             "set -euo pipefail; cd '$COMPOSE_DIR'; \
              docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q api")"
@@ -335,7 +353,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
             "docker exec '$cid' node -e \"(async()=>{const c=require('crypto');const paths=['/health/version','/health/readiness','/v1/feed','/v1/contents','/v1/resident-uploads/'+c.randomUUID()];const absent='/v1/__smoke_absent__'+c.randomUUID();async function probe(p){try{const r=await fetch('http://127.0.0.1:4000'+p);return{path:p,status:r.status,error:null,contentType:r.headers.get('content-type')};}catch(e){return{path:p,status:null,error:String(e&&e.message?e.message:e)};}}function sleep(ms){return new Promise(res=>setTimeout(res,ms));}async function probeReadiness(p){let last;for(let i=0;i<3;i++){last=await probe(p);if(last.status===200)return last;if(i<2)await sleep(10000);}return last;}const routes=[];for(const p of paths){routes.push(p==='/health/readiness'?await probeReadiness(p):await probe(p));}const a=await probe(absent);process.stdout.write(JSON.stringify({routes:routes,absent:a}));})();\"" \
             > smoke-status.json
-          node infra/scripts/deploy-smoke.mjs --status-file smoke-status.json
+          node infra/scripts/deploy-smoke.mjs --status-file smoke-status.json --media-base-url "$MEDIA_BASE_URL"
 
       # 배포 후 SHA 대조 — media-worker·ai-worker. 둘 다 HTTP를 노출하지 않는 순수 워커라
       # `verify-deployed-sha.mjs`는 이 케이스를 지원하지 않는다(`--kind`는 web|api만 — 스크립트는

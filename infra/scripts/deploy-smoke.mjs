@@ -62,7 +62,8 @@
  * 아니면(401·404·5xx 포함) → exit 1, 200이어도 `contentType`이 있고 JSON이 아니면 → exit 1.
  * 필수 라우트(위 5종) 중 목록에서 빠진 것이 있음 → exit 1. 음성 대조가 404가 아니거나 요청 실패
  * → exit 1(판정 불능도 통과 아님). 대상 라우트 목록이 비어 있음 → exit 1. `--status-file` 파싱
- * 실패 → exit 1.
+ * 실패 → exit 1. `--media-base-url`을 줬는데 미디어 도달성이 FAIL(사설 호스트·http 스킴·403/404/
+ * 5xx/타임아웃/content-type 불일치) → exit 1(라우트가 전부 통과해도 마찬가지 — 규율 23, 아래 절 참조).
  *
  * ── 규율 24 예외 사유(신규 게이트 2주 report-only 미적용) ───────────────────────────
  * `DISCIPLINES.md` 규율 24는 새 게이트에 2주 report-only를 요구하지만, 이 변경은 **새 게이트가
@@ -75,9 +76,27 @@
  * ── 사용법 ────────────────────────────────────────────────────────────────────────
  *   node deploy-smoke.mjs --base-url https://example.com
  *   node deploy-smoke.mjs --status-file ./smoke-status.json
+ *
+ * ── ⭐ 미디어 도달성 축 (대장 #169, `media-reachability.mjs`) — 선택 플래그 `--media-base-url` ──
+ * "라우트가 실재하는가"와 "그 라우트 응답에 실린 미디어 URL이 인터넷에서 실제로 열리는가"는
+ * 원리적으로 다른 질문이다(2026-09-12 실기 검증 — 구독자 웹 영상·썸네일이 전부 사설 IP를 가리켜
+ * 인터넷에서 열리지 않았는데, 위의 라우트 4종·SHA 대조·`watch.bapfull.com/` 200 중 무엇도 이걸
+ * 잡지 못했다). `--status-file`(오늘의 실제 `build-images.yml` 경로)은 SSH+docker exec로 **컨테이너
+ * 내부**에서 수집한 값이라 이 축과 의미상 안 맞는다(내부망에서는 사설 IP도 멀쩡히 열린다 — 그게
+ * 원 결함이 숨었던 이유다). 그래서 이 축은 `--base-url`/`--status-file`과 **독립된 새 플래그**로
+ * 뺐다: 값을 주면(예: `--media-base-url https://api.bapfull.com`) `media-reachability.mjs`의
+ * `checkMediaReachability`(공용 판정 함수 — `monitor-freshness.mjs`와 동일 함수, 사본 아님)를
+ * 실제 인터넷 경로로 호출해 기존 라우트 판정과 함께 fail-closed로 묶는다. **값을 안 주면 기존
+ * 동작과 100% 동일**(건너뛰었다는 로그만 남긴다) — 오늘의 `build-images.yml` 호출부
+ * (`--status-file`만 사용)는 이 슬라이스로 전혀 달라지지 않는다.
+ * ⚠️ **워크플로에 `--media-base-url`을 실제로 넘기는 배선은 이 슬라이스 범위 밖이다**
+ * (`.github/workflows/**`는 소유 파일 밖) — 되면 `build-images.yml`의 SHA 대조 스텝이 이미 아는
+ * 공개 API URL(예: `vars.WEB_EXPO_PUBLIC_API_URL`, `monitor.yml`이 쓰는 것과 동일 변수)을 그대로
+ * 이 플래그에 얹으면 된다.
  */
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { checkMediaReachability, formatMediaVerdictLines } from './media-reachability.mjs';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -314,6 +333,9 @@ function parseArgs(argv) {
       case '--timeout-ms':
         opts.timeoutMs = argv[++i];
         break;
+      case '--media-base-url':
+        opts.mediaBaseUrl = argv[++i];
+        break;
       default:
         throw new Error(`알 수 없는 인자: ${arg}`);
     }
@@ -422,13 +444,43 @@ async function main() {
   const verdict = judgeResults({ routeResults, absentResult });
   printResults({ routeResults, absentResult, verdict });
 
-  if (!verdict.ok) {
-    console.error(`\n판정: FAIL — ${verdict.reason}`);
+  // ⭐ 미디어 도달성(대장 #169) — 선택 축. `--media-base-url`이 없으면 기존 동작과 100% 동일하게
+  // 라우트 판정만으로 exit code가 정해진다(오늘의 build-images.yml 호출부는 이 플래그를 안 준다).
+  let mediaVerdict = null;
+  if (opts.mediaBaseUrl) {
+    console.log(`\n── 미디어 도달성 검사(대장 #169, --media-base-url ${opts.mediaBaseUrl}) ──`);
+    try {
+      mediaVerdict = await checkMediaReachability({ apiBaseUrl: opts.mediaBaseUrl });
+    } catch (err) {
+      mediaVerdict = {
+        ok: false,
+        status: 'FAIL',
+        reason: `검사 실행 실패: ${err.message}`,
+        failures: [{ code: 'execution-failed', message: err.message }],
+        warnings: [],
+        targets: [],
+      };
+    }
+    for (const line of formatMediaVerdictLines(mediaVerdict)) {
+      if (line.includes('✘') || line.startsWith('  판정: FAIL')) console.error(line);
+      else console.log(line);
+    }
+  } else {
+    console.log('\n미디어 도달성 검사: 건너뜀(--media-base-url 미지정)');
+  }
+
+  const overallOk = verdict.ok && (mediaVerdict ? mediaVerdict.ok : true);
+  if (!overallOk) {
+    const reasons = [
+      !verdict.ok ? `라우트: ${verdict.reason}` : null,
+      mediaVerdict && !mediaVerdict.ok ? `미디어: ${mediaVerdict.reason}` : null,
+    ].filter(Boolean);
+    console.error(`\n판정: FAIL — ${reasons.join(' | ')}`);
     process.exitCode = 1;
     return;
   }
 
-  console.log(`\n판정: PASS — ${verdict.reason}`);
+  console.log(`\n판정: PASS — ${verdict.reason}${mediaVerdict ? ` | 미디어: ${mediaVerdict.reason}` : ''}`);
 }
 
 const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;

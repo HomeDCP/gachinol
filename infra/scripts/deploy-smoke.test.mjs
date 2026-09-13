@@ -503,3 +503,47 @@ test('CLI 뮤테이션 ③: 접속 자체가 실패(요청 실패)하면 exit 1'
   assert.equal(code, 1);
   assert.match(stderr, /요청 실패/);
 });
+
+// ── ⭐ 대장 #169 — 미디어 도달성 축(`--media-base-url`) 배선 ────────────────────────
+
+test('⭐ CLI: --media-base-url 미지정이면 미디어 검사 없이 건너뛴다(오늘의 build-images.yml 호출부와 무회귀)', () => {
+  withTempFile(validStatusFileContent(), (file) => {
+    const { code, stdout } = runCli(['--status-file', file]);
+    assert.equal(code, 0, stdout);
+    assert.match(stdout, /미디어 도달성 검사: 건너뜀/);
+  });
+});
+
+test('⭐ CLI 뮤테이션 ④(대장 #169): 라우트가 전부 통과해도 미디어 URL이 사설/루프백 호스트면 exit 1', async () => {
+  // 라우트 축(--base-url)과 미디어 축(--media-base-url)을 같은 로컬 서버로 함께 재현한다 —
+  // 두 플래그가 독립적으로 동작함을 증명(값이 같아도, 달라도 무방하다는 설계 그대로).
+  const server = createServer((req, res) => {
+    if (req.url === '/health/version') return res.writeHead(200).end();
+    if (req.url === '/health/readiness') {
+      return res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' }).end('{"status":"ok"}');
+    }
+    if (req.url === '/v1/contents') return res.writeHead(401).end();
+    if (req.url.startsWith('/v1/resident-uploads/')) return res.writeHead(401).end();
+    if (req.url === '/v1/feed?limit=1') {
+      return res
+        .writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ items: [{ contentId: 'c1', thumbnailUrl: 'http://127.0.0.1:9/x.jpg' }] }));
+    }
+    if (req.url === '/v1/feed/c1/playback') {
+      return res
+        .writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ hlsUrl: 'http://127.0.0.1:9/x.mp4' }));
+    }
+    if (req.url === '/v1/feed') return res.writeHead(200).end(); // 라우트 스모크용(존재만 확인)
+    return res.writeHead(404).end(); // 음성 대조 포함
+  });
+  const port = await listenAsync(server);
+  try {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const { code, stdout, stderr } = await runCliAsync(['--base-url', baseUrl, '--media-base-url', baseUrl]);
+    assert.equal(code, 1, '라우트는 전부 실재인데 미디어가 루프백 호스트면 exit 0이면 안 된다');
+    assert.match(stdout + stderr, /loopback-host/);
+  } finally {
+    await closeAsync(server);
+  }
+});
