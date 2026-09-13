@@ -99,6 +99,58 @@ export interface CompleteUploadRequest {
   storageKey: string;
 }
 
+/**
+ * 멀티파트 업로드 시작 — 대장 #211. Cloudflare 터널 경로가 요청 바디를 **정확히 100MiB(포함)**
+ * 까지만 통과시켜(실측, 초과 시 413 — 전체 수신 전 `Content-Length`만 보고 즉시 거부) 단일
+ * `IssueUploadUrlRequest`/presigned PUT 하나로는 큰 원본(실촬영 분포 60%가 100MB 초과, 최대 173MB)이
+ * 올라가지 않는다. 파트 크기·수는 서버가 결정한다(클라가 100MiB 이상 파트를 요청해 이 문제를
+ * 재현하는 것을 원천 차단 — `MULTIPART_PART_SIZE_BYTES`가 단일 원천, services/api s3.service.ts).
+ * `IssueUploadUrlRequest`와 필드가 같지만 응답 형태가 달라 별도 계약으로 둔다(기존 계약 무변경 원칙).
+ */
+export interface CreateMultipartUploadRequest {
+  contentId: ContentId;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+/** 파트 1개분 업로드 지시 — 클라는 정확히 `sizeBytes`만큼을 이 presigned PUT에 실어야 한다 */
+export interface MultipartUploadPart {
+  /** S3 규약 — 1부터 시작하는 연속 정수 */
+  partNumber: number;
+  uploadUrl: string;
+  sizeBytes: number;
+}
+
+export interface CreateMultipartUploadResponse {
+  storageKey: string;
+  /** S3 발급 — 파트 업로드·완료·중단 호출에 그대로 되돌려줘야 함(서버는 DB에 저장하지 않음) */
+  uploadId: string;
+  /** 마지막 파트를 제외한 파트 크기(참고용 — 실제 절단은 parts[].sizeBytes를 따른다) */
+  partSizeBytes: number;
+  parts: readonly MultipartUploadPart[];
+  expiresAt: ISODateString;
+}
+
+/** 파트 업로드 후 브라우저가 응답 헤더에서 읽은 ETag — 완료 호출에 그대로 전달 */
+export interface CompletedUploadPart {
+  partNumber: number;
+  eTag: string;
+}
+
+export interface CompleteMultipartUploadRequest {
+  contentId: ContentId;
+  storageKey: string;
+  uploadId: string;
+  parts: readonly CompletedUploadPart[];
+}
+
+export interface AbortMultipartUploadRequest {
+  contentId: ContentId;
+  storageKey: string;
+  uploadId: string;
+}
+
 /** 수정 요청 바디 — requesterRole은 서버가 인증 role로 판정 */
 export interface CreateRevisionRequestBody {
   note: string;

@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { DomainException } from '../common/errors/domain.exception';
@@ -21,6 +25,72 @@ export interface PresignResult {
 export interface HeadResult {
   sizeBytes: number;
   contentType?: string;
+}
+
+/**
+ * 멀티파트 파트 크기 — 대장 #211. Cloudflare 터널 경로 실측(2026-09-12, 서명 없는 PUT 이분 탐색):
+ * **정확히 100MiB(104,857,600B)까지 통과, 101MB부터 413**(전체 수신 전 `Content-Length`만 보고
+ * 즉시 거부 — 150MB PUT이 2.4MB 수신 시점 1.4초 만에 끊김). 그 상한 아래에서 안전 여유를 두고
+ * 64MiB(67,108,864B)로 고정한다 — 100MiB 대비 **36MiB(약 34%) 여유**라 프록시가 파트 PUT에
+ * 헤더를 덧붙이거나 청크 인코딩 오버헤드가 붙어도 경계에 닿지 않는다. 클라가 파트 크기를 정하게
+ * 두면 100MiB 이상을 요청해 이 결함을 그대로 재현할 수 있으므로 **서버가 고정값으로 강제**한다
+ * (`CreateMultipartUploadRequest`에 파트 크기 필드가 없는 이유).
+ */
+export const MULTIPART_PART_SIZE_BYTES = 64 * 1024 * 1024;
+
+/** S3 규약 — 마지막 파트를 제외한 모든 파트는 최소 5MiB */
+export const MULTIPART_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024;
+
+/** S3 규약 — 업로드 하나당 파트 수 상한 */
+export const MULTIPART_MAX_PART_COUNT = 10_000;
+
+export interface MultipartPlanPart {
+  /** 1부터 시작하는 연속 정수(S3 규약) */
+  partNumber: number;
+  /** 이 파트가 담아야 할 바이트 수(마지막 파트는 나머지) */
+  sizeBytes: number;
+}
+
+export interface MultipartPlan {
+  /** 마지막 파트를 제외한 파트 크기 */
+  partSizeBytes: number;
+  parts: readonly MultipartPlanPart[];
+}
+
+/**
+ * 총 바이트 수를 파트로 분할한다 — 순수 함수(네트워크·S3 호출 없음, D1 단위 테스트 대상).
+ * `partSizeBytes`는 항상 `MULTIPART_MIN_PART_SIZE_BYTES` 이상이어야 하며(S3 규약),
+ * 결과 파트 수가 `MULTIPART_MAX_PART_COUNT`를 넘으면 거부한다(5GB 상한 ÷ 64MiB ≈ 80파트로
+ * 실사용 범위에서는 절대 닿지 않지만, 방어적으로 유지한다).
+ */
+export function planMultipartUpload(
+  totalSizeBytes: number,
+  partSizeBytes: number = MULTIPART_PART_SIZE_BYTES,
+): MultipartPlan {
+  if (!Number.isFinite(totalSizeBytes) || totalSizeBytes <= 0) {
+    throw new DomainException('validation_failed', 'sizeBytes는 0보다 커야 합니다');
+  }
+  if (partSizeBytes < MULTIPART_MIN_PART_SIZE_BYTES) {
+    throw new DomainException(
+      'internal',
+      `멀티파트 파트 크기는 최소 ${MULTIPART_MIN_PART_SIZE_BYTES}바이트여야 합니다`,
+    );
+  }
+  const partCount = Math.max(1, Math.ceil(totalSizeBytes / partSizeBytes));
+  if (partCount > MULTIPART_MAX_PART_COUNT) {
+    throw new DomainException(
+      'validation_failed',
+      `파일이 너무 커 파트 수(${partCount})가 상한(${MULTIPART_MAX_PART_COUNT})을 초과합니다`,
+    );
+  }
+  const parts: MultipartPlanPart[] = [];
+  let remaining = totalSizeBytes;
+  for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
+    const sizeBytes = partNumber === partCount ? remaining : partSizeBytes;
+    parts.push({ partNumber, sizeBytes });
+    remaining -= sizeBytes;
+  }
+  return { partSizeBytes, parts };
 }
 
 /**
@@ -95,6 +165,88 @@ export class S3Service {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     const url = await getSignedUrl(this.presignClient(), command, { expiresIn });
     return { url, expiresAt: this.expiresAt(expiresIn) };
+  }
+
+  /**
+   * 멀티파트 업로드 시작 — S3에 uploadId를 발급받는다(실제 오브젝트는 아직 없음).
+   * ⚠️ 이 호출은 presign과 달리 **실제로 S3에 네트워크 요청**을 보낸다(presignPut/presignGet은
+   * 로컬 서명 계산만) — 일반 클라이언트(비-공개 엔드포인트)로 보낸다. 공개 엔드포인트는 presign
+   * 서명 대상에만 쓰인다(대장 #211 위임 지시 — presignClient는 파트 URL 발급에만 적용).
+   */
+  async createMultipartUpload(
+    key: string,
+    opts: { contentType?: string } = {},
+  ): Promise<{ uploadId: string }> {
+    const out = await this.getClient().send(
+      new CreateMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ...(opts.contentType ? { ContentType: opts.contentType } : {}),
+      }),
+    );
+    if (!out.UploadId) {
+      throw new DomainException('internal', '멀티파트 업로드 시작에 실패했습니다(UploadId 없음)');
+    }
+    return { uploadId: out.UploadId };
+  }
+
+  /**
+   * 파트 1개 presigned PUT 발급 — **공개 엔드포인트(presignClient)로 서명**한다(§ presignPut과 동일
+   * 규칙). 브라우저가 이 URL로 직접 파트 바이트를 PUT하므로 내부 전용 엔드포인트로 서명하면 실기기에서
+   * 도달 불가(대장 #211 위임 지시가 명시적으로 경고한 함정).
+   */
+  async presignUploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    opts: { expiresIn?: number } = {},
+  ): Promise<PresignResult> {
+    const expiresIn =
+      opts.expiresIn ?? this.config.get('S3_PRESIGN_EXPIRES_SEC', { infer: true }) ?? 900;
+    const command = new UploadPartCommand({
+      Bucket: this.bucket,
+      Key: key,
+      UploadId: uploadId,
+      PartNumber: partNumber,
+    });
+    const url = await getSignedUrl(this.presignClient(), command, { expiresIn });
+    return { url, expiresAt: this.expiresAt(expiresIn) };
+  }
+
+  /**
+   * 멀티파트 완료 — 파트를 partNumber 오름차순으로 정렬해 CompleteMultipartUploadCommand에 싣는다
+   * (클라가 보낸 순서를 신뢰하지 않음). S3가 파트 누락·ETag 불일치를 감지하면 여기서 throw —
+   * 호출자(UploadService)가 이를 업로드 실패로 취급해 콘텐츠를 롤백한다(I-2).
+   */
+  async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: readonly { partNumber: number; eTag: string }[],
+  ): Promise<void> {
+    await this.getClient().send(
+      new CompleteMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: key,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: [...parts]
+            .sort((a, b) => a.partNumber - b.partNumber)
+            .map((p) => ({ PartNumber: p.partNumber, ETag: p.eTag })),
+        },
+      }),
+    );
+  }
+
+  /**
+   * 멀티파트 중단 — 진행 중인 업로드가 남긴 파트 바이트를 S3에서 정리한다.
+   * S3 의미상 이미 완료·중단된 uploadId를 다시 중단해도 통상 무해(idempotent에 가깝다) —
+   * 다만 호출자가 실패를 무시하고 콘텐츠 롤백을 강행할지는 UploadService가 결정한다
+   * (사용자의 취소 의도는 S3 쪽 정리 성패와 무관하게 이행돼야 하므로 — 대장 #211 I-2).
+   */
+  async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    await this.getClient().send(
+      new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+    );
   }
 
   /**
