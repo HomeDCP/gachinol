@@ -14,13 +14,17 @@
 // 실제로 생성자 호출되고 PUT을 열었는가"는 네이티브 경로에서는 **원리적으로 발생할 수 없는**
 // 신호다 — 두 구현이 우연히 같은 결과를 내서 오검출될 여지가 없다.
 import { toId } from '@gachinol/shared';
-import type { ContentId } from '@gachinol/shared';
+import type { ContentId, CreateMultipartUploadResponse } from '@gachinol/shared';
 import type { ApiClient } from '../../api/client';
 // ⚠️ 접미사 없음 — 네이티브 jest.config.js에서는 http-upload-service.ts로, 이 웹 jest.web.config.js
 // 에서는 http-upload-service.web.ts로 해석돼야 한다(haste.platforms=['web'] + moduleFileExtensions
 // 가 web.ts를 최우선으로 둔다).
 import { createHttpUploadService } from '../http-upload-service';
 import type { UploadInput } from '../upload-service';
+// 접미사 없는 파일(플랫폼 중립) — 양쪽 jest 축에서 동일 파일로 해석된다. 대장 #211 보완 2 —
+// 임계값을 여기서도 가져와 "정확히 이 값을 넘는" 입력으로 웹 해석 경로에서 멀티파트 분기가
+// 실제로 도는지 실행 증거를 남긴다(그동안 이 축은 999바이트 소형 파일만 다뤄 단일 PUT만 탔다).
+import { MULTIPART_THRESHOLD_BYTES } from '../xhr-upload-service';
 
 /** beforeEach마다 비우고, FakeXhr 생성자가 자신을 push한다(construct 시점의 마지막 인스턴스 추적용) */
 const createdXhrs: FakeXhr[] = [];
@@ -37,6 +41,8 @@ class FakeXhr {
   onabort: (() => void) | null = null;
   openCalls: { method: string; url: string }[] = [];
   sentBodies: unknown[] = [];
+  /** 멀티파트 파트 PUT이 읽는다 — 이 목은 모든 인스턴스에 고정 ETag를 응답한다(한 바퀴 완주가 목적) */
+  private readonly responseHeaders: Record<string, string> = { ETag: '"webtag"' };
 
   constructor() {
     createdXhrs.push(this);
@@ -51,6 +57,23 @@ class FakeXhr {
     this.onload?.();
   }
   abort(): void {}
+  getResponseHeader(name: string): string | null {
+    return this.responseHeaders[name] ?? null;
+  }
+}
+
+/**
+ * 실 바이트를 담지 않는 최소 Blob 스텁 — `size`와 `slice(start,end)`만 있으면 된다
+ * (xhr-upload-service.ts의 `BlobLike` 구조적 최소). 실제 64MiB 버퍼를 할당하지 않아 메모리를
+ * 낭비하지 않는다(대장 #211 보완 2 요구사항).
+ */
+function bigBlobStub(size: number): { size: number; slice(start: number, end: number): unknown } {
+  return {
+    size,
+    slice(start: number, end: number) {
+      return bigBlobStub(Math.max(0, Math.min(end, size) - Math.max(0, start)));
+    },
+  };
 }
 
 const input: UploadInput = {
@@ -131,6 +154,66 @@ test('[해소 판정 A] "../http-upload-service"(접미사 없음)는 웹 축에
   });
   expect(request).toHaveBeenNthCalledWith(2, 'POST', '/contents/c1/upload-complete', {
     body: { contentId: 'c1', storageKey: 'contents/c1/g1/original.mp4' },
+  });
+});
+
+test('[대장 #211 보완 2] 임계 초과 입력 — 웹 해석 경로(.web.ts)에서 멀티파트 분기가 실제로 완주한다', async () => {
+  // 임계값을 정확히 넘는 크기 — 실제 64MiB 버퍼는 만들지 않고 size만 큰 스텁을 쓴다(메모리 무낭비).
+  const bigInput: UploadInput = { ...input, contentId: toId<ContentId>('c2'), sizeBytes: 0 };
+  const totalSize = MULTIPART_THRESHOLD_BYTES + 100;
+  const parts: CreateMultipartUploadResponse['parts'] = [
+    { partNumber: 1, uploadUrl: 'https://s3.example/part1?sig=P1', sizeBytes: MULTIPART_THRESHOLD_BYTES },
+    { partNumber: 2, uploadUrl: 'https://s3.example/part2?sig=P2', sizeBytes: 100 },
+  ];
+  const startedResponse: CreateMultipartUploadResponse = {
+    storageKey: 'contents/c2/g1/original.mp4',
+    uploadId: 'upload-web-1',
+    partSizeBytes: MULTIPART_THRESHOLD_BYTES,
+    parts,
+    expiresAt: '2026-09-13T00:15:00.000Z',
+  };
+
+  // 이 테스트 전용 fetch(⓪ 본문 확보) — 전역 beforeEach의 999바이트 대신 임계 초과 스텁을 돌려준다.
+  (globalThis as Record<string, unknown>).fetch = jest.fn(async () => ({
+    ok: true,
+    blob: async () => bigBlobStub(totalSize),
+  }));
+
+  const request = jest.fn(async (_method: string, path: string) => {
+    if (path.endsWith('/multipart-upload')) return startedResponse;
+    if (path.endsWith('/multipart-upload-complete')) return { id: 'c2', status: 'uploaded' };
+    throw new Error(`예상 밖 라우트 호출: ${path}`);
+  });
+  const client = { request, ensureFreshTokens: jest.fn() } as unknown as ApiClient;
+
+  const svc = createHttpUploadService(client);
+  const result = await svc.upload(bigInput, () => {});
+
+  expect(result).toEqual({ storageKey: 'contents/c2/g1/original.mp4' });
+
+  // 파트 절단 — 웹 해석 경로에서도 parts[].sizeBytes 경계와 정확히 일치한다
+  const partXhrs = createdXhrs.filter((x) => x.openCalls[0]?.url.includes('/part'));
+  expect(partXhrs).toHaveLength(2);
+  expect(partXhrs[0]?.sentBodies[0]).toEqual(expect.objectContaining({ size: MULTIPART_THRESHOLD_BYTES }));
+  expect(partXhrs[1]?.sentBodies[0]).toEqual(expect.objectContaining({ size: 100 }));
+
+  // ETag 수집 + 완료 호출 — 단일 PUT과 다른 라우트(멱등: upload-url이 아니라 multipart-upload)
+  expect(request).toHaveBeenNthCalledWith(
+    1,
+    'POST',
+    '/contents/c2/multipart-upload',
+    expect.objectContaining({ body: expect.objectContaining({ contentId: 'c2', sizeBytes: totalSize }) }),
+  );
+  expect(request).toHaveBeenNthCalledWith(2, 'POST', '/contents/c2/multipart-upload-complete', {
+    body: {
+      contentId: 'c2',
+      storageKey: 'contents/c2/g1/original.mp4',
+      uploadId: 'upload-web-1',
+      parts: [
+        { partNumber: 1, eTag: '"webtag"' },
+        { partNumber: 2, eTag: '"webtag"' },
+      ],
+    },
   });
 });
 

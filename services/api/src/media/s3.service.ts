@@ -13,6 +13,7 @@ import {
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { MULTIPART_PART_SIZE_BYTES } from '@gachinol/shared';
 import { DomainException } from '../common/errors/domain.exception';
 import type { Env } from '../config/env.schema';
 
@@ -28,15 +29,14 @@ export interface HeadResult {
 }
 
 /**
- * 멀티파트 파트 크기 — 대장 #211. Cloudflare 터널 경로 실측(2026-09-12, 서명 없는 PUT 이분 탐색):
- * **정확히 100MiB(104,857,600B)까지 통과, 101MB부터 413**(전체 수신 전 `Content-Length`만 보고
- * 즉시 거부 — 150MB PUT이 2.4MB 수신 시점 1.4초 만에 끊김). 그 상한 아래에서 안전 여유를 두고
- * 64MiB(67,108,864B)로 고정한다 — 100MiB 대비 **36MiB(약 34%) 여유**라 프록시가 파트 PUT에
- * 헤더를 덧붙이거나 청크 인코딩 오버헤드가 붙어도 경계에 닿지 않는다. 클라가 파트 크기를 정하게
- * 두면 100MiB 이상을 요청해 이 결함을 그대로 재현할 수 있으므로 **서버가 고정값으로 강제**한다
- * (`CreateMultipartUploadRequest`에 파트 크기 필드가 없는 이유).
+ * 멀티파트 파트 크기 — **단일 원천은 `@gachinol/shared`**(대장 #211 보완, 2026-09-13).
+ * 값·근거(Cloudflare 100MiB 실측 대비 34% 여유)는 shared `content/dto.ts`의 주석을 참조 —
+ * 여기서는 재정의하지 않고 재수출만 한다(기존 `import { MULTIPART_PART_SIZE_BYTES } from
+ * './s3.service'` 소비처(`s3.service.spec.ts` 등)가 무변경으로 계속 동작하도록).
+ * `CreateMultipartUploadRequest`에 파트 크기 필드가 없는 이유는 여전히 유효하다 — 클라가 파트
+ * 크기를 정하게 두면 100MiB 이상을 요청해 #211 결함을 재현할 수 있으므로 서버가 강제한다.
  */
-export const MULTIPART_PART_SIZE_BYTES = 64 * 1024 * 1024;
+export { MULTIPART_PART_SIZE_BYTES };
 
 /** S3 규약 — 마지막 파트를 제외한 모든 파트는 최소 5MiB */
 export const MULTIPART_MIN_PART_SIZE_BYTES = 5 * 1024 * 1024;
