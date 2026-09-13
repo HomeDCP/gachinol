@@ -34,6 +34,12 @@ export class MediaAssetsService {
    * 그러면 findOriginal이 비결정적으로 엉뚱한 원본을 골라 완료 검증이 잠기거나
    * 트랜스코딩이 죽은 원본을 가리킨다 → 현재 키의 original만 남기고 이전 세대1 original 행을 정리해
    * '(content, generation=1)당 original 1행' 불변식을 유지한다.
+   *
+   * ★ 대장 #212 (I-1) — **같은 확장자로 재발급**하면 storageKey가 그대로라 upsert가 새 행이 아니라
+   * 기존 행을 맞힌다. 이전 시도가 실패해 그 행이 `status='failed'`로 남아 있으면(예: 1차 HEAD 부재
+   * 실패), `update: {}`(no-op)로는 그 실패 이력이 그대로 남아 findOriginal(failed 배제)이 영구히
+   * 못 찾는다 — 재-issue는 새로운 시도이므로 이전 실패 이력을 지워야 한다. `status`뿐 아니라
+   * `mimeType`·`sizeBytes`도 최신 발급값으로 갱신한다(재시도 시 파일이 바뀌었을 수 있다).
    */
   async createOriginalPending(
     contentId: string,
@@ -56,7 +62,11 @@ export class MediaAssetsService {
         mimeType,
         sizeBytes: BigInt(sizeBytes),
       },
-      update: {},
+      update: {
+        status: 'pending',
+        mimeType,
+        sizeBytes: BigInt(sizeBytes),
+      },
     });
     // 이전 확장자로 발급된 잔존 original 행 제거(현재 키만 유지) — 단일 원본 불변식
     await this.prisma.mediaAsset.deleteMany({

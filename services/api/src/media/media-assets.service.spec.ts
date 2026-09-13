@@ -32,7 +32,11 @@ describe('MediaAssetsService — 멱등 생성·키 규약', () => {
       mimeType: 'video/mp4',
     });
     expect(call.create.sizeBytes).toBe(BigInt(12345));
-    expect(call.update).toEqual({}); // 재-issue 멱등
+    // 대장 #212(I-1) — 재-issue는 새로운 시도이므로 `update: {}`(no-op)가 아니라 status를 pending으로
+    // 리셋한다. 舊 단언 `toEqual({})`은 "같은 확장자로 재발급하면 이전 실패(status='failed') 이력이
+    // upsert의 update:{}에 가려 그대로 남는다"는, 정확히 이 결함의 원인을 "재-issue 멱등"이라는
+    // 이름으로 정당화하고 있었다 — 멱등은 "매번 같은 결과(pending)"를 뜻해야지 "기존 행 방치"가 아니다.
+    expect(call.update).toEqual({ status: 'pending', mimeType: 'video/mp4', sizeBytes: BigInt(12345) });
   });
 
   it('upsertOutput: (bucket,storageKey)로 upsert, status=ready·checksum·createdByJobId 기록', async () => {
