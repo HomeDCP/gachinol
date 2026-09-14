@@ -1,6 +1,13 @@
 import { DomainException } from '../common/errors/domain.exception';
+import { ContentWorkflowService } from '../contents/content-workflow.service';
 import { MediaAssetsService } from '../media/media-assets.service';
-import { contentRow, reporterUser } from '../test-support/fixtures';
+import {
+  adminUser,
+  centerOperatorUser,
+  contentRow,
+  makePrismaMock,
+  reporterUser,
+} from '../test-support/fixtures';
 import { UploadService } from './upload.service';
 
 const dtoIssue = (over: Record<string, unknown> = {}) => ({
@@ -916,6 +923,148 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
       );
       expect(workflow.failUploadTx).toHaveBeenCalled();
       expect(res.status).toBe('upload_failed');
+    });
+  });
+
+  /* ─────────── 업로드 전이 액터 정책 통일 (대장 #216) — 실 ContentWorkflowService 사용 ───────────
+   * 위 테스트들은 전부 `workflow`를 통짜 mock으로 대체해 `RolesGuard`(admin 수퍼롤 통과)와
+   * `ContentsService.loadOwned`(기자=자기 담당만, center·admin 전체) 사이에서 실제로 벌어지던
+   * 불일치 — `ContentWorkflowService`가 내부에서 `requireOwnerReporter`(기자 본인만)를 요구해
+   * admin·center가 컨트롤러는 통과하고 서비스 전이에서 forbidden을 맞던 결함 — 을 검증할 수 없다
+   * (mock이 항상 성공하므로). 여기서는 **실 ContentWorkflowService**(makePrismaMock 위에서 동작)를
+   * 주입해 admin·center 액터가 업로드 전이를 실제로 완주하는지 확인한다.
+   */
+  describe('업로드 전이 액터 정책 (대장 #216 — admin·center_operator 실완주, 실 ContentWorkflowService)', () => {
+    const setupReal = (contentOver: Record<string, unknown> = {}) => {
+      // 상태 저장소를 흉내낸다(makePrismaMock의 findUnique는 정적 응답이라, 실 CAS
+      // updateMany가 낸 변화를 뒤이은 load()가 다시 못 본다 — res.status가 그대로 옛 값이 되어
+      // "완주" 여부를 return 값으로 확인할 수 없었다). updateMany가 실제로 상태를 옮기고,
+      // findUnique가 최신 상태를 돌려주도록 얇게 연결한다.
+      let contentState = contentRow({
+        id: 'c-1',
+        status: 'uploading',
+        reporterId: 'u-reporter', // 타 기자 콘텐츠 — 호출자는 그 담당 기자가 아니다
+        ...contentOver,
+      });
+      const contents = { loadOwned: jest.fn().mockImplementation(async () => contentState) };
+      const prisma = makePrismaMock();
+      prisma.content.findUnique.mockImplementation(async () => contentState);
+      prisma.content.updateMany.mockImplementation(
+        async ({ where, data }: { where: { status: string }; data: Record<string, unknown> }) => {
+          if (contentState.status !== where.status) return { count: 0 };
+          contentState = { ...contentState, ...data } as typeof contentState;
+          return { count: 1 };
+        },
+      );
+      const workflow = new ContentWorkflowService(prisma as never);
+      const assets = {
+        originalKey: (id: string, ext: string) => `contents/${id}/g1/original.${ext}`,
+        createOriginalPending: jest.fn().mockResolvedValue(undefined),
+        findOriginal: jest.fn().mockResolvedValue({ storageKey: 'contents/c-1/g1/original.mp4' }),
+        markReady: jest.fn().mockResolvedValue(undefined),
+        markFailed: jest.fn().mockResolvedValue(undefined),
+      };
+      const s3 = { headObject: jest.fn().mockResolvedValue({ sizeBytes: 1000 }) };
+      const producer = { enabled: true, enqueueTranscode: jest.fn().mockResolvedValue(undefined) };
+      const service = new UploadService(
+        contents as never,
+        workflow,
+        assets as never,
+        s3 as never,
+        producer as never,
+        prisma as never,
+      );
+      return { prisma, assets, s3, producer, service };
+    };
+
+    it('admin이 타 기자 콘텐츠의 completeUpload를 정상 완주한다 (자산 ready·콘텐츠 uploaded 일치)', async () => {
+      const { prisma, assets, producer, service } = setupReal();
+
+      const res = await service.completeUpload(adminUser(), 'c-1', {
+        contentId: 'c-1',
+        storageKey: 'contents/c-1/g1/original.mp4',
+      } as never);
+
+      expect(assets.markReady).toHaveBeenCalledWith('contents/c-1/g1/original.mp4', {
+        sizeBytes: 1000,
+      });
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'c-1', status: 'uploading' },
+          data: expect.objectContaining({ status: 'uploaded' }),
+        }),
+      );
+      expect(res.status).toBe('uploaded'); // 자산 ready·콘텐츠 uploaded — 불일치 없음
+      expect(producer.enqueueTranscode).toHaveBeenCalled();
+    });
+
+    it('center_operator도 타 기자 콘텐츠의 completeUpload를 정상 완주한다', async () => {
+      const { service } = setupReal();
+
+      const res = await service.completeUpload(centerOperatorUser(), 'c-1', {
+        contentId: 'c-1',
+        storageKey: 'contents/c-1/g1/original.mp4',
+      } as never);
+
+      expect(res.status).toBe('uploaded');
+    });
+
+    it('admin이 실패 분기(HEAD 부재)를 타면 콘텐츠가 upload_failed로 롤백된다(uploading에 갇히지 않는다)', async () => {
+      const { prisma, s3, service } = setupReal();
+      s3.headObject.mockResolvedValue(null);
+
+      await expectError(
+        service.completeUpload(adminUser(), 'c-1', {
+          contentId: 'c-1',
+          storageKey: 'contents/c-1/g1/original.mp4',
+        } as never),
+        'validation_failed',
+      );
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'c-1', status: 'uploading' },
+          data: expect.objectContaining({ status: 'upload_failed' }),
+        }),
+      );
+    });
+
+    /* ★ 보완2(조율자 지시) — 정방향(기자 본인 → 성공)을 실 ContentWorkflowService로도 덮는다.
+     * admin·center 테스트만으로는 "기자 본인이 여전히 완주하는지"를 이 describe 블록이 스스로
+     * 증명하지 못한다(다른 파일이 우연히 잡아준 것과 같은 사각). */
+    it('정방향 — 기자 본인이 자기 콘텐츠의 completeUpload를 완주한다 (자산 ready·콘텐츠 uploaded 일치)', async () => {
+      const { prisma, assets, producer, service } = setupReal({ reporterId: 'u-reporter' });
+
+      const res = await service.completeUpload(reporterUser(), 'c-1', {
+        contentId: 'c-1',
+        storageKey: 'contents/c-1/g1/original.mp4',
+      } as never);
+
+      expect(assets.markReady).toHaveBeenCalledWith('contents/c-1/g1/original.mp4', {
+        sizeBytes: 1000,
+      });
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'c-1', status: 'uploading' },
+          data: expect.objectContaining({ status: 'uploaded' }),
+        }),
+      );
+      expect(res.status).toBe('uploaded');
+      expect(producer.enqueueTranscode).toHaveBeenCalled();
+    });
+
+    it('회귀 방지 — 기자는 여전히 자기 담당 콘텐츠만: 타 기자 콘텐츠의 completeUpload는 forbidden', async () => {
+      const { prisma, service } = setupReal(); // reporterId='u-reporter', 호출자는 다른 기자
+      await expectError(
+        service.completeUpload(reporterUser({ id: 'u-other-reporter' } as never), 'c-1', {
+          contentId: 'c-1',
+          storageKey: 'contents/c-1/g1/original.mp4',
+        } as never),
+        'forbidden',
+      );
+      // forbidden은 workflow.completeUpload(내부 requireOwnerOrCenter) 단계에서 나므로
+      // 이 시점에서는 콘텐츠가 이미 uploading 그대로다 — 잘못된 uploaded 커밋이 없다.
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
     });
   });
 });

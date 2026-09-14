@@ -26,7 +26,7 @@ export class UploadController {
 
   @Post(':id/upload-url')
   @HttpCode(200)
-  @Roles('reporter')
+  @Roles('reporter', 'center_operator')
   @ApiOperation({ summary: 'presigned PUT 발급 — draft·upload_failed → uploading + original(pending)' })
   issueUploadUrl(
     @CurrentUser() user: User,
@@ -38,7 +38,7 @@ export class UploadController {
 
   @Post(':id/upload-complete')
   @HttpCode(200)
-  @Roles('reporter')
+  @Roles('reporter', 'center_operator')
   @ApiOperation({ summary: '업로드 완료 — HEAD 검증 → uploading → uploaded, 트랜스코딩 인큐' })
   completeUpload(
     @CurrentUser() user: User,
@@ -54,7 +54,7 @@ export class UploadController {
    */
   @Post(':id/multipart-upload')
   @HttpCode(200)
-  @Roles('reporter')
+  @Roles('reporter', 'center_operator')
   @ApiOperation({ summary: '멀티파트 업로드 시작 — draft·upload_failed → uploading + 파트별 presigned URL' })
   startMultipartUpload(
     @CurrentUser() user: User,
@@ -66,7 +66,7 @@ export class UploadController {
 
   @Post(':id/multipart-upload-complete')
   @HttpCode(200)
-  @Roles('reporter')
+  @Roles('reporter', 'center_operator')
   @ApiOperation({ summary: '멀티파트 업로드 완료 — S3 조립 → HEAD 검증 → uploading → uploaded' })
   completeMultipartUpload(
     @CurrentUser() user: User,
@@ -78,7 +78,7 @@ export class UploadController {
 
   @Post(':id/multipart-upload-abort')
   @HttpCode(200)
-  @Roles('reporter')
+  @Roles('reporter', 'center_operator')
   @ApiOperation({ summary: '멀티파트 업로드 중단 — uploading → upload_failed, 재-issue로 복구' })
   abortMultipartUpload(
     @CurrentUser() user: User,

@@ -411,17 +411,23 @@ export class ContentWorkflowService {
     await this.applyHop(tx, content, from, to, { type: 'user', user }, {}, /* idempotent */ true);
   }
 
-  /** 업로드 시작 — {draft|upload_failed} → uploading (소유 기자). 자산 생성·인큐는 UploadService 몫 */
+  /**
+   * 업로드 시작 — {draft|upload_failed} → uploading (소유 기자 또는 center_operator·admin,
+   * 대장 #216 — `loadOwned`와 동일한 소유권 의미론으로 통일). 자산 생성·인큐는 UploadService 몫
+   */
   async beginUpload(contentId: string, user: User): Promise<ContentRow> {
     return this.userHop(contentId, user, 'uploading');
   }
 
-  /** 업로드 완료 — uploading → uploaded (소유 기자) */
+  /** 업로드 완료 — uploading → uploaded (소유 기자 또는 center_operator·admin, 대장 #216) */
   async completeUpload(contentId: string, user: User): Promise<ContentRow> {
     return this.userHop(contentId, user, 'uploaded');
   }
 
-  /** 업로드 실패 — uploading → upload_failed (소유 기자). 오브젝트 검증 실패 시 교착 회피 */
+  /**
+   * 업로드 실패 — uploading → upload_failed (소유 기자 또는 center_operator·admin, 대장 #216).
+   * 오브젝트 검증 실패 시 교착 회피
+   */
   async failUpload(contentId: string, user: User): Promise<ContentRow> {
     return this.userHop(contentId, user, 'upload_failed');
   }
@@ -441,7 +447,7 @@ export class ContentWorkflowService {
   async failUploadTx(tx: Tx, content: ContentRow, user: User): Promise<void> {
     const from = content.status as ContentStatus;
     const to: ContentStatus = 'upload_failed';
-    this.requireOwnerReporter(content, user);
+    this.requireOwnerOrCenter(content, user);
     this.assertAllowed(from, to);
     await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
   }
@@ -449,7 +455,7 @@ export class ContentWorkflowService {
   private async userHop(contentId: string, user: User, to: ContentStatus): Promise<ContentRow> {
     const content = await this.load(contentId);
     const from = content.status as ContentStatus;
-    this.requireOwnerReporter(content, user);
+    this.requireOwnerOrCenter(content, user);
     this.assertAllowed(from, to);
     await this.prisma.$transaction(async (tx) => {
       await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
