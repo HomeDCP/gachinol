@@ -82,7 +82,27 @@ export class UploadService {
 
     // 클라 임의 key 주입 차단 — 발급된 original 자산 key와 일치해야 함
     const original = await this.assets.findOriginal(id, 1);
-    if (!original || original.storageKey !== dto.storageKey) {
+    if (!original) {
+      // 대장 #212 — 재-issue 이후에도 원본 자산을 못 찾음(우리 쪽 자산 부재·경합. 클라 입력과 무관).
+      // uploading의 유일한 출구는 completeUpload뿐이라(uploading→{uploaded,upload_failed} 외 전이
+      // 없음, shared workflow.ts) 여기서 콘텐츠를 놓치면 재-issue조차(ISSUABLE=draft·upload_failed
+      // 밖) 열 수 없는 채로 영구 고착된다(I-2). markFailed로 지울 자산 행 자체가 없으므로 콘텐츠
+      // 전이만 한 트랜잭션으로 커밋한다.
+      await this.prisma.$transaction(async (tx) => {
+        await this.workflow.failUploadTx(tx, content, user);
+      });
+      throw new DomainException('validation_failed', '발급된 업로드 원본을 찾을 수 없습니다');
+    }
+    if (original.storageKey !== dto.storageKey) {
+      // 클라 임의 key 주입 차단(원 목적 유지, 위 주석) — dto.storageKey는 검증되지 않은 클라 입력이라
+      // 이 값으로 어떤 media_assets 행도 건드리지 않는다(이름이 우연히 겹치는 타 콘텐츠 자산을 오염
+      // 시킬 위험 — 대장 #212 함정1). original 자산 자체도 그대로 둔다: 그 자산은 여전히 유효하게
+      // 발급된 상태(pending/ready)이고, 이 요청만 잘못된 key를 주장했을 뿐이다.
+      // 그렇더라도 이 요청의 실패가 콘텐츠를 uploading에 영구 고착시켜서는 안 된다(I-2) — 공격이든
+      // 클라 버그든 재-issue조차 못 여는 채로 갇히는 것은 원 방어(임의 key 주입 차단)의 목적이 아니다.
+      await this.prisma.$transaction(async (tx) => {
+        await this.workflow.failUploadTx(tx, content, user);
+      });
       throw new DomainException('validation_failed', '발급된 업로드 키와 일치하지 않습니다');
     }
 
