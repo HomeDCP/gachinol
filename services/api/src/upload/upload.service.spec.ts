@@ -11,6 +11,30 @@ const dtoIssue = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** 대장 #211 — 멀티파트 시작 dto. 필드는 dtoIssue와 동일(CreateMultipartUploadRequest) */
+const dtoMultipartStart = (over: Record<string, unknown> = {}) => ({
+  contentId: 'c-1',
+  fileName: 'clip.mp4',
+  mimeType: 'video/mp4',
+  sizeBytes: 1000,
+  ...over,
+});
+
+const dtoMultipartComplete = (over: Record<string, unknown> = {}) => ({
+  contentId: 'c-1',
+  storageKey: 'contents/c-1/g1/original.mp4',
+  uploadId: 'upload-1',
+  parts: [{ partNumber: 1, eTag: '"e1"' }],
+  ...over,
+});
+
+const dtoMultipartAbort = (over: Record<string, unknown> = {}) => ({
+  contentId: 'c-1',
+  storageKey: 'contents/c-1/g1/original.mp4',
+  uploadId: 'upload-1',
+  ...over,
+});
+
 /** $transaction 콜백에 넘길 tx 스텁 — 두 쓰기가 같은 트랜잭션을 받는지(원자성) 식별용 sentinel */
 const TX_SENTINEL = { __tx: 'sentinel' } as const;
 
@@ -33,6 +57,15 @@ const setup = (contentOver: Record<string, unknown> = {}) => {
   const s3 = {
     presignPut: jest.fn().mockResolvedValue({ url: 'https://put', expiresAt: '2026-07-22T00:15:00.000Z' }),
     headObject: jest.fn().mockResolvedValue({ sizeBytes: 1000 }),
+    createMultipartUpload: jest.fn().mockResolvedValue({ uploadId: 'upload-1' }),
+    presignUploadPart: jest.fn().mockImplementation((_key: string, _uploadId: string, partNumber: number) =>
+      Promise.resolve({
+        url: `https://put-part-${partNumber}`,
+        expiresAt: '2026-07-22T00:15:00.000Z',
+      }),
+    ),
+    completeMultipartUpload: jest.fn().mockResolvedValue(undefined),
+    abortMultipartUpload: jest.fn().mockResolvedValue(undefined),
   };
   const producer = { enabled: true, enqueueTranscode: jest.fn().mockResolvedValue(undefined) };
   // 실 Prisma $transaction과 동형: 콜백을 tx로 즉시 호출(성공)하거나, 콜백이 던지면 그대로 reject
@@ -489,6 +522,400 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
         'validation_failed',
       );
       expect(getContentStatus()).not.toBe('uploading');
+    });
+  });
+
+  // ── 대장 #211 — 멀티파트 업로드 (시작/완료/중단) ────────────────────────────────────────
+  describe('startMultipartUpload', () => {
+    it('자산 pending 생성 → beginUpload → S3 멀티파트 시작 → 파트별 presign, 단일 파트(작은 파일)', async () => {
+      const { assets, workflow, s3, service } = setup();
+      const res = await service.startMultipartUpload(
+        reporterUser(),
+        'c-1',
+        dtoMultipartStart() as never,
+      );
+
+      expect(assets.createOriginalPending).toHaveBeenCalledWith(
+        'c-1',
+        'contents/c-1/g1/original.mp4',
+        'video/mp4',
+        1000,
+      );
+      expect(workflow.beginUpload).toHaveBeenCalledWith('c-1', expect.anything());
+      expect(s3.createMultipartUpload).toHaveBeenCalledWith('contents/c-1/g1/original.mp4', {
+        contentType: 'video/mp4',
+      });
+      // sizeBytes=1000은 파트 크기(64MiB)보다 훨씬 작으므로 파트 1개, 그 크기가 실제 바이트 수와 일치
+      expect(res.storageKey).toBe('contents/c-1/g1/original.mp4');
+      expect(res.uploadId).toBe('upload-1');
+      expect(res.parts).toEqual([
+        { partNumber: 1, uploadUrl: 'https://put-part-1', sizeBytes: 1000 },
+      ]);
+      expect(s3.presignUploadPart).toHaveBeenCalledWith(
+        'contents/c-1/g1/original.mp4',
+        'upload-1',
+        1,
+      );
+    });
+
+    /**
+     * 조율자 보완 지시(게이트② 전) — 애초 구현은 자산 pending 생성·beginUpload 전이를 먼저 낸 뒤
+     * S3 `createMultipartUpload`(실 네트워크 호출)를 불렀다. 그 호출이 실패하면 콘텐츠가
+     * `uploading`에 갇히고 재발급은 `ISSUABLE`(draft·upload_failed) 밖이라 막힌다 — 대장 #168·
+     * #212에 이은 세 번째 입구가 될 뻔했다. 여기서는 순서를 바꿔 실패 창을 원천 제거했는지
+     * **직접 콘텐츠 상태를 추적**해 확인한다(목 호출 여부만 보는 것보다 AC에 더 충실 — "콘텐츠
+     * 상태가 uploading이 아님"을 그 자체로 단언).
+     *
+     * 뮤테이션 자가확인 대상 — 이 순서를 되돌리면(로컬 부수효과를 S3 호출보다 먼저 내면) 이 테스트가
+     * red가 된다(아래 별도 자가확인에서 실측).
+     */
+    it('S3 멀티파트 시작이 실패하면 콘텐츠 상태가 uploading으로 전이되지 않는다(교착 없음, 재-issue 열림)', async () => {
+      let contentStatus = 'draft';
+      const baseContent = contentRow({ id: 'c-1', status: contentStatus });
+      const contents = {
+        loadOwned: jest.fn().mockImplementation(async () => ({ ...baseContent, status: contentStatus })),
+      };
+      const workflow = {
+        beginUpload: jest.fn().mockImplementation(async () => {
+          contentStatus = 'uploading';
+          return { ...baseContent, status: contentStatus };
+        }),
+        completeUpload: jest.fn(),
+        failUpload: jest.fn(),
+        failUploadTx: jest.fn(),
+      };
+      const assets = {
+        originalKey: (id: string, ext: string) => `contents/${id}/g1/original.${ext}`,
+        createOriginalPending: jest.fn().mockResolvedValue(undefined),
+        findOriginal: jest.fn(),
+        markReady: jest.fn(),
+        markFailed: jest.fn(),
+      };
+      const s3 = {
+        presignPut: jest.fn(),
+        headObject: jest.fn(),
+        createMultipartUpload: jest.fn().mockRejectedValue(new Error('S3 다운')),
+        presignUploadPart: jest.fn(),
+        completeMultipartUpload: jest.fn(),
+        abortMultipartUpload: jest.fn(),
+      };
+      const producer = { enabled: true, enqueueTranscode: jest.fn() };
+      const prisma = { $transaction: jest.fn((cb: (tx: unknown) => Promise<unknown>) => cb(TX_SENTINEL)) };
+      const service = new UploadService(
+        contents as never,
+        workflow as never,
+        assets as never,
+        s3 as never,
+        producer as never,
+        prisma as never,
+      );
+
+      await expect(
+        service.startMultipartUpload(reporterUser(), 'c-1', dtoMultipartStart() as never),
+      ).rejects.toThrow('S3 다운');
+
+      // ★ 핵심 단언 — 콘텐츠 상태 자체가 uploading이 아니다(draft 그대로, 재-issue 즉시 가능)
+      expect(contentStatus).not.toBe('uploading');
+      expect(contentStatus).toBe('draft');
+      // 로컬 부수효과가 S3 호출보다 먼저 나가지 않았다는 것도 함께 고정
+      expect(assets.createOriginalPending).not.toHaveBeenCalled();
+      expect(workflow.beginUpload).not.toHaveBeenCalled();
+    });
+
+    it('파트 크기(64MiB)를 넘는 파일 — 파트 수·크기 계산이 실제 바이트 수와 일치(2개 파트)', async () => {
+      const { s3, service } = setup();
+      const totalSizeBytes = 70 * 1024 * 1024; // 64MiB 초과 → 2개 파트
+      const res = await service.startMultipartUpload(
+        reporterUser(),
+        'c-1',
+        dtoMultipartStart({ sizeBytes: totalSizeBytes }) as never,
+      );
+
+      expect(res.parts).toHaveLength(2);
+      const sum = res.parts.reduce((acc, p) => acc + p.sizeBytes, 0);
+      expect(sum).toBe(totalSizeBytes); // ★ 파트 크기 합이 실제 바이트 수와 정확히 일치
+      expect(res.parts.map((p) => p.partNumber)).toEqual([1, 2]);
+      expect(s3.presignUploadPart).toHaveBeenCalledTimes(2);
+      expect(s3.presignUploadPart).toHaveBeenNthCalledWith(
+        1,
+        'contents/c-1/g1/original.mp4',
+        'upload-1',
+        1,
+      );
+      expect(s3.presignUploadPart).toHaveBeenNthCalledWith(
+        2,
+        'contents/c-1/g1/original.mp4',
+        'upload-1',
+        2,
+      );
+    });
+
+    it('draft·upload_failed 외 상태는 409, 부수효과 0건', async () => {
+      const { service, workflow, s3 } = setup({ status: 'uploading' });
+      await expectError(
+        service.startMultipartUpload(reporterUser(), 'c-1', dtoMultipartStart() as never),
+        'conflict',
+      );
+      expect(workflow.beginUpload).not.toHaveBeenCalled();
+      expect(s3.createMultipartUpload).not.toHaveBeenCalled();
+    });
+
+    it('body.contentId ≠ 경로 id면 400', async () => {
+      const { service } = setup();
+      await expectError(
+        service.startMultipartUpload(
+          reporterUser(),
+          'c-1',
+          dtoMultipartStart({ contentId: 'c-2' }) as never,
+        ),
+        'validation_failed',
+      );
+    });
+
+    it('Redis 미설정(pipeline 비활성)이면 internal', async () => {
+      const { producer, service } = setup();
+      (producer as { enabled: boolean }).enabled = false;
+      await expectError(
+        service.startMultipartUpload(reporterUser(), 'c-1', dtoMultipartStart() as never),
+        'internal',
+      );
+    });
+  });
+
+  describe('completeMultipartUpload', () => {
+    it('S3 완료 성공 → HEAD 성공 → markReady → completeUpload → enqueueTranscode', async () => {
+      const { assets, workflow, s3, producer, service } = setup({ status: 'uploading' });
+      const res = await service.completeMultipartUpload(
+        reporterUser(),
+        'c-1',
+        dtoMultipartComplete() as never,
+      );
+
+      expect(s3.completeMultipartUpload).toHaveBeenCalledWith(
+        'contents/c-1/g1/original.mp4',
+        'upload-1',
+        [{ partNumber: 1, eTag: '"e1"' }],
+      );
+      expect(assets.markReady).toHaveBeenCalledWith('contents/c-1/g1/original.mp4', {
+        sizeBytes: 1000,
+      });
+      expect(workflow.completeUpload).toHaveBeenCalledWith('c-1', expect.anything());
+      expect(producer.enqueueTranscode).toHaveBeenCalled();
+      expect(res.id).toBe('c-1');
+    });
+
+    it('uploading 상태가 아니면 409', async () => {
+      const { service } = setup({ status: 'draft' });
+      await expectError(
+        service.completeMultipartUpload(reporterUser(), 'c-1', dtoMultipartComplete() as never),
+        'conflict',
+      );
+    });
+
+    it('발급 key와 불일치하면 400(임의 key 주입 차단) + 콘텐츠는 upload_failed로 롤백(I-2)', async () => {
+      const { assets, workflow, prisma, s3, service } = setup({ status: 'uploading' });
+      await expectError(
+        service.completeMultipartUpload(
+          reporterUser(),
+          'c-1',
+          dtoMultipartComplete({ storageKey: 'contents/c-1/g1/evil.mp4' }) as never,
+        ),
+        'validation_failed',
+      );
+      expect(assets.markFailed).not.toHaveBeenCalled(); // 검증 안 된 key로 자산 오염 금지
+      expect(s3.completeMultipartUpload).not.toHaveBeenCalled(); // key 불일치면 S3 호출 자체를 안 함
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalledWith(
+        TX_SENTINEL,
+        expect.objectContaining({ id: 'c-1' }),
+        expect.anything(),
+      );
+    });
+
+    it('original 자산을 못 찾으면 400 + 콘텐츠는 upload_failed로 롤백(I-2)', async () => {
+      const { assets, workflow, prisma, service } = setup({ status: 'uploading' });
+      assets.findOriginal.mockResolvedValue(null);
+      await expectError(
+        service.completeMultipartUpload(reporterUser(), 'c-1', dtoMultipartComplete() as never),
+        'validation_failed',
+      );
+      expect(assets.markFailed).not.toHaveBeenCalled();
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalledWith(
+        TX_SENTINEL,
+        expect.objectContaining({ id: 'c-1' }),
+        expect.anything(),
+      );
+    });
+
+    /**
+     * 대장 #211 — S3 CompleteMultipartUpload 자체가 실패하는 경우(파트 누락·ETag 불일치 등)는
+     * 단일 PUT 경로의 HEAD 부재 분기와 동형으로 취급한다: 자산 failed 표기 + 콘텐츠 롤백을
+     * **단일 트랜잭션**으로 묶어(대장 #168 패턴) 콘텐츠가 uploading에 남지 않게 한다(I-2).
+     *
+     * ★ 게이트② 보완(조율자 지시) — 이 시점 이후 콘텐츠는 upload_failed라 중단 라우트
+     * (`abortMultipartUpload`, status==='uploading' 요구)도 409로 막혀 그 uploadId는 API로
+     * 영구 회수 불가하다. 제온 실측으로 MinIO 라이프사이클 규칙(AbortIncompleteMultipartUpload)
+     * 부재가 확인됐으므로(고아가 무기한 잔존) 이 분기 자체가 S3 쪽 정리(abort)까지 겸해야 한다.
+     */
+    it('S3 완료 호출이 실패하면 markFailed + failUploadTx가 단일 트랜잭션으로 묶여 400(I-2) + S3 멀티파트도 abort로 정리', async () => {
+      const { assets, workflow, prisma, s3, producer, service } = setup({ status: 'uploading' });
+      s3.completeMultipartUpload.mockRejectedValue(new Error('InvalidPart'));
+
+      await expectError(
+        service.completeMultipartUpload(reporterUser(), 'c-1', dtoMultipartComplete() as never),
+        'validation_failed',
+      );
+
+      expect(assets.markFailed).toHaveBeenCalledWith('contents/c-1/g1/original.mp4', TX_SENTINEL);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalledWith(
+        TX_SENTINEL,
+        expect.objectContaining({ id: 'c-1' }),
+        expect.anything(),
+      );
+      // ★ 신설(게이트② 보완) — S3 멀티파트가 고아로 남지 않도록 abort로 정리한다
+      expect(s3.abortMultipartUpload).toHaveBeenCalledWith(
+        'contents/c-1/g1/original.mp4',
+        'upload-1',
+      );
+      expect(producer.enqueueTranscode).not.toHaveBeenCalled();
+    });
+
+    /**
+     * "abort 실패가 원래 에러를 가리거나 I-2를 깨뜨리면 안 된다"(조율자 요구 — 콘텐츠 롤백이
+     * 우선) — abort 자체가 또 실패해도(예: uploadId가 이미 만료) 원래 완료 실패 에러가 그대로
+     * 전파되고, 콘텐츠 롤백(I-2)은 abort 성패와 무관하게 이미 커밋돼 있어야 한다.
+     */
+    it('S3 완료 실패 후 정리용 abort마저 실패해도 원래 완료 실패 에러가 그대로 전파된다(I-2 유지)', async () => {
+      const { workflow, prisma, s3, service } = setup({ status: 'uploading' });
+      s3.completeMultipartUpload.mockRejectedValue(new Error('InvalidPart'));
+      s3.abortMultipartUpload.mockRejectedValue(new Error('uploadId 이미 만료'));
+
+      const err = await service
+        .completeMultipartUpload(reporterUser(), 'c-1', dtoMultipartComplete() as never)
+        .then(
+          () => null,
+          (e) => e,
+        );
+
+      expect(err).toBeInstanceOf(DomainException);
+      expect((err as DomainException).code).toBe('validation_failed');
+      // 원래 에러(완료 실패)가 그대로 — abort 실패로 위장·대체되지 않는다
+      expect((err as DomainException).message).toBe('멀티파트 업로드 완료에 실패했습니다');
+      // 콘텐츠 롤백(I-2)은 abort 성패와 무관하게 이미 커밋됐다
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalled();
+    });
+
+    it('S3 완료는 성공했지만 HEAD 부재 → markFailed + failUploadTx + 400(I-2)', async () => {
+      const { assets, workflow, prisma, s3, service } = setup({ status: 'uploading' });
+      s3.headObject.mockResolvedValue(null);
+
+      await expectError(
+        service.completeMultipartUpload(reporterUser(), 'c-1', dtoMultipartComplete() as never),
+        'validation_failed',
+      );
+
+      expect(s3.completeMultipartUpload).toHaveBeenCalled(); // HEAD 확인 전에 조립을 먼저 시도했다
+      expect(assets.markFailed).toHaveBeenCalledWith('contents/c-1/g1/original.mp4', TX_SENTINEL);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalledWith(
+        TX_SENTINEL,
+        expect.objectContaining({ id: 'c-1' }),
+        expect.anything(),
+      );
+    });
+  });
+
+  describe('abortMultipartUpload', () => {
+    it('정상 취소 — S3 abort 호출 + 콘텐츠 upload_failed로 롤백(I-2), 재-issue로 복구 가능', async () => {
+      const { contents, workflow, prisma, s3, service } = setup({ status: 'uploading' });
+      contents.loadOwned
+        .mockResolvedValueOnce(contentRow({ id: 'c-1', status: 'uploading' }))
+        .mockResolvedValueOnce(contentRow({ id: 'c-1', status: 'upload_failed' }));
+
+      const res = await service.abortMultipartUpload(
+        reporterUser(),
+        'c-1',
+        dtoMultipartAbort() as never,
+      );
+
+      expect(s3.abortMultipartUpload).toHaveBeenCalledWith(
+        'contents/c-1/g1/original.mp4',
+        'upload-1',
+      );
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalledWith(
+        TX_SENTINEL,
+        expect.objectContaining({ id: 'c-1' }),
+        expect.anything(),
+      );
+      expect(res.status).toBe('upload_failed');
+    });
+
+    it('uploading 상태가 아니면 409, S3 호출 없음', async () => {
+      const { service, s3 } = setup({ status: 'draft' });
+      await expectError(
+        service.abortMultipartUpload(reporterUser(), 'c-1', dtoMultipartAbort() as never),
+        'conflict',
+      );
+      expect(s3.abortMultipartUpload).not.toHaveBeenCalled();
+    });
+
+    it('발급 key와 불일치하면 400 + 콘텐츠는 upload_failed로 롤백(I-2), S3 abort는 호출 안 함', async () => {
+      const { workflow, prisma, s3, service } = setup({ status: 'uploading' });
+      await expectError(
+        service.abortMultipartUpload(
+          reporterUser(),
+          'c-1',
+          dtoMultipartAbort({ storageKey: 'contents/c-1/g1/evil.mp4' }) as never,
+        ),
+        'validation_failed',
+      );
+      expect(s3.abortMultipartUpload).not.toHaveBeenCalled();
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalledWith(
+        TX_SENTINEL,
+        expect.objectContaining({ id: 'c-1' }),
+        expect.anything(),
+      );
+    });
+
+    it('original 자산을 못 찾으면 400 + 콘텐츠는 upload_failed로 롤백(I-2)', async () => {
+      const { assets, workflow, prisma, service } = setup({ status: 'uploading' });
+      assets.findOriginal.mockResolvedValue(null);
+      await expectError(
+        service.abortMultipartUpload(reporterUser(), 'c-1', dtoMultipartAbort() as never),
+        'validation_failed',
+      );
+      expect(assets.markFailed).not.toHaveBeenCalled();
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(workflow.failUploadTx).toHaveBeenCalledWith(
+        TX_SENTINEL,
+        expect.objectContaining({ id: 'c-1' }),
+        expect.anything(),
+      );
+    });
+
+    /**
+     * S3 쪽 정리(abort)가 실패해도(예: uploadId가 이미 만료) 사용자의 취소 의도는 이행돼야 한다
+     * (I-2) — 콘텐츠가 uploading에 갇히는 것이 S3 정리 실패보다 훨씬 나쁘다.
+     */
+    it('S3 abort 호출이 실패해도 콘텐츠 롤백은 그대로 이행된다(best-effort)', async () => {
+      const { contents, workflow, s3, service } = setup({ status: 'uploading' });
+      s3.abortMultipartUpload.mockRejectedValue(new Error('uploadId 만료'));
+      contents.loadOwned
+        .mockResolvedValueOnce(contentRow({ id: 'c-1', status: 'uploading' }))
+        .mockResolvedValueOnce(contentRow({ id: 'c-1', status: 'upload_failed' }));
+
+      const res = await service.abortMultipartUpload(
+        reporterUser(),
+        'c-1',
+        dtoMultipartAbort() as never,
+      );
+      expect(workflow.failUploadTx).toHaveBeenCalled();
+      expect(res.status).toBe('upload_failed');
     });
   });
 });

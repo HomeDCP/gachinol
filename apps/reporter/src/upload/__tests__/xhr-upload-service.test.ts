@@ -49,6 +49,8 @@ class FakeXhr implements XhrLike {
   headers: Record<string, string> = {};
   sentBody: unknown = undefined;
   abortCalls = 0;
+  /** 응답 헤더 — 멀티파트 파트 PUT 테스트가 ETag를 싣는 데 쓴다(테스트가 respond() 전에 설정) */
+  responseHeaders: Record<string, string> = {};
 
   constructor() {
     FakeXhr.instances.push(this);
@@ -67,6 +69,9 @@ class FakeXhr implements XhrLike {
     this.abortCalls += 1;
     this.onabort?.();
   }
+  getResponseHeader(name: string): string | null {
+    return this.responseHeaders[name] ?? null;
+  }
 
   emitProgress(loaded: number, total: number, lengthComputable = true): void {
     this.upload.onprogress?.({ lengthComputable, loaded, total });
@@ -77,7 +82,13 @@ class FakeXhr implements XhrLike {
   }
 }
 
-const blob = (size: number): BlobLike => ({ size });
+/** 슬라이스된 하위 블롭도 같은 구조(재귀적으로 slice 가능)를 갖도록 만드는 최소 BlobLike 가짜 */
+const blob = (size: number): BlobLike => ({
+  size,
+  slice(start: number, end: number): BlobLike {
+    return blob(Math.max(0, Math.min(end, size) - Math.max(0, start)));
+  },
+});
 
 function makeEnv(resolved: BlobLike | Error = blob(1000)): {
   XhrCtor: new () => XhrLike;
@@ -122,7 +133,9 @@ test('성공 경로 — ① 바디·② XHR PUT(진행률 매핑)·③ 완료 �
   // ② PUT 배선 — URL·Content-Type·본문
   expect(xhr.opened).toEqual(['PUT', issued.uploadUrl]);
   expect(xhr.headers['Content-Type']).toBe('video/mp4');
-  expect(xhr.sentBody).toEqual(blob(1000));
+  // blob()이 이제 slice 메서드를 갖는다(멱등 재귀 구현) — 함수 프로퍼티가 있는 객체는
+  // toEqual이 참조 비교로 떨어져 실패하므로(실측 확인) 실측 가능한 size만 비교한다.
+  expect((xhr.sentBody as BlobLike).size).toBe(1000);
   // ③ 완료 통지
   expect(request).toHaveBeenNthCalledWith(2, 'POST', '/contents/c1/upload-complete', {
     body: { contentId: 'c1', storageKey: issued.storageKey },
