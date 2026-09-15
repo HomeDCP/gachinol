@@ -566,4 +566,180 @@ describe('ContentWorkflowService — 전이 단일 관문', () => {
       });
     });
   });
+
+  /* ─────────── 업로드 전이 액터 정책 통일 (대장 #216) ───────────
+   * `beginUpload`/`completeUpload`/`failUpload`(→ userHop)와 `failUploadTx`가 요구하던
+   * `requireOwnerReporter`(기자 본인만)를 `requireOwnerOrCenter`(기자=자기 담당, center_operator·
+   * admin=전체 — `loadOwned`·`cancel()`과 동일 의미론)로 통일한다. `RolesGuard`가 admin을 항상
+   * 통과시키고 `ContentsService.loadOwned`도 admin·center를 전체 허용하는데, 워크플로만 기자
+   * 본인으로 좁혀 있어 admin·center가 컨트롤러는 통과하고 서비스 전이에서 forbidden을 맞는
+   * 불일치(그 사이 `markReady` 등 부수효과가 이미 커밋된 뒤 롤백 불가)를 해소한다. */
+  describe('업로드 전이 액터 정책 (대장 #216 — requireOwnerOrCenter 통일)', () => {
+    it('admin이 타 기자 콘텐츠의 beginUpload를 완주한다 (draft→uploading)', async () => {
+      const row = contentRow({ status: 'draft', reporterId: 'u-reporter' });
+      const { prisma, service } = setup(row);
+
+      await service.beginUpload(row.id, adminUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'draft' },
+          data: expect.objectContaining({ status: 'uploading' }),
+        }),
+      );
+    });
+
+    it('admin이 타 기자 콘텐츠의 completeUpload를 완주한다 (uploading→uploaded)', async () => {
+      const row = contentRow({ status: 'uploading', reporterId: 'u-reporter' });
+      const { prisma, service } = setup(row);
+
+      await service.completeUpload(row.id, adminUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'uploading' },
+          data: expect.objectContaining({ status: 'uploaded' }),
+        }),
+      );
+    });
+
+    it('center_operator가 타 기자 콘텐츠의 failUpload를 완주한다 (uploading→upload_failed)', async () => {
+      const row = contentRow({ status: 'uploading', reporterId: 'u-reporter' });
+      const { prisma, service } = setup(row);
+
+      await service.failUpload(row.id, centerOperatorUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'uploading' },
+          data: expect.objectContaining({ status: 'upload_failed' }),
+        }),
+      );
+    });
+
+    it('failUploadTx: admin이 타 기자 콘텐츠를 upload_failed로 되돌린다 (교착 회피, 대장 #168/#212 경로)', async () => {
+      const row = contentRow({ status: 'uploading', reporterId: 'u-reporter' });
+      const { prisma, service } = setup(row);
+
+      await service.failUploadTx(prisma as never, row, adminUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith({
+        where: { id: row.id, status: 'uploading' },
+        data: { status: 'upload_failed' },
+      });
+    });
+
+    /* ★ 보완2(조율자 지시, 게이트② 조건부 합격) — 위 admin·center 테스트는 전부 "타 기자 콘텐츠"
+     * (역방향: 원래 막혀 있던 축이 열리는지)만 본다. `requireOwnerOrCenter`가 기자 자신의 업로드를
+     * 계속 허용하는지(정방향)는 별도로 봐야 한다 — verifier 뮤테이션 A(기자 분기 제거)가 보여줬듯,
+     * 이 축을 안 보면 "기자가 자기 업로드를 못 하게 돼도" 이 신설 스위트는 초록으로 남는다. */
+    it('정방향 — 기자 본인이 beginUpload를 완주한다 (draft→uploading, 자기 담당)', async () => {
+      const row = contentRow({ status: 'draft' }); // reporterId 기본값 'u-reporter' = reporterUser() 본인
+      const { prisma, service } = setup(row);
+
+      await service.beginUpload(row.id, reporterUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'draft' },
+          data: expect.objectContaining({ status: 'uploading' }),
+        }),
+      );
+    });
+
+    it('정방향 — 기자 본인이 completeUpload를 완주한다 (uploading→uploaded, 자기 담당)', async () => {
+      const row = contentRow({ status: 'uploading' });
+      const { prisma, service } = setup(row);
+
+      await service.completeUpload(row.id, reporterUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'uploading' },
+          data: expect.objectContaining({ status: 'uploaded' }),
+        }),
+      );
+    });
+
+    it('정방향 — 기자 본인이 failUpload를 완주한다 (uploading→upload_failed, 자기 담당)', async () => {
+      const row = contentRow({ status: 'uploading' });
+      const { prisma, service } = setup(row);
+
+      await service.failUpload(row.id, reporterUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'uploading' },
+          data: expect.objectContaining({ status: 'upload_failed' }),
+        }),
+      );
+    });
+
+    it('정방향 — 기자 본인이 failUploadTx를 완주한다 (자기 담당, 대장 #168/#212 경로)', async () => {
+      const row = contentRow({ status: 'uploading' });
+      const { prisma, service } = setup(row);
+
+      await service.failUploadTx(prisma as never, row, reporterUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith({
+        where: { id: row.id, status: 'uploading' },
+        data: { status: 'upload_failed' },
+      });
+    });
+
+    it('정방향 — center_operator가 beginUpload를 완주한다 (draft→uploading, 보완1로 컨트롤러도 열림)', async () => {
+      const row = contentRow({ status: 'draft', reporterId: 'u-reporter' });
+      const { prisma, service } = setup(row);
+
+      await service.beginUpload(row.id, centerOperatorUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'draft' },
+          data: expect.objectContaining({ status: 'uploading' }),
+        }),
+      );
+    });
+
+    it('정방향 — center_operator가 completeUpload를 완주한다 (uploading→uploaded)', async () => {
+      const row = contentRow({ status: 'uploading', reporterId: 'u-reporter' });
+      const { prisma, service } = setup(row);
+
+      await service.completeUpload(row.id, centerOperatorUser());
+
+      expect(prisma.content.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: row.id, status: 'uploading' },
+          data: expect.objectContaining({ status: 'uploaded' }),
+        }),
+      );
+    });
+
+    it('회귀 방지 — 기자는 여전히 자기 콘텐츠만: 타 기자 콘텐츠의 beginUpload는 forbidden', async () => {
+      const row = contentRow({ status: 'draft', reporterId: 'u-other-reporter' });
+      const { prisma, service } = setup(row);
+
+      await expectDomainError(service.beginUpload(row.id, reporterUser()), 'forbidden');
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('회귀 방지 — 기자는 여전히 자기 콘텐츠만: 타 기자 콘텐츠의 failUploadTx는 forbidden', async () => {
+      const row = contentRow({ status: 'uploading', reporterId: 'u-other-reporter' });
+      const { prisma, service } = setup(row);
+
+      await expectDomainError(
+        service.failUploadTx(prisma as never, row, reporterUser()),
+        'forbidden',
+      );
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('불변 — policyGuard③(awaiting_reporter_review 계열 결정)은 여전히 담당 기자만: admin도 approve는 forbidden', async () => {
+      const row = contentRow({ status: 'awaiting_reporter_review', reporterId: 'u-reporter' });
+      const { prisma, service } = setup(row);
+
+      await expectDomainError(service.approve(row.id, adminUser()), 'forbidden');
+      expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    });
+  });
 });
