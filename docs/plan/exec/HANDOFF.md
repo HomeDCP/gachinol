@@ -716,7 +716,7 @@ node infra/scripts/daejang-recheck.mjs
 ```
 2주 report-only 관측(기산일 2026-09-11T07:52:33Z, 종료 2026-09-25)은 계속 진행 중이며 위와 병행한다.
 
-### ⭐⭐⭐⭐⭐⭐ 갱신 (2026-09-15, scribe 2차 — 대장 #216 수리 완료 반영 + 대장 #219 정정(결함 아님) + QUEUE §C-7 철회 + 대장 #217 추가 관측)
+### ⭐⭐⭐⭐⭐⭐ 갱신 (2026-09-15, scribe 2차 — 대장 #216 수리 완료 반영 + 대장 #219 정정(결함 아님) + QUEUE §C-7 철회 + 대장 #217 추가 관측 / scribe 3차 — 사용자 결정으로 CLAUDE.md §4 정본 개정 + 대장 #224 채번)
 
 **대장 #216(admin 술어 비대칭) — 수리 완료, PR 대기(머지·배포 전, "해소"가 아니다).** 브랜치
 `fix/upload-actor-predicate` 커밋 `3627fa8`: `userHop`·`failUploadTx`의 술어를 `requireOwnerReporter`
@@ -770,13 +770,33 @@ docs/plan/02-web-architecture.md docs/plan/03-accessibility-ux.md` → **0건**.
 방향이라는 점은 조율자 판단을 위해 남겨 둔다. **scribe는 02·03 본문을 고치지 않았다** — 결과는
 PIVOT-PLAN 대장 #216 행에 근거로 기재.
 
+**정본 파급(D) 후속 — 사용자가 정본 개정을 결정했다(2026-09-15, scribe 3차 갱신).** 조율자가 위
+침묵을 사용자에게 보고했고, 사용자 원문 *"센터는 기자를 대신해 업로드를 완료 복구 할 수 있도록
+해야한다. 관리자의 역할이기 때문이다. admin만 그 역할을 할 수 있도록 하면 실무차원에서 너무
+한쪽으로 일이 몰려서 제대로 운영을 할 수 없다. 정본을 수정하도록 한다."*에 따라 **CLAUDE.md §4
+"센터 관제 웹" 행을 개정**했다(scribe — 기자의 막힌 업로드를 센터가 완료·실패 처리해 재시도를 열어
+주는 **운영 복구 권한**을 명시하고, 촬영·콘텐츠 생성 자체는 여전히 기자 몫이라는 경계를 함께
+적었다). **03 §D "4대 핵심 플로우"는 미개정**(조율자 판정, scribe 등재만 — 그 절은 "설치 없이
+순수 브라우저로 동작해야 하는 플로우 목록"이지 "누가 할 수 있는가"의 권한 정의가 아니므로 고치면
+과잉 개정). ⚠️ **API는 열렸으나 `apps/control-center`에 그것을 호출하는 화면이 0건이다**(scribe
+재확인: `grep -rn "upload-complete|multipart-upload" apps/control-center/src apps/control-center/app | wc -l`
+→ **0**) — 계약은 있는데 구동 코드가 없는 반복 패턴이라 **대장 #224**로 채번했다(방식 무전제 —
+해소 판정은 센터 운영자가 막힌 업로드 콘텐츠 1건을 실제로 완료 또는 실패 처리해 재시도를 여는 것을
+완주했는가로만 판단, 특정 UI 형태 전제 없음). **다음 세션 할 일에 추가**: PR #105 머지·배포 후
+#216을 재판정할 때 **#224(관제 웹 UI 부재)도 함께 검토**할 것 — 갇힌 콘텐츠
+`01a09166-aac7-774e-b95b-5efc617d8a06`(대장 #212)가 #224의 첫 실사용 대상이 될 수 있다(확정 아님).
+⚠️ **#216 자체는 이번에도 '해소'로 바꾸지 않았다** — PR #105가 여전히 미머지다.
+
 가변 값(정확한 테스트 계수·시각)은 여기 적지 않는다 — 재현:
 ```bash
 git log --oneline -3
+gh pr view 105 --json state,mergedAt
 node infra/scripts/daejang-recheck.mjs
 node infra/scripts/controller-role-gate.mjs
 grep -n "@Roles" services/api/src/upload/upload.controller.ts
 grep -rn "center_operator" docs/plan/02-web-architecture.md docs/plan/03-accessibility-ux.md
+grep -rn "upload-complete|multipart-upload" apps/control-center/src apps/control-center/app | wc -l
+grep -n "센터 관제 웹" CLAUDE.md
 ```
 
 ### 열린 항목 (다음 세션이 알아야 할 것 — 판정 대기, QUEUE 편입 여부 미정)
