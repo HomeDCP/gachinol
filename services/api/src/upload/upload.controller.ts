@@ -87,4 +87,24 @@ export class UploadController {
   ): Promise<Content> {
     return this.upload.abortMultipartUpload(user, id, body);
   }
+
+  /**
+   * 업로드 고착 복구 (대장 #224) — 클라이언트가 스스로 중단·재-issue를 부를 수 없을 정도로
+   * 갇혔을 때(탭 종료·기기 이탈 등)의 마지막 수단. 위 abort와 달리 storageKey·uploadId 등
+   * 클라이언트측 상태를 요구하지 않는다 — 서버가 `Content.updatedAt`만으로 고착을 직접 판정한다.
+   */
+  @Post(':id/upload-recover')
+  @HttpCode(200)
+  @Roles('reporter', 'center_operator')
+  @ApiOperation({
+    summary:
+      '업로드 고착 복구 — uploading이 UPLOAD_STUCK_MS 이상 갇혀 있으면 upload_failed로 강제 ' +
+      '전이해 재시도(ISSUABLE)를 연다. 고착 판정은 서버가 한다(클라이언트 주장 불신)',
+  })
+  recoverStalledUpload(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+  ): Promise<Content> {
+    return this.upload.recoverStalledUpload(user, id);
+  }
 }

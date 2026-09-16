@@ -72,3 +72,17 @@ describe('envSchema — 기본 동작 회귀', () => {
     expect(() => envSchema.parse(baseEnv({ DCP_ARBITER_FAIL_MODE: 'maybe' }))).toThrow();
   });
 });
+
+describe('envSchema — UPLOAD_STUCK_MS (대장 #224, 업로드 고착 복구 임계)', () => {
+  it('기본값은 30분(1,800,000ms) — 173MB 실측 최대치·가정 회선 기준 정상 업로드 오판 방지', () => {
+    expect(envSchema.parse(baseEnv()).UPLOAD_STUCK_MS).toBe(1_800_000);
+  });
+
+  it('환경변수 문자열로 재정의할 수 있다', () => {
+    expect(envSchema.parse(baseEnv({ UPLOAD_STUCK_MS: '600000' })).UPLOAD_STUCK_MS).toBe(600000);
+  });
+
+  it('바닥값(60000ms) 미만은 부팅에서 거부한다(오설정으로 정상 업로드를 오판하는 것 방지)', () => {
+    expect(() => envSchema.parse(baseEnv({ UPLOAD_STUCK_MS: '1000' }))).toThrow();
+  });
+});

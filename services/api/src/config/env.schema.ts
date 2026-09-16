@@ -41,6 +41,14 @@ export const envSchema = z
     S3_PUBLIC_ENDPOINT: z.string().optional(),
     S3_PRESIGN_EXPIRES_SEC: z.coerce.number().int().default(900), // = UPLOAD_URL_TTL_SEC
     DOWNLOAD_URL_TTL_SEC: z.coerce.number().int().default(900),
+    // 업로드 고착 복구 임계(대장 #224, RECOMMENDATION_STUCK_MS 동형) — `uploading`이 이 시간(ms)보다
+    // 오래 머물면 재-issue를 여는 강제 강등(→upload_failed)이 허용된다. 판정은 서버가
+    // `Content.updatedAt`(uploading 진입 시각, applyHop CAS가 매 홉 갱신)으로 직접 잰다 —
+    // 클라이언트가 "갇혔다"고 주장해도 그대로 믿지 않는다(임의 강등 경로 차단).
+    // 기본 30분: 원본 실측 최대 173MB·평균 128MB 기준, 가정 회선(느린 업로드)이라도 초당
+    // 0.77Mbps만 나오면 이 임계 안에 끝난다 — 정상 대용량 업로드를 고착으로 오판하지 않는 여유.
+    // 추천의 10분(순수 DB 집계 기준)은 업로드엔 너무 짧아 그대로 재사용하지 않는다.
+    UPLOAD_STUCK_MS: z.coerce.number().int().min(60000).default(1_800_000),
     MEDIA_JOB_ATTEMPTS: z.coerce.number().int().default(3),
     MEDIA_JOB_BACKOFF_MS: z.coerce.number().int().default(5000),
     // 프리뷰/트랜스코딩 프로파일 (worker와 공유 — payload 조립값)

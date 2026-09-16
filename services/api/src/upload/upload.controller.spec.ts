@@ -47,6 +47,10 @@ describe('UploadController — 권한 게이트 (대장 #216 보완1)', () => {
       'abortMultipartUpload (POST :id/multipart-upload-abort)',
       () => UploadController.prototype.abortMultipartUpload,
     ],
+    [
+      'recoverStalledUpload (POST :id/upload-recover, 대장 #224)',
+      () => UploadController.prototype.recoverStalledUpload,
+    ],
   ];
 
   it.each(routes)('%s — @Roles(reporter, center_operator), @Public 미부착', (_label, getHandler) => {
@@ -75,6 +79,7 @@ describe('UploadController — RolesGuard 구동 (reporter·center_operator 통�
     ['multipart-upload', () => UploadController.prototype.startMultipartUpload],
     ['multipart-upload-complete', () => UploadController.prototype.completeMultipartUpload],
     ['multipart-upload-abort', () => UploadController.prototype.abortMultipartUpload],
+    ['upload-recover (대장 #224)', () => UploadController.prototype.recoverStalledUpload],
   ];
 
   it.each(routes)('%s — reporter는 통과한다', (_label, getHandler) => {
@@ -121,6 +126,7 @@ describe('UploadController (조립점) — 서비스에 그대로 위임', () =>
         .mockResolvedValue({ storageKey: 'k', uploadId: 'up-1', partSizeBytes: 1, parts: [], expiresAt: 'e' }),
       completeMultipartUpload: jest.fn().mockResolvedValue({ id: 'c-1' }),
       abortMultipartUpload: jest.fn().mockResolvedValue({ id: 'c-1' }),
+      recoverStalledUpload: jest.fn().mockResolvedValue({ id: 'c-1' }),
     };
     return { controller: new UploadController(upload as unknown as UploadService), upload };
   };
@@ -143,5 +149,8 @@ describe('UploadController (조립점) — 서비스에 그대로 위임', () =>
 
     await controller.abortMultipartUpload(user, 'c-1', { contentId: 'c-1' } as never);
     expect(upload.abortMultipartUpload).toHaveBeenCalledWith(user, 'c-1', { contentId: 'c-1' });
+
+    await controller.recoverStalledUpload(user, 'c-1');
+    expect(upload.recoverStalledUpload).toHaveBeenCalledWith(user, 'c-1');
   });
 });

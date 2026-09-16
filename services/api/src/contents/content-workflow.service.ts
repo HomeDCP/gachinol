@@ -443,13 +443,16 @@ export class ContentWorkflowService {
    * 409, `findOriginal`이 failed 행을 제외해 완료 경로까지 영구 차단됐다(실기 2건, 가드된 조건부 UPDATE로
    * 수동 복원). `beginPublishing`/`resumePublishing`과 같은 골격 — 호출자가 `this.prisma.$transaction`을
    * 열고 이 메서드와 `markFailed(storageKey, tx)`를 그 안에서 함께 부른다.
+   *
+   * `note`(선택) — 대장 #224(업로드 고착 복구, `UploadService.recoverStalledUpload`)가 "왜
+   * 되돌렸는지"를 감사 로그에 남기려고 추가했다. 생략하면 종전과 동일(null, 기존 호출부 무영향).
    */
-  async failUploadTx(tx: Tx, content: ContentRow, user: User): Promise<void> {
+  async failUploadTx(tx: Tx, content: ContentRow, user: User, note?: string): Promise<void> {
     const from = content.status as ContentStatus;
     const to: ContentStatus = 'upload_failed';
     this.requireOwnerOrCenter(content, user);
     this.assertAllowed(from, to);
-    await this.applyHop(tx, content, from, to, { type: 'user', user }, {});
+    await this.applyHop(tx, content, from, to, { type: 'user', user }, { note });
   }
 
   private async userHop(contentId: string, user: User, to: ContentStatus): Promise<ContentRow> {
