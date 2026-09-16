@@ -45,7 +45,13 @@ const dtoMultipartAbort = (over: Record<string, unknown> = {}) => ({
 /** $transaction 콜백에 넘길 tx 스텁 — 두 쓰기가 같은 트랜잭션을 받는지(원자성) 식별용 sentinel */
 const TX_SENTINEL = { __tx: 'sentinel' } as const;
 
-const setup = (contentOver: Record<string, unknown> = {}) => {
+/** 대장 #224 — UPLOAD_STUCK_MS 등 env 기본값(config 옵션 생략 시 실제 env.schema 기본과 동일) */
+const DEFAULT_STUCK_MS = 1_800_000;
+
+const setup = (
+  contentOver: Record<string, unknown> = {},
+  configOver: { stuckMs?: number } = {},
+) => {
   const content = contentRow({ id: 'c-1', status: 'draft', ...contentOver });
   const contents = { loadOwned: jest.fn().mockResolvedValue(content) };
   const workflow = {
@@ -54,6 +60,7 @@ const setup = (contentOver: Record<string, unknown> = {}) => {
     failUpload: jest.fn().mockResolvedValue(contentRow({ id: 'c-1', status: 'upload_failed' })),
     failUploadTx: jest.fn().mockResolvedValue(undefined),
   };
+  const config = { get: jest.fn().mockReturnValue(configOver.stuckMs ?? DEFAULT_STUCK_MS) };
   const assets = {
     originalKey: (id: string, ext: string) => `contents/${id}/g1/original.${ext}`,
     createOriginalPending: jest.fn().mockResolvedValue(undefined),
@@ -85,8 +92,9 @@ const setup = (contentOver: Record<string, unknown> = {}) => {
     s3 as never,
     producer as never,
     prisma as never,
+    config as never,
   );
-  return { contents, workflow, assets, s3, producer, prisma, service };
+  return { contents, workflow, assets, s3, producer, prisma, config, service };
 };
 
 const expectError = async (p: Promise<unknown>, code: string) => {
@@ -414,6 +422,7 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
         headObject: jest.fn(),
       };
       const producer = { enabled: true, enqueueTranscode: jest.fn().mockResolvedValue(undefined) };
+      const config = { get: jest.fn().mockReturnValue(1_800_000) }; // 대장 #224 — 이 테스트는 미사용
       const service = new UploadService(
         contents as never,
         workflow as never,
@@ -421,6 +430,7 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
         s3 as never,
         producer as never,
         prismaForAssets,
+        config as never,
       );
       const ext = 'mp4'; // 재현하려는 결함 경로가 '같은 확장자 재시도'라 확장자를 고정한다
       const fileName = `clip.${ext}`;
@@ -608,6 +618,7 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
       };
       const producer = { enabled: true, enqueueTranscode: jest.fn() };
       const prisma = { $transaction: jest.fn((cb: (tx: unknown) => Promise<unknown>) => cb(TX_SENTINEL)) };
+      const config = { get: jest.fn().mockReturnValue(1_800_000) }; // 대장 #224 — 이 테스트는 미사용
       const service = new UploadService(
         contents as never,
         workflow as never,
@@ -615,6 +626,7 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
         s3 as never,
         producer as never,
         prisma as never,
+        config as never,
       );
 
       await expect(
@@ -935,7 +947,10 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
    * 주입해 admin·center 액터가 업로드 전이를 실제로 완주하는지 확인한다.
    */
   describe('업로드 전이 액터 정책 (대장 #216 — admin·center_operator 실완주, 실 ContentWorkflowService)', () => {
-    const setupReal = (contentOver: Record<string, unknown> = {}) => {
+    const setupReal = (
+      contentOver: Record<string, unknown> = {},
+      configOver: { stuckMs?: number } = {},
+    ) => {
       // 상태 저장소를 흉내낸다(makePrismaMock의 findUnique는 정적 응답이라, 실 CAS
       // updateMany가 낸 변화를 뒤이은 load()가 다시 못 본다 — res.status가 그대로 옛 값이 되어
       // "완주" 여부를 return 값으로 확인할 수 없었다). updateMany가 실제로 상태를 옮기고,
@@ -964,8 +979,12 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
         markReady: jest.fn().mockResolvedValue(undefined),
         markFailed: jest.fn().mockResolvedValue(undefined),
       };
-      const s3 = { headObject: jest.fn().mockResolvedValue({ sizeBytes: 1000 }) };
+      const s3 = {
+        headObject: jest.fn().mockResolvedValue({ sizeBytes: 1000 }),
+        presignPut: jest.fn().mockResolvedValue({ url: 'https://put', expiresAt: 'e' }),
+      };
       const producer = { enabled: true, enqueueTranscode: jest.fn().mockResolvedValue(undefined) };
+      const config = { get: jest.fn().mockReturnValue(configOver.stuckMs ?? DEFAULT_STUCK_MS) };
       const service = new UploadService(
         contents as never,
         workflow,
@@ -973,8 +992,9 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
         s3 as never,
         producer as never,
         prisma as never,
+        config as never,
       );
-      return { prisma, assets, s3, producer, service };
+      return { prisma, assets, s3, producer, service, getState: () => contentState };
     };
 
     it('admin이 타 기자 콘텐츠의 completeUpload를 정상 완주한다 (자산 ready·콘텐츠 uploaded 일치)', async () => {
@@ -1066,5 +1086,202 @@ describe('UploadService — issue/complete 오케스트레이션', () => {
       // 이 시점에서는 콘텐츠가 이미 uploading 그대로다 — 잘못된 uploaded 커밋이 없다.
       expect(prisma.content.updateMany).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * recoverStalledUpload (대장 #224) — 기자가 올리다 막힌 업로드를 센터가 완료·복구할 수 있어야
+ * 한다는 정본 결정(CLAUDE.md §4, 2026-09-15)의 서버측 구동부. **고착 판정은 서버가 한다** —
+ * `content.updatedAt`(uploading 진입 시각)과 서버 시계만으로 경과를 재고, 클라이언트 주장은
+ * 반영하지 않는다(주간추천 `RecommendationsService.recoverStuck` 선례와 동형).
+ *
+ * 실 `ContentWorkflowService`를 주입한다 — `failUploadTx`의 `requireOwnerOrCenter`(무관한 기자
+ * 차단)·CAS(경합 시 뭉개지 않음)는 mock workflow로는 검증할 수 없다(대장 #216 스펙이 같은 이유로
+ * 위에서 실 서비스를 쓴 것과 동형).
+ */
+describe('UploadService.recoverStalledUpload (대장 #224 — 고착 판정은 서버가 한다)', () => {
+  const setupReal = (
+    contentOver: Record<string, unknown> = {},
+    configOver: { stuckMs?: number } = {},
+  ) => {
+    let contentState = contentRow({
+      id: 'c-1',
+      status: 'uploading',
+      reporterId: 'u-reporter',
+      // 기본 1시간 전 = 기본 임계(30분) 초과 — 대부분의 테스트가 "고착됨"을 전제로 하므로 기본값을
+      // 그쪽에 맞추고, "아직 정상 진행 중" 케이스만 개별 override 한다.
+      updatedAt: new Date(Date.now() - 3_600_000),
+      ...contentOver,
+    });
+    const contents = { loadOwned: jest.fn().mockImplementation(async () => contentState) };
+    const prisma = makePrismaMock();
+    prisma.content.findUnique.mockImplementation(async () => contentState);
+    prisma.content.updateMany.mockImplementation(
+      async ({ where, data }: { where: { status: string }; data: Record<string, unknown> }) => {
+        if (contentState.status !== where.status) return { count: 0 };
+        contentState = { ...contentState, ...data } as typeof contentState;
+        return { count: 1 };
+      },
+    );
+    const workflow = new ContentWorkflowService(prisma as never);
+    const assets = {
+      originalKey: (id: string, ext: string) => `contents/${id}/g1/original.${ext}`,
+      createOriginalPending: jest.fn().mockResolvedValue(undefined),
+    };
+    const s3 = { presignPut: jest.fn().mockResolvedValue({ url: 'https://put', expiresAt: 'e' }) };
+    const producer = { enabled: true, enqueueTranscode: jest.fn().mockResolvedValue(undefined) };
+    const config = { get: jest.fn().mockReturnValue(configOver.stuckMs ?? DEFAULT_STUCK_MS) };
+    const service = new UploadService(
+      contents as never,
+      workflow,
+      assets as never,
+      s3 as never,
+      producer as never,
+      prisma as never,
+      config as never,
+    );
+    return { prisma, contents, service, getState: () => contentState };
+  };
+
+  it('경과 < 임계면 409 conflict — 강제 전이 없음(정상 대용량 업로드 오판 방지)', async () => {
+    const { prisma, service } = setupReal({ updatedAt: new Date(Date.now() - 100) });
+
+    await expectError(service.recoverStalledUpload(centerOperatorUser(), 'c-1'), 'conflict');
+    expect(prisma.content.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('경과 == 임계(경계값)는 허용 — 강제 전이(엄격한 미만 비교만 거부한다)', async () => {
+    const { getState, service } = setupReal(
+      { updatedAt: new Date(Date.now() - 1_800_000) },
+      { stuckMs: 1_800_000 },
+    );
+
+    const res = await service.recoverStalledUpload(centerOperatorUser(), 'c-1');
+
+    expect(res.status).toBe('upload_failed');
+    expect(getState().status).toBe('upload_failed');
+  });
+
+  it('경과 > 임계면 강제 전이 + 감사 로그에 "고착 복구" 사유·실 행위자 보존(system으로 바뀌지 않는다)', async () => {
+    const { prisma, service } = setupReal();
+
+    const res = await service.recoverStalledUpload(centerOperatorUser(), 'c-1');
+
+    expect(res.status).toBe('upload_failed');
+    expect(prisma.statusTransitionLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        entityType: 'content',
+        fromStatus: 'uploading',
+        toStatus: 'upload_failed',
+        actorType: 'user',
+        actorUserId: 'u-center',
+        note: expect.stringContaining('고착 복구'),
+      }),
+    });
+  });
+
+  it('uploading이 아니면(정상 진행 중이거나 이미 종결) 409 — "정상 진행"과 "갇힘"을 구분하는 축', async () => {
+    const { prisma, service } = setupReal({ status: 'processing' });
+
+    await expectError(service.recoverStalledUpload(centerOperatorUser(), 'c-1'), 'conflict');
+    expect(prisma.content.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('이미 upload_failed면 멱등 성공 — 새 전이·감사 로그 없음(중복 호출 안전)', async () => {
+    const { prisma, service } = setupReal({ status: 'upload_failed' });
+
+    const res = await service.recoverStalledUpload(centerOperatorUser(), 'c-1');
+
+    expect(res.status).toBe('upload_failed');
+    expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    expect(prisma.statusTransitionLog.create).not.toHaveBeenCalled();
+  });
+
+  it('center_operator가 타 기자 콘텐츠의 고착 업로드를 복구한다', async () => {
+    const { contents, getState, service } = setupReal(); // reporterId='u-reporter', 호출자는 센터
+    const actor = centerOperatorUser();
+
+    await service.recoverStalledUpload(actor, 'c-1');
+
+    expect(getState().status).toBe('upload_failed');
+    // 1차 게이트 배선 확인(대장 #224 보완, verifier M4) — 성공 경로는 초기 게이트 조회 +
+    // 커밋 후 재조회로 정확히 2회. 1회로 줄면 초기 게이트 호출이 우회됐다는 뜻이다.
+    expect(contents.loadOwned).toHaveBeenCalledTimes(2);
+    expect(contents.loadOwned).toHaveBeenNthCalledWith(1, actor, 'c-1');
+  });
+
+  it('admin이 타 기자 콘텐츠의 고착 업로드를 복구한다', async () => {
+    const { contents, getState, service } = setupReal();
+    const actor = adminUser();
+
+    await service.recoverStalledUpload(actor, 'c-1');
+
+    expect(getState().status).toBe('upload_failed');
+    expect(contents.loadOwned).toHaveBeenCalledTimes(2);
+    expect(contents.loadOwned).toHaveBeenNthCalledWith(1, actor, 'c-1');
+  });
+
+  it('소유 기자 본인은 자기 고착 업로드를 스스로 복구할 수 있다(대장 #216과 같은 의미론)', async () => {
+    const { contents, getState, service } = setupReal({ reporterId: 'u-reporter' });
+    const actor = reporterUser();
+
+    await service.recoverStalledUpload(actor, 'c-1');
+
+    expect(getState().status).toBe('upload_failed');
+    expect(contents.loadOwned).toHaveBeenCalledTimes(2);
+    expect(contents.loadOwned).toHaveBeenNthCalledWith(1, actor, 'c-1');
+  });
+
+  it('무관한 기자는 forbidden — failUploadTx의 requireOwnerOrCenter가 막는다(강제 전이 없음)', async () => {
+    const { contents, prisma, service } = setupReal(); // reporterId='u-reporter'
+    const actor = reporterUser({ id: 'u-other-reporter' } as never);
+
+    await expectError(service.recoverStalledUpload(actor, 'c-1'), 'forbidden');
+
+    expect(prisma.content.updateMany).not.toHaveBeenCalled();
+    // 2차 게이트(failUploadTx)가 던지기 **전에** 1차 게이트를 실제로 거쳤는지 — 배선 확인
+    expect(contents.loadOwned).toHaveBeenCalledWith(actor, 'c-1');
+  });
+
+  /**
+   * ★ 1차 권한 게이트 배선 확인 (대장 #224 보완 — 조율자 지시, verifier 뮤테이션 M4)
+   *
+   * verifier가 `this.contents.loadOwned(user, id)` 호출을 무권한 `prisma.content.findUnique`
+   * 직접 조회로 우회했더니 위 테스트들이 전부 그린으로 남았다 — `setupReal`의 `contents.loadOwned`
+   * 스텁이 인자와 무관하게 항상 같은 `contentState`를 돌려주고, 실제 소유권 판정은 오직 2차 게이트
+   * (`ContentWorkflowService.failUploadTx`의 `requireOwnerOrCenter`)에서만 일어나기 때문이다.
+   * 즉 "이중 방어"라는 보고 ④의 주장을 이 파일 자신은 실증하지 못하고 있었다 — 누가 1차 게이트
+   * 호출 자체를 지워도(예: `this.contents.loadOwned` 대신 raw prisma 조회로 바꿔도) 아무 테스트도
+   * 잡아내지 못했다.
+   *
+   * 이 테스트는 **기능**이 아니라 **배선**을 본다: `recoverStalledUpload`가 실제로
+   * `ContentsService.loadOwned(user, id)`를 호출 경로에 태우는지만 단언한다(그 함수 자체의 소유권
+   * 판정 로직은 `contents.service.spec.ts`가 이미 검증한다 — 여기서 중복 검증하지 않는다).
+   * 위 4개 테스트(center·admin·소유 기자·무관한 기자)에 이미 같은 단언을 심었으므로 이 테스트는
+   * 그 사실을 다시 한 번 명시적으로 짚어 두는 대표 케이스다.
+   */
+  it('★ 1차 게이트 배선 확인 — recoverStalledUpload는 첫 호출부터 loadOwned(user, id)를 거친다', async () => {
+    const { contents, service } = setupReal();
+    const actor = centerOperatorUser();
+
+    await service.recoverStalledUpload(actor, 'c-1');
+
+    // 성공 경로는 초기 게이트 조회(1번째) + 커밋 후 재조회(2번째)로 정확히 2회 호출된다.
+    // M4(초기 게이트를 무권한 raw prisma 조회로 우회)가 적용되면 1회로 줄어 이 단언이 red가 된다.
+    expect(contents.loadOwned).toHaveBeenCalledTimes(2);
+    expect(contents.loadOwned).toHaveBeenNthCalledWith(1, actor, 'c-1');
+  });
+
+  it('★ 복구 후 기자가 실제로 재발급을 받을 수 있다 (ISSUABLE 시퀀스 완주, D1)', async () => {
+    const { getState, service } = setupReal({ reporterId: 'u-reporter' });
+
+    const recovered = await service.recoverStalledUpload(centerOperatorUser(), 'c-1');
+    expect(recovered.status).toBe('upload_failed');
+
+    // upload_failed는 ISSUABLE — 기자 본인이 재발급을 받아 uploading으로 다시 진입할 수 있다
+    const issued = await service.issueUploadUrl(reporterUser(), 'c-1', dtoIssue() as never);
+
+    expect(issued.storageKey).toBe('contents/c-1/g1/original.mp4');
+    expect(getState().status).toBe('uploading'); // beginUpload가 재-issue와 함께 다시 옮겼다
   });
 });

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type {
   Content,
   CreateMultipartUploadResponse,
@@ -9,6 +10,7 @@ import { DomainException } from '../common/errors/domain.exception';
 import { toContent } from '../contents/content.mapper';
 import { ContentWorkflowService } from '../contents/content-workflow.service';
 import { ContentsService } from '../contents/contents.service';
+import type { Env } from '../config/env.schema';
 import { MediaAssetsService } from '../media/media-assets.service';
 import { planMultipartUpload, S3Service } from '../media/s3.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -43,6 +45,9 @@ export class UploadService {
     private readonly s3: S3Service,
     private readonly producer: QueueProducerService,
     private readonly prisma: PrismaService,
+    // 대장 #224(업로드 고착 복구) — UPLOAD_STUCK_MS 조회 전용. 끝에 추가해 기존 위치 인자
+    // 호출부(테스트 setup 등)의 앞쪽 6개 인자를 건드리지 않는다.
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   private requirePipeline(): void {
@@ -337,6 +342,76 @@ export class UploadService {
 
     await this.prisma.$transaction(async (tx) => {
       await this.workflow.failUploadTx(tx, content, user);
+    });
+    const updated = await this.contents.loadOwned(user, id);
+    return toContent(updated);
+  }
+
+  /**
+   * 업로드 고착 복구 (대장 #224) — `uploading`이 `UPLOAD_STUCK_MS`보다 오래 머물면 강제로
+   * `upload_failed`로 되돌려 재발급(ISSUABLE=draft·upload_failed)을 연다. 기자가 올리다 막힌
+   * 업로드를 센터가 대신 열어 줄 수 있어야 한다는 정본 결정(CLAUDE.md §4, 2026-09-15)의
+   * 서버측 구동부다.
+   *
+   * ★ **고착 판정은 서버가 한다** — 클라이언트가 "이건 갇혔다"고 주장해도 그대로 믿지 않는다
+   * (주간추천 `RecommendationsService.recoverStuck` 선례와 동형). 여기서는 `content.updatedAt`
+   * (마지막 전이 시각 — `applyHop`의 CAS UPDATE가 매 홉마다 갱신하므로 `uploading` 진입 시각과
+   * 같다)과 서버 시계만으로 경과시간을 재고, 클라이언트는 그 결과(409/200)를 받을 뿐이다.
+   *
+   * 액터: `loadOwned`(소유 기자 또는 center_operator·admin — 대장 #216이 통일한 것과 같은
+   * 의미론). 무관한 기자(타 지사·타 기자 콘텐츠)는 `loadOwned`가 403으로 막는다. 정본상 이
+   * 행위의 주된 주체는 센터·admin(CLAUDE.md §4)이지만, 인접한 업로드 액션(`beginUpload`·
+   * `completeUpload`·`failUpload`·`failUploadTx`)이 전부 소유 기자도 이미 허용하고 있어
+   * (대장 #216) 같은 엣지(`uploading→upload_failed`)에만 다른 액터 규칙을 두면 "왜 이 경로만
+   * 다른가"라는 불일치가 생긴다. 기자 본인이 자기 업로드가 멈췄다는 것을 가장 먼저 알아채는
+   * 경우(새로고침 후 서버 상태만 `uploading`으로 남아 있는 상황)도 있어, 자기 것을 스스로 여는
+   * 것을 막을 이유가 없다고 판단했다 — 다만 이 판단은 위임자 재검토 대상으로 보고에 남긴다.
+   *
+   * 응답 분기(멱등·경합 — 값은 전부 서버가 그 순간 재조회해 판정, 클라이언트 입력 없음):
+   *  · 이미 `upload_failed` → 목표 상태 그대로 반환(멱등 성공). 이미 열려 있는 것을 또 눌러도
+   *    새 전이·감사 로그를 쌓지 않는다(재시도 오픈이라는 목적은 이미 달성돼 있다).
+   *  · `uploading`이 아닌 다른 상태(다른 단계에서 정상 진행 중이거나 이미 종결) → 409 conflict.
+   *    "정상 진행 중"과 "갇힘"을 구분하는 축이 바로 이 분기다 — uploading이 아니면 애초에 이
+   *    엔드포인트의 대상이 아니다.
+   *  · `uploading`이지만 경과 < `UPLOAD_STUCK_MS` → 409 conflict(details: elapsedMs·stuckMs).
+   *    대용량 업로드가 아직 정상 진행 중일 수 있다(오판 방지 — 위임 근거: 원본 최대 173MB,
+   *    가정 회선이 origin).
+   *  · `uploading` && 경과 ≥ `UPLOAD_STUCK_MS` → `failUploadTx`로 강제 전이(CAS). 그 사이
+   *    다른 경로(기자의 정상 completeUpload 등)가 먼저 끝났으면 CAS가 0행 → 409(재조회 유도,
+   *    뭉개지 않는다 — `applyHop`의 기본 동작).
+   */
+  async recoverStalledUpload(user: User, id: string): Promise<Content> {
+    const content = await this.contents.loadOwned(user, id);
+
+    if (content.status === 'upload_failed') {
+      return toContent(content); // 이미 목표 상태 — 멱등 성공(전이·로그 없음)
+    }
+    if (content.status !== 'uploading') {
+      throw new DomainException(
+        'conflict',
+        'uploading 상태가 아니라 복구할 수 없습니다 — 정상 진행 중이거나 이미 다른 단계로 넘어갔습니다',
+        { status: content.status },
+      );
+    }
+
+    const stuckMs = this.config.get('UPLOAD_STUCK_MS', { infer: true });
+    const elapsedMs = Date.now() - content.updatedAt.getTime();
+    if (elapsedMs < stuckMs) {
+      throw new DomainException(
+        'conflict',
+        '아직 정상 업로드 진행 중일 수 있습니다 — 고착 임계에 도달하지 않았습니다',
+        { status: content.status, elapsedMs, stuckMs },
+      );
+    }
+
+    const elapsedSec = Math.round(elapsedMs / 1000);
+    await this.prisma.$transaction(async (tx) => {
+      await this.workflow.failUploadTx(
+        tx,
+        content,
+        user,
+        `업로드 고착 복구 (${elapsedSec}초 경과, 임계 ${Math.round(stuckMs / 1000)}초)`,
+      );
     });
     const updated = await this.contents.loadOwned(user, id);
     return toContent(updated);

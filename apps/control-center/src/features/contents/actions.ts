@@ -53,6 +53,24 @@ export interface CenterActions {
    * `POST /v1/contents/:id/regenerate`(커밋 후 인큐)뿐이고, 이 플래그가 그 버튼을 연다.
    */
   canRegenerate: boolean;
+  /**
+   * ★ 업로드 고착 복구 — `uploading`에서만 열린다(대장 #224, 서버 `POST /:id/upload-recover`).
+   *
+   * 전용 액션으로 뽑는 이유(canRegenerate·canArchive와 같은 결): `uploading`은 이미
+   * `SYSTEM_DRIVEN_CONTENT_STATUSES`이자 구현된 출구(`uploaded`·`upload_failed`)를 가져
+   * `isAutoProgressContentStatus('uploading')===true`다 — 아래 ③ 규칙이 이미 독립적으로
+   * `manualTransitionTargets`를 닫아 두고 있다("출구 중 하나라도 자동 진행 상태로 이어지면
+   * 센터가 대신 눌러선 안 된다" — 정상 업로드는 기자·파이프라인이 밟는 길이다). 그 규칙은
+   * **약화하지 않는다**: 이 플래그는 범용 탈출구가 아니라, 고착 여부를 서버가 직접 판정하는
+   * **별도의 전용 엔드포인트**로 가는 문일 뿐이다.
+   *
+   * ★ 판정을 클라이언트에 복제하지 않는다 — 버튼은 `uploading`이면 **항상** 보이고, "정말
+   * 고착인가"는 서버가 `Content.updatedAt`+`UPLOAD_STUCK_MS`로만 판정한다(임계값 30분을
+   * 여기 상수로 복제하면 대장 #211의 "상수 복제가 서버와 어긋난다" 결함이 재발한다). 아직
+   * 정상 진행 중이면 서버가 409(`details.elapsedMs`·`stuckMs`)로 거부하고, 그 안내 문구는
+   * `formatUploadRecoverWait`(호출부)가 만든다.
+   */
+  canRecoverUpload: boolean;
 }
 
 /**
@@ -61,9 +79,10 @@ export interface CenterActions {
  * 유일 기준: "센터가 지시하지 않으면 아무도 이 콘텐츠를 다음으로 옮기지 않는다".
  * 세 축의 교집합으로 판정하며 셋 다 shared에서 파생한다:
  *
- *  ① 이 앱의 전용 액션이 없다 — canDecide·canRetry·canDistribute가 이미 진행 경로를 주면
- *     탈출구를 중복 노출하지 않는다(기존 설계 의도 그대로: 실패 6종은 canRetry가,
- *     awaiting_center_review는 canDecide가, center_approved는 canDistribute가 담당).
+ *  ① 이 앱의 전용 액션이 없다 — canDecide·canRetry·canDistribute·canRegenerate·canRecoverUpload가
+ *     이미 진행 경로를 주면 탈출구를 중복 노출하지 않는다(기존 설계 의도 그대로: 실패 6종은
+ *     canRetry가, awaiting_center_review는 canDecide가, center_approved는 canDistribute가,
+ *     revision_requested는 canRegenerate가, **uploading은 canRecoverUpload가** 담당).
  *  ② 자기 자신이 자동 진행 상태가 아니다 — shared `isAutoProgressContentStatus`
  *     (= SYSTEM_DRIVEN ∩ 구현된 출구 보유, NOT_WIRED 파생).
  *  ③ **나가는 길 끝에 자동 진행 상태가 하나도 없다** — 출구 중 하나라도 자동 진행 상태로
@@ -71,6 +90,11 @@ export interface CenterActions {
  *
  * ③이 핵심이다. 이것만으로
  *   · `draft`(→`uploading`이 자동 진행 = 기자의 업로드 시작이 진짜 경로)
+ *   · `uploading` 자신(→`uploaded`·`upload_failed` 둘 다 자동 진행 = 정상 업로드는
+ *     기자·업로드 파이프라인이 밟는 길. **대장 #224의 canRecoverUpload가 열리는 것과
+ *     별개다** — ③은 여전히 uploading을 닫아 두고, canRecoverUpload는 그 잠금을 우회하는
+ *     것이 아니라 "정상 진행 vs 고착"을 서버가 판정하는 **전용** 문이다. 이중 잠금이라
+ *     canRecoverUpload가 없어도 ③만으로 이미 닫혀 있었다)
  *   · `awaiting_reporter_review`(→`reporter_approved`가 자동 진행 = 담당 기자 결정이 진짜 경로.
  *     서버도 `requireOwnerReporter`로 센터를 막는다)
  * 가 **상태 이름을 적지 않고** 닫히고,
@@ -95,9 +119,12 @@ export function centerActionsFor(c: Pick<Content, 'status'>): CenterActions {
   const canRegenerate =
     c.status === ContentStatus.RevisionRequested &&
     canTransitionContent(c.status, ContentStatus.Regenerating);
+  // 대장 #224 — uploading에서만 열린다. 고착 여부는 여기서 판정하지 않는다(서버 단독 판정).
+  const canRecoverUpload = c.status === ContentStatus.Uploading;
 
   const exits: readonly ContentStatus[] = CONTENT_STATUS_TRANSITIONS[c.status];
-  const dedicatedActionExists = canDecide || canRetry || canDistribute || canRegenerate;
+  const dedicatedActionExists =
+    canDecide || canRetry || canDistribute || canRegenerate || canRecoverUpload;
   const someoneElseDrivesIt =
     isAutoProgressContentStatus(c.status) || exits.some((to) => isAutoProgressContentStatus(to));
 
@@ -110,6 +137,7 @@ export function centerActionsFor(c: Pick<Content, 'status'>): CenterActions {
     canDistribute,
     canArchive: manualTransitionTargets.includes(ContentStatus.Archived),
     canRegenerate,
+    canRecoverUpload,
     manualTransitionTargets,
   };
 }

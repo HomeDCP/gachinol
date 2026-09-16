@@ -26,6 +26,7 @@ import {
   formatConfidence,
   formatDateTime,
   formatDuration,
+  formatRelativeTime,
   formatSec,
 } from '../../../src/features/contents/format';
 import {
@@ -51,6 +52,7 @@ import {
   useReject,
   useRequestRevision,
   useRetractPublication,
+  useRecoverUpload,
   useRegenerate,
   useRetry,
   useRetryPublication,
@@ -69,6 +71,7 @@ import {
   minorSubjectBadge,
   statusBadge,
 } from '../../../src/features/contents/status';
+import { formatUploadRecoverWait } from '../../../src/features/contents/upload-recovery';
 import {
   validateRejectNote,
   validateRevisionNote,
@@ -99,6 +102,16 @@ const ARCHIVE_WARNING =
   '보관하면 공개 서버에 복사돼 있던 재생용 영상·썸네일이 삭제되고 CDN 캐시가 즉시 무효화됩니다. ' +
   '구독자 앱·공개 피드에서 더 이상 재생되지 않습니다. 되돌릴 수 없습니다 — 보관 상태에서 나가는 ' +
   '전이가 없어 다시 송출하려면 새 콘텐츠로 진행해야 합니다. 원본 영상과 전이 이력·AI 분석은 남습니다.';
+
+/**
+ * 업로드 고착 복구 경고 (대장 #224) — 무엇이 일어나는지(재시도가 열린다)와 무엇이 아닌지
+ * (콘텐츠를 버리는 게 아니다)를 함께 적는다. 고착 판정은 서버가 하므로 정상 진행 중이면
+ * 그대로 거부된다는 사실도 명시해 "왜 눌렀는데 실패했지"에 대한 선제 안내가 되게 한다.
+ */
+const UPLOAD_RECOVER_WARNING =
+  '업로드가 오래 멈춰 있을 때만 사용하세요. 복구하면 이 콘텐츠는 업로드 실패 상태로 바뀌어 ' +
+  '기자가 다시 업로드를 시도할 수 있게 됩니다 — 콘텐츠를 삭제하거나 취소하는 것이 아닙니다. ' +
+  '아직 정상적으로 업로드가 진행 중이라면 서버가 거부합니다.';
 
 function statusLabelOf(status: string): string {
   return status in STATUS_BADGE_CENTER
@@ -376,6 +389,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const reject = useReject(contentId);
   const retry = useRetry(contentId);
   const regenerate = useRegenerate(contentId);
+  const recoverUpload = useRecoverUpload(contentId);
   const distribute = useDistribute(contentId);
   const retryPublication = useRetryPublication(contentId);
   const retractPublication = useRetractPublication(contentId);
@@ -438,7 +452,8 @@ export default function ContentDetailScreen(): React.JSX.Element {
     requestRevision.isPending ||
     reject.isPending ||
     distribute.isPending ||
-    manualTransition.isPending;
+    manualTransition.isPending ||
+    recoverUpload.isPending;
   const publicationRows = publications.data ?? [];
 
   // 미성년 등장 표시(T-W2-36) — 정보 배지일 뿐, 판단(확인·차단)은 하지 않는다.
@@ -520,6 +535,30 @@ export default function ContentDetailScreen(): React.JSX.Element {
   };
 
   // (이력) 舊 동의 확인/철회 다이얼로그(대장 #130)는 T-W2-36으로 제거.
+
+  /**
+   * 업로드 고착 복구(대장 #224) — 기자의 업로드를 되돌리는 조작이라 확인을 받는다.
+   * 409는 `useRecoverUpload`가 무효화만 하고 토스트는 여기서 만든다 — elapsedMs·stuckMs
+   * 유무로 "아직 임계 미만"과 "이미 다른 상태로 넘어감"을 구분해 다른 문구를 보여준다.
+   */
+  const confirmRecoverUpload = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: '업로드 복구할까요?',
+      message: UPLOAD_RECOVER_WARNING,
+      confirmText: '복구',
+    });
+    if (!ok) return;
+    recoverUpload.mutate(undefined, {
+      onSuccess: () => showToast('업로드를 복구했습니다 — 기자가 다시 업로드를 시도할 수 있습니다'),
+      onError: (err) => {
+        if (isApiClientError(err) && err.status === 409) {
+          showToast(formatUploadRecoverWait(err.error.details) ?? '상태가 변경되어 새로고침했습니다');
+          return;
+        }
+        showToast(userMessageForError(err));
+      },
+    });
+  };
 
   const confirmRetryPublication = async (p: Publication): Promise<void> => {
     const ok = await confirmDialog({
@@ -851,6 +890,28 @@ export default function ContentDetailScreen(): React.JSX.Element {
             onPress={() => openSheet('manual-transition')}
             disabled={anyPending}
           />
+        ) : actions.canRecoverUpload ? (
+          // 대장 #224 — 정상 업로드 중에도 항상 보이는 버튼이다. 고착 판정은 서버가 하므로
+          // 여기서는 임계값을 흉내내지 않는다(설계 근거는 UPLOAD_RECOVER_WARNING·formatUploadRecoverWait).
+          // ⭐ 게이트② 보완 — `Content.updatedAt`(고착 판정의 실제 기준)의 **상대시각만 사실로**
+          // 보여준다. "고착됨"이라 단정하지 않는다(임계값 미복제) — 판정은 여전히 서버 몫이고,
+          // 이 줄은 그 판단 재료(사람이 감으로 볼 재료)일 뿐이다.
+          <>
+            <Text style={styles.metaText}>
+              마지막 변경: {formatRelativeTime(content.updatedAt)}
+            </Text>
+            <Text style={styles.metaText}>
+              기자가 업로드 중입니다. 오래 멈춰 있다면 복구해 재시도를 열 수 있습니다 — 정상
+              진행 중이면 서버가 거부합니다.
+            </Text>
+            <Button
+              label="업로드 복구"
+              variant="secondary"
+              onPress={() => void confirmRecoverUpload()}
+              loading={recoverUpload.isPending}
+              disabled={anyPending}
+            />
+          </>
         ) : !isTerminalStatus(content.status) ? (
           <Text style={styles.metaText}>지금은 대기 단계입니다 (기자·파이프라인 소관).</Text>
         ) : null}

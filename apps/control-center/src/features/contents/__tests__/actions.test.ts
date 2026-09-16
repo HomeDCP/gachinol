@@ -13,17 +13,19 @@ describe('centerActionsFor', () => {
       canRetry: false,
       canDistribute: false,
       canRegenerate: false,
+      canRecoverUpload: false,
       canArchive: false,
       manualTransitionTargets: [],
     });
   });
 
-  test('canDecide ⇔ awaiting_center_review, canRetry ⇔ isFailureStatus, canDistribute ⇔ center_approved (전 상태 순회)', () => {
+  test('canDecide ⇔ awaiting_center_review, canRetry ⇔ isFailureStatus, canDistribute ⇔ center_approved, canRecoverUpload ⇔ uploading (전 상태 순회)', () => {
     for (const status of Object.values(ContentStatus)) {
       const a = centerActionsFor({ status });
       expect(a.canDecide).toBe(status === ContentStatus.AwaitingCenterReview);
       expect(a.canRetry).toBe(isFailureStatus(status));
       expect(a.canDistribute).toBe(status === ContentStatus.CenterApproved);
+      expect(a.canRecoverUpload).toBe(status === ContentStatus.Uploading);
     }
   });
 
@@ -33,6 +35,7 @@ describe('centerActionsFor', () => {
       canRetry: false,
       canDistribute: true,
       canRegenerate: false,
+      canRecoverUpload: false,
       canArchive: false,
       manualTransitionTargets: [],
     });
@@ -52,6 +55,7 @@ describe('centerActionsFor', () => {
       canRetry: false,
       canDistribute: false,
       canRegenerate: false,
+      canRecoverUpload: false,
       canArchive: false,
       manualTransitionTargets: [],
     });
@@ -118,7 +122,7 @@ describe('centerActionsFor — manualTransitionTargets', () => {
     expect(withArchive).toEqual([ContentStatus.Published]);
   });
 
-  test('published 외 22종은 전부 빈 배열 — 나머지는 전용 액션(canRetry·canDecide·canRegenerate)이 담당', () => {
+  test('published 외 22종은 전부 빈 배열 — 나머지는 전용 액션(canRetry·canDecide·canRegenerate·canRecoverUpload)이 담당', () => {
     const open: string[] = [];
     for (const status of Object.values(ContentStatus)) {
       const targets = centerActionsFor({ status }).manualTransitionTargets;
@@ -141,9 +145,10 @@ describe('centerActionsFor — manualTransitionTargets', () => {
     }
   });
 
-  test('출구에 자동 진행 상태가 하나라도 있으면 닫힌다 — draft(→uploading)·awaiting_reporter_review(→reporter_approved)', () => {
+  test('출구에 자동 진행 상태가 하나라도 있으면 닫힌다 — draft(→uploading)·uploading(→uploaded/upload_failed)·awaiting_reporter_review(→reporter_approved)', () => {
     for (const status of [
       ContentStatus.Draft,
+      ContentStatus.Uploading,
       ContentStatus.AwaitingReporterReview,
     ] as const) {
       const exits: readonly ContentStatus[] = CONTENT_STATUS_TRANSITIONS[status];
@@ -160,16 +165,55 @@ describe('centerActionsFor — manualTransitionTargets', () => {
       expect(a.canRetry).toBe(false);
       expect(a.canDistribute).toBe(false);
       expect(a.canRegenerate).toBe(false);
+      expect(a.canRecoverUpload).toBe(false);
     }
   });
 
-  test('역도 성립 — 전용 액션이 있으면 범용 탈출구는 닫힌다 (revision_requested 포함)', () => {
+  test('역도 성립 — 전용 액션이 있으면 범용 탈출구는 닫힌다 (revision_requested·uploading 포함)', () => {
     for (const status of Object.values(ContentStatus)) {
       const a = centerActionsFor({ status });
-      if (a.canDecide || a.canRetry || a.canDistribute || a.canRegenerate) {
+      if (a.canDecide || a.canRetry || a.canDistribute || a.canRegenerate || a.canRecoverUpload) {
         expect(a.manualTransitionTargets).toEqual([]);
       }
     }
+  });
+});
+
+/**
+ * canRecoverUpload (대장 #224) — uploading 전용. 판정 자체(고착 여부)는 서버 몫이라 여기서는
+ * "버튼이 uploading에서만 보이는가"·"기존 ③ 규칙과 충돌하지 않는가"만 고정한다.
+ */
+describe('centerActionsFor — canRecoverUpload', () => {
+  test('uploading → canRecoverUpload=true, 다른 전용 액션은 전부 false, manualTransitionTargets는 여전히 []', () => {
+    expect(centerActionsFor({ status: 'uploading' })).toEqual({
+      canDecide: false,
+      canRetry: false,
+      canDistribute: false,
+      canRegenerate: false,
+      canRecoverUpload: true,
+      canArchive: false,
+      manualTransitionTargets: [],
+    });
+  });
+
+  test('uploading 외 22종은 canRecoverUpload=false', () => {
+    for (const status of Object.values(ContentStatus)) {
+      if (status === ContentStatus.Uploading) continue;
+      expect(centerActionsFor({ status }).canRecoverUpload).toBe(false);
+    }
+  });
+
+  /**
+   * ★ 핵심 회귀 방지 — canRecoverUpload가 uploading에서 manualTransitionTargets를 여는 것으로
+   * 오독되면 안 된다. uploading의 두 출구(uploaded·upload_failed)는 이미 구현된 자동 진행
+   * 상태라 ③ 규칙이 canRecoverUpload 도입과 **무관하게** 독립적으로 닫아 두고 있었다 — 전용
+   * 액션은 그 잠금을 대체하는 것이지 여는 것이 아니다.
+   */
+  test('uploading 자신이 이미 자동 진행 상태(③ 규칙 전제) — canRecoverUpload 도입과 무관하게 manualTransitionTargets=[]', () => {
+    // uploading은 SYSTEM_DRIVEN이면서 구현된 출구(uploaded)를 가져 isAutoProgressContentStatus가
+    // 참이다 — 실제로 "정상 업로드 중"을 자동 진행으로 미는 주체는 업로드 완료 검증(UploadService)이다.
+    expect(isAutoProgressContentStatus(ContentStatus.Uploading)).toBe(true);
+    expect(centerActionsFor({ status: 'uploading' }).manualTransitionTargets).toEqual([]);
   });
 });
 

@@ -66,6 +66,15 @@ export const regenerateContent = (c: ApiClient, id: ContentId): Promise<Content>
 export const retryContent = (c: ApiClient, id: ContentId): Promise<Content> =>
   c.request<Content>('POST', `/contents/${id}/retry`);
 
+/**
+ * POST /v1/contents/:id/upload-recover — 업로드 고착 복구(대장 #224). 서버가 `Content.updatedAt`+
+ * `UPLOAD_STUCK_MS`로 고착 여부를 직접 판정한다(요청 바디 없음 — 클라이언트 값이 판정에 닿을
+ * 통로가 물리적으로 없다). 이미 `upload_failed`면 200(멱등) · `uploading`이지만 임계 미만이면
+ * 409(`details.elapsedMs`·`stuckMs`) · 다른 상태면 409(`details.status`).
+ */
+export const recoverUpload = (c: ApiClient, id: ContentId): Promise<Content> =>
+  c.request<Content>('POST', `/contents/${id}/upload-recover`);
+
 /** GET /v1/contents/:id/transition-logs — 최신순 */
 export const listTransitionLogs = (
   c: ApiClient,
