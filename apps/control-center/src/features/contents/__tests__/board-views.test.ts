@@ -20,6 +20,16 @@ describe('BOARD_VIEWS — 기본 구성', () => {
     const labels = BOARD_VIEWS.map((v) => v.label);
     expect(new Set(labels).size).toBe(labels.length);
   });
+
+  /**
+   * 대장 #224 — 업로드 고착 복구의 발견 경로. uploading은 needsCenterAction이 아니라(정상
+   * 진행 중일 수 있어 status.ts가 의도적으로 강조하지 않는다) 보드 하이라이트로는 드러나지
+   * 않는다 — 이 칩이 없으면 센터가 uploading 콘텐츠를 조회할 방법 자체가 없어진다.
+   */
+  it("'업로드 중' 칩이 uploading 상태를 조회한다", () => {
+    const view = BOARD_VIEWS.find((v) => v.label === '업로드 중');
+    expect(view?.status).toBe('uploading');
+  });
 });
 
 describe('toBoardFilter — 뷰 + 부가 필터 → 서버 조회 파라미터', () => {

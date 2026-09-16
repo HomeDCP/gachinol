@@ -40,6 +40,7 @@ import type {
  * **화면·파생 코드 자체는 Alert를 import하지 않는다**(이 파일만 테스트 목적으로 쓴다).
  */
 import ContentDetailScreen from '../../../../app/(app)/contents/[id]';
+import { ApiClientError } from '../../../api/errors';
 
 const CONTENT_ID = 'content-1';
 
@@ -66,15 +67,18 @@ const mockGetContentDetail = jest.fn();
 const mockListTransitionLogs = jest.fn();
 const mockListPublications = jest.fn();
 const mockTransitionContent = jest.fn();
+const mockRecoverUpload = jest.fn();
 jest.mock('../../../api/contents', () => ({
   getContentDetail: (...a: unknown[]) => mockGetContentDetail(...a),
   listTransitionLogs: (...a: unknown[]) => mockListTransitionLogs(...a),
   listPublications: (...a: unknown[]) => mockListPublications(...a),
   transitionContent: (...a: unknown[]) => mockTransitionContent(...a),
+  recoverUpload: (...a: unknown[]) => mockRecoverUpload(...a),
   approveContent: jest.fn(),
   requestRevision: jest.fn(),
   rejectContent: jest.fn(),
   retryContent: jest.fn(),
+  regenerateContent: jest.fn(),
   distributeContent: jest.fn(),
   retryPublication: jest.fn(),
   retractPublication: jest.fn(),
@@ -256,5 +260,124 @@ describe('ContentDetailScreen — 미성년 등장 정보 카드 (T-W2-36)', () 
     expect(queryByText('동의 확인')).toBeNull();
     expect(queryByText('동의 확인 철회')).toBeNull();
     expect(queryByText(/승인이 차단/)).toBeNull();
+  });
+});
+
+/**
+ * 업로드 고착 복구 (대장 #224) — 순수 함수 테스트(actions.test.ts·upload-recovery.test.ts)만으로는
+ * 잡히지 않는 **배선**을 고정한다:
+ *  ① uploading 콘텐츠에 "업로드 복구" 버튼이 실제로 렌더된다.
+ *  ② 다른 상태(published)에는 버튼이 없다.
+ *  ③ 확인 다이얼로그를 경유한다 — 취소하면 API가 호출되지 않는다.
+ *  ④ 409 `details.elapsedMs`·`stuckMs`가 있으면 **고정 문구가 아니라** 남은 시간 안내가 뜬다.
+ *  ⑤ `details.status`만 있으면(이미 다른 상태) 일반 안내로 폴백한다.
+ *  ⑥ (게이트② 보완) `Content.updatedAt`의 상대시각이 uploading에서만 뜨고, "고착됨"이라
+ *     단정하는 문구는 없다 — 임계값(30분)을 복제하지 않는다.
+ */
+describe('ContentDetailScreen — 업로드 고착 복구 (대장 #224)', () => {
+  const uploading = buildContent({ status: ContentStatus.Uploading, publishedAt: null });
+
+  it('uploading 콘텐츠에 "업로드 복구" 버튼이 렌더된다', async () => {
+    const { findByText } = await renderScreen(uploading);
+    await findByText('업로드 복구');
+  });
+
+  it('published 콘텐츠에는 "업로드 복구" 버튼이 없다', async () => {
+    const { findByText, queryByText } = await renderScreen(buildContent());
+    await findByText('보관');
+    expect(queryByText('업로드 복구')).toBeNull();
+  });
+
+  /**
+   * ★ 게이트② 보완 — 임계값을 복제하지 않으면서도 센터에게 판단 재료(경과시간)를 준다.
+   * `updatedAt`은 고착 판정의 실제 기준(서버 `recoverStalledUpload`)이라 다른 임의 시각이 아니다.
+   * "고착됨"이라 단정하는 문구가 없다는 것도 함께 고정한다 — 판정은 여전히 서버 몫이다.
+   */
+  it('uploading 콘텐츠에 "마지막 변경" 상대시각이 뜨고, "고착" 단정 문구는 없다', async () => {
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const { findByText, queryByText } = await renderScreen(
+      buildContent({ status: ContentStatus.Uploading, publishedAt: null, updatedAt: threeHoursAgo }),
+    );
+
+    await findByText('마지막 변경: 3시간 전');
+    expect(queryByText(/고착/)).toBeNull();
+  });
+
+  it('uploading이 아니면(published) "마지막 변경" 상대시각 줄이 없다', async () => {
+    const { findByText, queryByText } = await renderScreen(buildContent());
+    await findByText('보관');
+    expect(queryByText(/마지막 변경:/)).toBeNull();
+  });
+
+  /**
+   * 네이티브 경로에서 `confirmDialog`는 `Alert.alert(title, message, buttons)`를 그대로 호출한다
+   * (react-native-web과 달리 화면 트리에 렌더되지 않는다) — 그래서 "무엇이 일어나는지·무엇이
+   * 아닌지"는 getByText가 아니라 스파이한 Alert.alert 호출 인자(message)로 검증한다.
+   */
+  it('확인 다이얼로그에 "무엇이 일어나는지·무엇이 아닌지" 안내가 담기고, 취소하면 API가 호출되지 않는다', async () => {
+    const alertSpy = cancelDialog();
+    const { findByText } = await renderScreen(uploading);
+
+    await fireEvent.press(await findByText('업로드 복구'));
+
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy.mock.calls[0]?.[0]).toBe('업로드 복구할까요?');
+    const dialogMessage = alertSpy.mock.calls[0]?.[1] as string;
+    expect(dialogMessage).toMatch(/오래 멈춰 있을 때만 사용하세요/);
+    expect(dialogMessage).toMatch(/기자가 다시 업로드를 시도할 수 있게 됩니다/);
+    expect(dialogMessage).toMatch(/콘텐츠를 삭제하거나 취소하는 것이 아닙니다/);
+    await waitFor(() => expect(mockRecoverUpload).not.toHaveBeenCalled());
+  });
+
+  it('확정하면 upload-recover API를 호출한다', async () => {
+    pressDialogButton('복구');
+    mockRecoverUpload.mockResolvedValue(
+      buildContent({ status: ContentStatus.UploadFailed, publishedAt: null }),
+    );
+    const { findByText } = await renderScreen(uploading);
+
+    await fireEvent.press(await findByText('업로드 복구'));
+
+    await waitFor(() =>
+      expect(mockRecoverUpload).toHaveBeenCalledWith(expect.anything(), CONTENT_ID),
+    );
+  });
+
+  it('409(elapsedMs·stuckMs)면 고정 문구가 아니라 남은 시간 안내 토스트를 띄운다', async () => {
+    const alertSpy = pressDialogButton('복구');
+    mockRecoverUpload.mockRejectedValue(
+      new ApiClientError(409, {
+        code: 'conflict',
+        message: '아직 정상 업로드 진행 중일 수 있습니다 — 고착 임계에 도달하지 않았습니다',
+        details: { status: 'uploading', elapsedMs: 0, stuckMs: 1_800_000 },
+      }),
+    );
+    const { findByText } = await renderScreen(uploading);
+
+    await fireEvent.press(await findByText('업로드 복구'));
+
+    await waitFor(() =>
+      expect(alertSpy.mock.calls.map((c) => c[0])).toContain(
+        '아직 업로드가 진행 중일 수 있습니다 — 약 30분 후 다시 시도해 주세요.',
+      ),
+    );
+  });
+
+  it('409(details.status만 — 이미 다른 상태로 전이)이면 일반 안내 토스트로 폴백한다', async () => {
+    const alertSpy = pressDialogButton('복구');
+    mockRecoverUpload.mockRejectedValue(
+      new ApiClientError(409, {
+        code: 'conflict',
+        message: 'uploading 상태가 아니라 복구할 수 없습니다',
+        details: { status: 'uploaded' },
+      }),
+    );
+    const { findByText } = await renderScreen(uploading);
+
+    await fireEvent.press(await findByText('업로드 복구'));
+
+    await waitFor(() =>
+      expect(alertSpy.mock.calls.map((c) => c[0])).toContain('상태가 변경되어 새로고침했습니다'),
+    );
   });
 });

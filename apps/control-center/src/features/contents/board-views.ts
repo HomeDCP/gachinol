@@ -19,6 +19,9 @@ export interface BoardView {
 // (이력) 舊 '동의 확인 대기' 뷰(T-W2-27, 대장 #118)는 T-W2-36으로 제거 — 판단 축 자체가 소멸.
 export const BOARD_VIEWS: readonly BoardView[] = [
   { label: '검토 대기', status: 'awaiting_center_review' },
+  // 대장 #224 — 업로드 고착 복구의 발견 경로. uploading은 needsCenterAction이 아니라(정상
+  // 진행 중일 수 있어 오탐 방지) 보드 하이라이트로는 안 뜬다 — 이 칩이 유일한 진입로다.
+  { label: '업로드 중', status: 'uploading' },
   { label: '전체' },
   { label: '처리 중', status: 'processing' },
   { label: '분석 중', status: 'analyzing' },

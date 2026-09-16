@@ -16,6 +16,7 @@ import {
   rejectContent,
   requestRevision,
   retractPublication,
+  recoverUpload,
   regenerateContent,
   retryContent,
   retryPublication,
@@ -96,6 +97,27 @@ export function useRetry(id: ContentId) {
     mutationFn: () => retryContent(client, id),
     onSuccess: (content) => applyContentResult(queryClient, content),
     onError: (err) => handleTransitionError(queryClient, id, err),
+  });
+}
+
+/**
+ * 업로드 고착 복구(대장 #224) — 다른 결정 액션과 달리 409의 안내 문구가 서버가 보낸
+ * `details.elapsedMs`·`stuckMs`에 따라 달라져(`formatUploadRecoverWait`) 호출부가 직접 만든다.
+ * 그래서 여기서는 `handleTransitionError`(고정 토스트 "상태가 변경되어…")를 재사용하지 않고
+ * **무효화만** 한다 — 토스트는 화면(`app/(app)/contents/[id].tsx`)의 mutate onError가 담당.
+ */
+export function useRecoverUpload(id: ContentId) {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => recoverUpload(client, id),
+    onSuccess: (content) => applyContentResult(queryClient, content),
+    onError: (err) => {
+      if (isApiClientError(err) && err.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: contentKeys.detail(id) });
+        void queryClient.invalidateQueries({ queryKey: contentKeys.logs(id) });
+      }
+    },
   });
 }
 
