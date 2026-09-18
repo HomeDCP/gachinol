@@ -48,6 +48,13 @@ const GALLERY_LABEL = '휴대폰 카메라로 찍은 영상 올리기';
 const CAMERA_LABEL = '여기서 바로 촬영 (화질 낮음)';
 const FORBIDDEN_TERMS = ['해상도', '비트레이트', 'WebKit', 'capture', '360', '480'];
 
+// 안내문 회귀 가드 (M3, 게이트② 무반응 수리) — 전문 완전일치는 사소한 다듬기마다 깨지므로
+// "기자가 무엇을 해야 하는지"를 담은 행동 지시 핵심 구절만 검사한다. 舊 문구
+// ("현장 영상을 촬영하거나 촬영해 둔 영상을 선택하세요.")는 이 핵심 구절이 없어 되돌리면
+// 아래 존재 검사가 즉시 빨간불이 된다. 舊 문구 부재도 함께 확인해 이중으로 잡는다.
+const GUIDANCE_CORE_PHRASE = '휴대폰 기본 카메라 앱으로 먼저 찍고';
+const OLD_GUIDANCE_PHRASE = '현장 영상을 촬영하거나 촬영해 둔 영상을 선택하세요';
+
 // ⚠️ @testing-library/react-native 14.x의 render()는 AsyncFunction이다(React 19 대응) —
 // await 없이 결과를 쓰면 Promise가 그대로 잡혀 `.toJSON is not a function`으로 실패한다
 // (실측: 이 파일 작성 중 직접 부딪힘). 반드시 await한다.
@@ -105,5 +112,12 @@ describe('신규 콘텐츠 촬영 화면 — 갤러리 경로가 주 버튼이�
     const utils = await renderScreen();
     expect(utils.getByText(GALLERY_LABEL)).toBeTruthy();
     expect(utils.getByText(CAMERA_LABEL)).toBeTruthy();
+  });
+
+  it('⑦ 안내문이 갤러리 경로 유도 핵심 구절을 담고 있고, 舊 문구로 되돌아가지 않았다', async () => {
+    const utils = await renderScreen();
+    const tree = JSON.stringify(utils.toJSON());
+    expect(tree).toContain(GUIDANCE_CORE_PHRASE);
+    expect(tree).not.toContain(OLD_GUIDANCE_PHRASE);
   });
 });
