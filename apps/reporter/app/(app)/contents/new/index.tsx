@@ -141,8 +141,8 @@ export default function CaptureScreen(): React.JSX.Element {
     <Screen>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.description}>
-          현장 영상을 촬영하거나 촬영해 둔 영상을 선택하세요. 영상 없이 자막·분류만 먼저 작성할 수도
-          있습니다.
+          또렷한 화질로 내보내려면 휴대폰 기본 카메라 앱으로 먼저 찍고, 아래에서 그 영상을
+          올려주세요. 영상 없이 자막·분류만 먼저 작성할 수도 있습니다.
         </Text>
         {media ? (
           <View style={styles.mediaCard}>
@@ -155,11 +155,17 @@ export default function CaptureScreen(): React.JSX.Element {
           </View>
         ) : null}
         <View style={styles.buttons}>
-          <Button label="카메라로 촬영" onPress={() => void openCamera()} />
+          {/* 갤러리 경로가 주 버튼이다 — WebKit 미해결 버그(bugs.webkit.org #197216)로 이 화면의
+              카메라 촬영은 저화질(360×480)만 만든다. 앱이 고칠 수 없는 문제라 화면 순서로
+              기자를 고화질 경로로 먼저 안내한다(대장 #230). */}
           <Button
-            label="갤러리에서 선택"
-            variant="secondary"
+            label="휴대폰 카메라로 찍은 영상 올리기"
             onPress={() => void pickFromLibrary()}
+          />
+          <Button
+            label="여기서 바로 촬영 (화질 낮음)"
+            variant="secondary"
+            onPress={() => void openCamera()}
           />
           {/* 다음 단계는 자막이 아니라 **작성 방식 선택**이다 (T-W2-34, 대장 #123) */}
           <Button

@@ -84,7 +84,9 @@ export const APP_LINE_BASELINE = {
   'apps/reporter/app/(app)/contents/[id]/preview.tsx': 432,
   'apps/reporter/app/(app)/contents/new/_layout.tsx': 54,
   'apps/reporter/app/(app)/contents/new/classify.tsx': 100,
-  'apps/reporter/app/(app)/contents/new/index.tsx': 193,
+  // 193→199(대장 #230, 2026-09-19): WebKit 카메라 저화질 버그 안내 주석 4줄 + 버튼 순서 재배치용
+  // JSX 속성 재포맷 — 로직(상태·함수·분기) 증가 0, diff 실측 +11/-5 확인 후 갱신.
+  'apps/reporter/app/(app)/contents/new/index.tsx': 199,
   'apps/reporter/app/(app)/contents/new/mode.tsx': 82,
   'apps/reporter/app/(app)/contents/new/scenes.tsx': 39,
   'apps/reporter/app/(app)/contents/new/upload.tsx': 174,
