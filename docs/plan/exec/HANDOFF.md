@@ -1,4 +1,4 @@
-# HANDOFF — 실행 인계 (기준: 2026-09-16)
+# HANDOFF — 실행 인계 (기준: 2026-09-19)
 
 > ⭐ **먼저 읽을 것**: [ROOT-CAUSE-2026-08.md](ROOT-CAUSE-2026-08.md) — 이 프로젝트가 정체된 이유의
 > 단일 원천이다(2026-08-30~31 전수 정독 결론). **개별 결함이 아니라 그 결함들이 왜 계속 생기는가**를 담는다.
@@ -983,6 +983,42 @@ QUEUE §C-1·D-3).
 공개 리포에 적지 않는다(본 문서도 미기재). #185·QUEUE §B-1 판정은 조율자 소관이라 이 scribe
 갱신에서는 상태 칸을 바꾸지 않았다 — **확인 필요 지점**으로 남긴다.
 
+### ⭐⭐⭐⭐⭐⭐⭐ 지금의 다음 1건 (2026-09-19, scribe 갱신 — 대장 #230 채번: 기자 웹 카메라 촬영 저화질 + 선행조사, **사용자 실기 확인 대기**)
+
+**대장 #230 신규 채번(등재만) — 기자 웹 `[카메라로 촬영]` 경로가 저화질 영상만 만든다.** 실측
+비교: `[카메라로 촬영]`으로 찍은 `test4`의 배포본은 **360×480**, 같은 기기에서 `[갤러리에서
+선택]`으로 올린 `test3`는 **406×720**(두 영상 비트레이트는 사실상 같아 트랜스코딩 프로파일
+차이가 아니라 **원본 자체가 480p였다**는 논리적 확정). 원인은 1차 출처로 확인 — **WebKit 버그
+197216**(open·미배정·P2·2019-04 제기, 지금도 동일 — scribe curl 재확인)이 HTML5 Media Capture의
+구조적 저화질을 보고하고, `expo-image-picker` 웹 구현은 `quality`·`videoQuality` 옵션을 **한 번도
+읽지 않는다**(라이브러리를 고쳐도 안 풀린다 — 웹 표준 자체에 화질 제어 수단이 없다). 상세·재현
+명령은 PIVOT-PLAN 대장 #230 행.
+
+**⚠️ 처방을 확정하지 않았다 — 사용자 실기 확인이 선행돼야 한다.** addpipe.com 실측표는 아이폰
+카메라 설정이 **"1080p HD @60fps"일 때만 HD로 나온다**고 보고하는데, Apple 개발자 포럼(스레드
+656965)은 "설정 무관"이라고 한다 — **두 출처가 서로 어긋난다**. **사용자에게 요청해 둔 확인
+방법**: 아이폰 설정 → 카메라 → 비디오 녹화를 **1080p/60**으로 바꾸고 `test5`를 촬영·업로드.
+- 결과가 **여전히 저화질**이면 → #230은 코드/파이프라인 결함으로 남고, 교체(getUserMedia+
+  MediaRecorder 등) 검토가 다음 단계. 교체 시 함정 목록·출처(조사만, 착수 아님)는 아래
+  "7-0000000. 2026-09-19 세션이 남긴 함정" 절 참조.
+- 결과가 **고화질**이면 → #230은 코드 결함이 아니라 **운영 절차**(기자 교육 — 촬영 전 카메라
+  설정 안내) 항목으로 성격이 바뀐다.
+어느 쪽이든 **조율자 판단 + 사용자 실기 결과가 먼저 필요**하다 — 이 항목이 QUEUE 편입되기 전의
+선행 조건이다.
+
+**부수 채번 — 대장 #231(등재만, 판단 없음)**: #230 조사 중 발견 — `services/api/src/upload/
+upload.service.ts:29`의 `resolveExt`는 확장자 허용 목록 없이 mimeType subtype을 그대로 쓰는데,
+같은 이름·같은 목적의 `services/api/src/resident-links/resident-links.service.ts:110`은 `SAFE_EXT`
+로 재검증한다 — 두 함수가 비대칭이다(storageKey만 결정, 실행 경로 아님). 상세는 PIVOT-PLAN 대장
+#231 행.
+
+가변 값은 여기 적지 않는다 — 재현:
+```bash
+grep -n "^| 230 " docs/plan/PIVOT-PLAN.md
+grep -n "^| 231 " docs/plan/PIVOT-PLAN.md
+node infra/scripts/daejang-recheck.mjs --only 230,231
+```
+
 ---
 
 ## 0. 그 전 세션 완료 — 기자 웹 실기 업로드 검증 (2026-08-30 · PR #78 · WORKLOG 정본)
@@ -1282,6 +1318,51 @@ git log origin/main --grep="<ID>" --pretty=%s | grep -qE "^(feat|fix|refactor|pe
 4. **CI는 워크플로 단위로 확인한다**(규율 15). `node`가 초록이어도 `build-images`가 빨갈 수 있다
    → 2026-08-21~23에 실제로 **배포가 3일간 막혀 있었다**(#161).
 5. **수치는 그 자리에서 재실행**한다(규율 1). 이 문서 §1 포함.
+
+## 7-0000000. 2026-09-19 세션(scribe, 대장 #230 선행조사)이 남긴 함정
+
+> ⚠️ **이 절은 조사 기록이지 착수 계획이 아니다.** 대장 #230(기자 웹 카메라 촬영 저화질)의 처방은
+> 사용자 실기 확인(설정→카메라→비디오 녹화 1080p/60으로 `test5` 재촬영) 대기 중이며, 그 결과에
+> 따라 이 결함이 코드 문제(아래 교체 후보)가 아니라 운영 절차 문제로 바뀔 수 있다. 아래는 **만약**
+> `getUserMedia`+`MediaRecorder` 자체 구현으로 캡처 경로를 교체하게 될 경우를 대비해 이번 세션에
+> 조사해 둔 함정과 출처일 뿐, 착수를 의미하지 않는다.
+
+- **iOS `MediaRecorder`는 14.3부터 존재한다.** 14.1~18.3은 mp4/H.264+AAC 단독 지원이고,
+  **18.4부터** WebM·HEVC·AV1이 추가된다 — 대상 기기·OS 버전에 따라 산출 컨테이너가 갈린다.
+- ⭐ **iOS 1분 크래시 미응답 보고**(https://developer.apple.com/forums/thread/694867) — 1분 넘게
+  녹화하면 Blob 생성 직후 페이지가 리로드된다는 보고가 있다. **우리 콘텐츠 길이대가 정확히 여기다**
+  (`test3` 73초) — 착수하게 되면 게이트는 **70초 실기 테스트**여야 한다.
+- ⛔ **bubblewrap `fallbackType: "webview"` 금지 후보** — android-browser-helper의
+  `WebViewFallbackActivity`에 `onPermissionRequest`가 없고, Android 공식 문서
+  (https://developer.android.com/reference/android/webkit/WebChromeClient)가 *"If this method
+  isn't overridden, the permission is denied"*라고 명시한다. **촬영이 에러 로그도 없이 죽고**, JS
+  에서 "카메라 없는 기기"와 구분되지 않는다.
+- **TWA는 Chrome이 아니라 사용자의 기본 브라우저가 렌더한다**
+  (https://developer.android.com/develop/ui/views/layout/webapps/trusted-web-activities). Samsung
+  Internet 27(Chromium 125)은 **MediaRecorder MP4 컨테이너의 하한인 Chromium 126** 미만이라, 구형
+  갤럭시는 자동으로 webm으로 떨어진다.
+- **`mimeType` 미지정 시 Chromium은 `video/webm;codecs=vp8`로 고정된다**(소스 확정). WebM의 회전은
+  Matroska `Projection`으로 기록돼 MP4 display matrix보다 상호운용성이 낮다 — 우리 파이프라인은
+  현재 MP4 display matrix 회전을 전제한다(§11 "영상 파이프라인 실증" 참조).
+- **`MediaRecorder.isTypeSupported()`는 신뢰할 수 없다** — W3C 스펙 자체가 실패 가능을 명시하고,
+  Galaxy A8/Android 9에서 `true`를 반환하는데 실제 `start()`가 `EncodingError`를 던진 실사례가
+  보고돼 있다. **지원 여부 확인 자체를 안전장치로 쓸 수 없다.**
+- ⚠️ **iOS 18+·Android Chrome 전면 카메라가 산출물만 회전시키는 결함** 보고가 있고, "예전엔 붙던
+  `displaymatrix rotation -90`이 지금은 안 붙는다"는 관찰도 있다 — 우리 파이프라인의 회전 처리
+  가정(§11 "영상 파이프라인 실증" — `rotation=-90` 세로 처리)과 정면으로 충돌할 수 있다.
+- ⚠️ **두 조사가 어긋나는 축 — 단정하지 말 것.** Android 방향 처리에 대해 Chromium 소스는 "기본
+  경로가 프레임을 물리 회전한다"고 하고, 2026년 현장 보고는 "unrotated"라고 한다. 그 판정 코드에는
+  `TODO ... heuristic`(crbug 722748)이 달려 있다. **실기 실측 전까지 어느 쪽도 단정하지 않는다** —
+  대장 #230 본문의 "두 출처가 서로 어긋난다"(addpipe.com 1080p/60 조건부 HD vs Apple 포럼 656965
+  "설정 무관")와 같은 층의 함정이다.
+- **실기 프로브가 스크래치패드에 준비돼 있었다** — `capture-probe.html`(HTTPS 필요, 평문 HTTP에서는
+  측정 자체가 성립하지 않는다). 세션 종료로 스크래치패드가 소멸했을 수 있으니, 착수 시점에 다시
+  만들 것.
+- 출처 재확인(scribe curl, 2026-09-19): WebKit 버그 197216 — https://bugs.webkit.org/show_bug.cgi?id=197216
+  (`NEW`·`Nobody`·`P2`·`2019-04-23`) · Apple 포럼 656965 — https://developer.apple.com/forums/thread/656965
+  · Apple 포럼 694867 — https://developer.apple.com/forums/thread/694867 · addpipe 실측표 —
+  https://blog.addpipe.com/video-quality-when-recording-videos-from-safari-on-ios-through-html-media-capture/
+  — 전부 curl 200(Apple 포럼 둘은 302 리다이렉트, 접근 자체는 됨). 상세는 PIVOT-PLAN 대장 #230 행.
 
 ## 7-000000. 2026-09-12 세션(PR #100 반영 + 실기 검증 5건, scribe)이 남긴 함정
 
