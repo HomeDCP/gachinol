@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { MediaJobData } from '@gachinol/shared';
 import ffmpegPath from 'ffmpeg-static';
+import { path as ffprobePath } from 'ffprobe-static';
 import type { Job } from 'bullmq';
 import { loadWorkerEnv, type WorkerEnv } from '../env';
-import { probe, transcode } from '../ffmpeg';
+import { autoEdit, gopFromFps, probe, transcode } from '../ffmpeg';
 import { fileSize } from '../s3';
 import type { S3Io } from '../s3';
 import { processAutoEdit } from './auto-edit';
@@ -95,6 +96,32 @@ function genTestVideo(dest: string, size: string): void {
     ],
     { stdio: 'ignore' },
   );
+}
+
+/**
+ * ffprobe로 비디오 프레임별 key_frame 플래그·pts(초)를 읽어 **실제 키프레임 위치**만 추출한다.
+ * closed GOP(`-g`/`-keyint_min`/`-sc_threshold 0`) 인자가 실제로 ffmpeg에 전달되는지 확인하는
+ * 유일한 정직한 방법 — `gopFromFps()` 단위 테스트만으로는 "그 값이 산출물에 반영됐다"를 못 잡는다.
+ */
+function keyframePtsSeconds(file: string): number[] {
+  const raw = execFileSync(ffprobePath, [
+    '-v',
+    'error',
+    '-select_streams',
+    'v:0',
+    '-show_entries',
+    'frame=key_frame,pkt_pts_time',
+    '-of',
+    'csv=p=0',
+    file,
+  ]).toString();
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.split(','))
+    .filter(([isKey]) => isKey === '1')
+    .map(([, pts]) => Number(pts));
 }
 
 beforeAll(async () => {
@@ -335,6 +362,50 @@ describe('processAutoEdit', () => {
     ]);
     const master = result.assets.find((a) => a.kind === 'edited_master')!;
     expect(master.durationSec).toBeLessThan(1); // 컷으로 짧아졌다
+
+    // ★ A4 무반응 수리(게이트② 재검증) — 렌디션이 "소스"가 아니라 "컷된 마스터"에서 파생됐는지
+    // 구조적으로 확인한다. 컷이 없는 시나리오(위 테스트)는 마스터=소스 길이라 이 구분이 서지
+    // 않으므로, 반드시 길이가 갈리는 컷 시나리오에서 검증해야 한다.
+    // `transcode(masterOutput, ...)`이 `transcode(input, ...)`으로 바뀌면(M3) 렌디션은 컷 전
+    // 원본 길이(~1초)를 그대로 물려받아 컷된 마스터(~0.8초)와 크게 벌어진다 — 아래 두 부등식이
+    // 그 벌어짐을 잡는다(비트레이트·해상도 차이로 "자연히" 성립하는 checksum/height 비교와 달리
+    // 이건 "어느 파일을 입력으로 먹였는지"를 직접 구분한다).
+    const rendition = result.assets.find((a) => a.kind === 'rendition')!;
+    const sourceMeta = await probe(tinyMp4);
+    expect(Math.abs(rendition.durationSec! - master.durationSec!)).toBeLessThan(0.15);
+    expect(Math.abs(rendition.durationSec! - sourceMeta.durationSec!)).toBeGreaterThan(0.15);
+
     await rm(outDir, { recursive: true, force: true });
   }, 60000);
+});
+
+describe('autoEdit — closed GOP (대장 #232 A6 무반응 수리)', () => {
+  test('키프레임 간격이 gopFromFps(fps) 프레임을 따른다', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'gop-'));
+    const output = join(outDir, 'master.mp4');
+    const sourceMeta = await probe(tinyMp4);
+    const gopFrames = gopFromFps(sourceMeta.fps);
+
+    // processAutoEdit 전체가 아니라 ffmpeg 인자 조립을 쥔 autoEdit()을 직접 호출한다
+    // (워치독 테스트와 동일 관례 — 아래 'ffmpeg 워치독' describe 참고).
+    await autoEdit(tinyMp4, output, {
+      height: 1080,
+      vbrKbps: 8000,
+      loudnormI: -16,
+      segments: [],
+      gopFrames,
+    });
+
+    const keyframeTimes = keyframePtsSeconds(output);
+    const expectedGopSec = gopFrames / sourceMeta.fps!;
+
+    // `-g`/`-keyint_min`/`-sc_threshold 0`이 통째로 지워지면(M6) x264 기본 keyint(250)가
+    // 1초짜리 소스보다 훨씬 커서(실측: 장면전환도 없어 sc_threshold 기본값으로도 안 잡힘)
+    // 키프레임이 0초 1개뿐이 된다 — length 부등식이 즉시 잡는다.
+    expect(keyframeTimes.length).toBeGreaterThanOrEqual(2);
+    expect(keyframeTimes[0]).toBeCloseTo(0, 5);
+    expect(keyframeTimes[1]).toBeCloseTo(expectedGopSec, 1);
+
+    await rm(outDir, { recursive: true, force: true });
+  }, 30000);
 });
