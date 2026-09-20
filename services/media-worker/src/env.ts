@@ -33,12 +33,19 @@ export const workerEnvSchema = z.object({
   // 손상·병적 입력으로 ffmpeg가 error 없이 hang하면 잡이 완료·실패 어느 쪽도 못 되고
   // 워커 동시성 슬롯을 영구 점유하는 것을 방지(무진행 정지 감지). 기본 30분.
   MEDIA_FFMPEG_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
-  // 트랜스코딩 렌디션 (720p·2500kbps 기본)
+  // 트랜스코딩 렌디션 (720p·2500kbps 기본) — MVP 시연·내부 배포용. 송출(YouTube/카카오) 규격이 아니다.
   MEDIA_RENDITION_HEIGHT: z.coerce.number().int().positive().default(720),
   MEDIA_RENDITION_VBR_KBPS: z.coerce.number().int().positive().default(2500),
   // 자동편집 — 음량 정규화 목표 라우드니스(LUFS). 방송 표준 -16.
   // 음수라 positive()를 쓸 수 없다(그러면 -16이 검증에서 튕긴다).
   MEDIA_LOUDNORM_I: z.coerce.number().default(-16),
+  // 송출 마스터(대장 #232 태스크①) — auto_edit이 렌디션과 별도로 만드는 고화질 원천.
+  // ⚠️ 기본값 자체가 목표 규격이다 — 제온은 git 체크아웃이 아니라 파일 복사본이라 `.env`에
+  // `MEDIA_*`가 없고, 여기 기본값이 실효 수단이다(대장 #195).
+  // 1080: YouTube 1080p Premium은 1080p로 업로드한 영상만 대상(4K로 올리면 오히려 자격을 잃는다, 공식).
+  MEDIA_MASTER_HEIGHT: z.coerce.number().int().positive().default(1080),
+  // 8000: YouTube 1080p/30fps SDR 권장 비트레이트(공식). 현행 렌디션 2500의 3.2배.
+  MEDIA_MASTER_VBR_KBPS: z.coerce.number().int().positive().default(8000),
   // 프리뷰 (360p·600kbps) — payload가 우선하나 미지정 시 기본값
   MEDIA_PREVIEW_HEIGHT: z.coerce.number().int().positive().default(360),
   MEDIA_PREVIEW_BITRATE_KBPS: z.coerce.number().int().positive().default(600),

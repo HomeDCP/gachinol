@@ -148,13 +148,17 @@ d('media pipeline (withDb + embedded redis/s3)', () => {
     // 외부 저장소(MinIO)는 버킷이 이미 있을 수 있다 — 중복 생성은 무해 무시
     await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET })).catch(() => undefined);
 
-    // ③ tiny mp4 (testsrc 1.5s 320x240 + 사인파 오디오) — 런타임 생성, 커밋 금지
+    // ③ 소스 mp4 (testsrc 1.5s + 사인파 오디오) — 런타임 생성, 커밋 금지
+    // ★ 대장 #232 태스크① D1-a — 1920x1080으로 승격했다(舊: 320x240). 舊 크기는 모든 프로파일이
+    // `scale=-2:'min(ih,H)'`를 쓰는 탓에 마스터(1080 캡)와 렌디션(720 캡) 양쪽이 항등 240으로 나와
+    // "마스터 height > 렌디션 height" 단언이 성립할 수 없었다(마스터=렌디션이던 舊 설계와 우연히
+    // 구분되지 않았을 뿐).
     const wdir = mkdtempSync(join(tmpdir(), 'media-e2e-'));
     tinyMp4 = join(wdir, 'tiny.mp4');
     execFileSync(
       ffmpegStatic as unknown as string,
       [
-        '-f', 'lavfi', '-i', 'testsrc=duration=1.5:size=320x240:rate=12',
+        '-f', 'lavfi', '-i', 'testsrc=duration=1.5:size=1920x1080:rate=12',
         '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1.5',
         '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-shortest', tinyMp4,
       ],
@@ -292,9 +296,13 @@ d('media pipeline (withDb + embedded redis/s3)', () => {
     expect(byKind.preview?.renditionLabel).toBe('preview-360p');
     expect(byKind.rendition?.checksumSha256).toMatch(/^[0-9a-f]{64}$/);
 
-    // ⑤-1 ★ auto_edit — 배포 렌디션이 **편집 결과로 교체**됐다(같은 key를 덮어쓰므로 체크섬이 같다)
+    // ⑤-1 ★ auto_edit — 배포 렌디션이 **편집 결과로 교체**됐다.
+    // ⚠️ 대장 #232 태스크① 교체 단언: 舊 설계는 마스터=렌디션(같은 로컬 파일을 두 좌표로 업로드)이라
+    // 체크섬이 같았다. 이제 마스터는 송출 규격(1080p/8000kbps)으로 렌디션(720p)에서 분리됐으므로
+    // **반드시 달라야 한다** — 이 단언이 여전히 `toBe`면 그건 회귀다.
     expect(byKind.edited_master?.storageKey).toBe(`contents/${contentId}/g1/edited-master.mp4`);
-    expect(byKind.edited_master?.checksumSha256).toBe(byKind.rendition?.checksumSha256);
+    expect(byKind.edited_master?.checksumSha256).not.toBe(byKind.rendition?.checksumSha256);
+    expect(byKind.edited_master?.height ?? 0).toBeGreaterThan(byKind.rendition?.height ?? 0);
 
     // ⑤-2 ★ 타임라인 항등 — Phase 1은 컷을 하지 않으므로 편집본 길이 == 원본 길이여야 한다.
     // 이게 깨지면 Scene 시각(원본 기준)과 배포본이 어긋나 구독자 자막이 통째로 밀린다.

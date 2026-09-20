@@ -32,25 +32,43 @@ export function renditionProfile(
   return { height, vbrKbps: env.MEDIA_RENDITION_VBR_KBPS, label };
 }
 
-export interface AutoEditProfile {
+export interface MasterProfile {
   height: number;
   vbrKbps: number;
-  loudnormI: number;
-  /** 함께 갱신하는 배포 렌디션 label — transcode와 같은 규약이라 key가 덮어써진다 */
-  renditionLabel: string;
 }
 
 /**
- * auto_edit — 렌디션과 **같은 규격**으로 낸다. 그래야 산출된 720p가 기존 배포 렌디션을
- * (bucket, storageKey) 기준으로 덮어써 배포본이 편집 결과로 교체된다.
+ * 송출 마스터(대장 #232 태스크①) — YouTube/카카오 등 고화질 송출 원천의 규격.
+ * 렌디션(720p·MVP 시연용)과 분리됐다. 값은 env 기본값 그대로 쓰는 게 정상 경로다.
+ */
+export function masterProfile(env: WorkerEnv): MasterProfile {
+  return { height: env.MEDIA_MASTER_HEIGHT, vbrKbps: env.MEDIA_MASTER_VBR_KBPS };
+}
+
+export interface AutoEditProfile {
+  /** 소스 → 마스터 1차 인코딩 규격(고화질, closed GOP) */
+  master: MasterProfile;
+  /** 마스터 → 배포 렌디션 2차 인코딩 규격(기존 720p 배포본과 같은 key 규약) */
+  rendition: RenditionProfile;
+  loudnormI: number;
+}
+
+/**
+ * auto_edit 프로파일 = 마스터 규격 + 렌디션 규격.
+ * ⚠️ 렌디션은 더 이상 송출 마스터가 아니다 — **마스터에서** 뜬 축소판일 뿐이며,
+ * 여전히 기존 배포 렌디션과 같은 key 규약(`renditionKey`)이라 (bucket, storageKey) 기준으로
+ * 덮어써 배포본이 편집 결과로 교체된다.
  */
 export function autoEditProfile(env: WorkerEnv): AutoEditProfile {
-  const height = env.MEDIA_RENDITION_HEIGHT;
+  const renditionHeight = env.MEDIA_RENDITION_HEIGHT;
   return {
-    height,
-    vbrKbps: env.MEDIA_RENDITION_VBR_KBPS,
+    master: masterProfile(env),
+    rendition: {
+      height: renditionHeight,
+      vbrKbps: env.MEDIA_RENDITION_VBR_KBPS,
+      label: `${renditionHeight}p`,
+    },
     loudnormI: env.MEDIA_LOUDNORM_I,
-    renditionLabel: `${height}p`,
   };
 }
 

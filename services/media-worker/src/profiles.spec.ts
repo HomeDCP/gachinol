@@ -3,6 +3,7 @@ import { loadWorkerEnv } from './env';
 import {
   autoEditProfile,
   editedMasterKey,
+  masterProfile,
   previewKey,
   previewProfile,
   renditionKey,
@@ -79,21 +80,40 @@ describe('profiles', () => {
     expect(editedMasterKey(prefix)).toBe('contents/c1/g1/edited-master.mp4');
   });
 
-  test('autoEditProfile — 렌디션과 같은 규격(배포본을 덮어쓰기 위함) + loudnorm 목표', () => {
-    expect(autoEditProfile(env)).toEqual({
-      height: 720,
-      vbrKbps: 2500,
-      loudnormI: -16,
-      renditionLabel: '720p',
-    });
+  // ★ 대장 #232 태스크① — 舊 설계는 "렌디션과 같은 규격"이었다(마스터=720p/2500kbps).
+  // 이제 마스터는 송출(YouTube/카카오) 규격으로 렌디션과 **분리**된다. 이 테스트는 그 분리를
+  // 고정하려고 舊 단언을 **교체**한 것이다(조용히 지우지 않음).
+  test('masterProfile — 송출 마스터 규격(1080p/8000kbps 기본, YouTube 권장치)', () => {
+    expect(masterProfile(env)).toEqual({ height: 1080, vbrKbps: 8000 });
   });
 
-  test('autoEditProfile — auto_edit 렌디션 key가 transcode와 동일해야 배포본이 교체된다', () => {
+  test('autoEditProfile — 마스터 규격과 렌디션 규격이 서로 다르다(舊: 같았음)', () => {
+    const p = autoEditProfile(env);
+    expect(p.master).toEqual({ height: 1080, vbrKbps: 8000 });
+    expect(p.rendition).toEqual({ height: 720, vbrKbps: 2500, label: '720p' });
+    expect(p.loudnormI).toBe(-16);
+    // 마스터가 렌디션보다 고화질이어야 한다 — 이 부등식이 이번 작업의 핵심.
+    expect(p.master.height).toBeGreaterThan(p.rendition.height);
+    expect(p.master.vbrKbps).toBeGreaterThan(p.rendition.vbrKbps);
+  });
+
+  test('autoEditProfile — 렌디션 key는 여전히 transcode와 동일해야 배포본이 교체된다', () => {
     const prefix = 'contents/c1/g2/';
     const p = autoEditProfile(env);
-    expect(renditionKey(prefix, p.renditionLabel)).toBe(
+    expect(renditionKey(prefix, p.rendition.label)).toBe(
       renditionKey(prefix, renditionProfile(env, { renditionLabels: [] } as never).label),
     );
+  });
+
+  test('env override — MEDIA_MASTER_HEIGHT/MEDIA_MASTER_VBR_KBPS 반영', () => {
+    const custom = loadWorkerEnv({
+      ...baseEnv,
+      MEDIA_MASTER_HEIGHT: '1440',
+      MEDIA_MASTER_VBR_KBPS: '12000',
+    } as NodeJS.ProcessEnv);
+    expect(masterProfile(custom)).toEqual({ height: 1440, vbrKbps: 12000 });
+    // 렌디션은 마스터 env와 무관 — 여전히 기본값
+    expect(autoEditProfile(custom).rendition).toEqual({ height: 720, vbrKbps: 2500, label: '720p' });
   });
 
   test('MEDIA_LOUDNORM_I — 음수 기본값(-16)이 검증을 통과하고 override도 된다', () => {
