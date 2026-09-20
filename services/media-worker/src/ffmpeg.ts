@@ -13,6 +13,29 @@ export interface ProbeResult {
   bitrateKbps?: number;
   videoCodec?: string;
   audioCodec?: string;
+  /** 초당 프레임 수 — closed GOP 크기(fps÷2, YouTube 권장) 산출에 쓴다 */
+  fps?: number;
+}
+
+/** "2997/100" 같은 ffprobe 분수 프레임레이트 문자열 파싱. 실패·0분모는 undefined. */
+function parseFrameRate(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const [numStr, denStr] = raw.split('/');
+  const num = Number(numStr);
+  const den = denStr != null ? Number(denStr) : 1;
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) return undefined;
+  const fps = num / den;
+  return Number.isFinite(fps) && fps > 0 ? fps : undefined;
+}
+
+/**
+ * YouTube 권장 closed GOP 크기 = 프레임레이트의 1/2(공식 인코딩 사양).
+ * fps 실측 불가 시 **30fps를 가정**(GOP=15) — 우리 촬영본 실측은 29.996fps·24fps 둘 다 나왔고,
+ * 30은 그 중간값이자 가장 흔한 표준치.
+ */
+export function gopFromFps(fps: number | undefined): number {
+  const assumedFps = fps != null && fps > 0 ? fps : 30;
+  return Math.max(1, Math.round(assumedFps / 2));
 }
 
 export type ProgressFn = (percent: number) => void;
@@ -72,6 +95,7 @@ export function probe(input: string): Promise<ProbeResult> {
         bitrateKbps: bitRate && Number.isFinite(bitRate) ? Math.round(bitRate / 1000) : undefined,
         videoCodec: video?.codec_name,
         audioCodec: audio?.codec_name,
+        fps: parseFrameRate(video?.r_frame_rate) ?? parseFrameRate(video?.avg_frame_rate),
       });
     });
   });
@@ -136,7 +160,7 @@ export function transcode(
 }
 
 /**
- * 자동편집(auto_edit) — 음량 정규화 + 배포 렌디션 규격 + faststart.
+ * 자동편집(auto_edit) — 음량 정규화 + **송출 마스터** 규격(대장 #232 태스크①) + faststart.
  *
  * ★ Phase 1은 **`silenceremove`를 쓰지 않는다.** 두 가지 이유가 겹친다:
  *  ① 효과가 거의 없다 — 2026-08-17 PoC 실측상 야외 촬영본은 환경음이 계속 있어
@@ -148,6 +172,10 @@ export function transcode(
  * `segments`가 있으면 `filter_complex`로 trim→concat 한다.
  * ⚠️ PoC 함정: **`-vf`와 `-filter_complex`는 함께 못 쓴다** — 컷 경로에서는 scale도
  * 필터그래프 안으로 넣어야 한다.
+ *
+ * **closed GOP**(`gopFrames`) — `-g`+`-keyint_min`으로 키프레임 간격을 고정하고
+ * `-sc_threshold 0`으로 장면전환 적응형 키프레임 삽입을 꺼서 GOP가 정확히 주기적으로 유지되게
+ * 한다. libx264는 open-gop를 명시적으로 켜지 않는 한 기본이 closed GOP라 별도 플래그가 불요하다.
  */
 export function autoEdit(
   input: string,
@@ -159,6 +187,8 @@ export function autoEdit(
     loudnormI: number;
     /** 남길 구간 — 비면 컷 없이 전체 유지(Phase 1) */
     segments?: readonly { startSec: number; endSec: number }[];
+    /** closed GOP 프레임 수 — `gopFromFps()`로 산출 */
+    gopFrames: number;
     timeoutMs?: number;
   },
   onProgress?: ProgressFn,
@@ -172,6 +202,9 @@ export function autoEdit(
     `-bufsize ${opts.vbrKbps * 2}k`,
     '-pix_fmt yuv420p',
     '-movflags +faststart',
+    `-g ${opts.gopFrames}`,
+    `-keyint_min ${opts.gopFrames}`,
+    '-sc_threshold 0',
   ];
 
   const segments = opts.segments ?? [];
