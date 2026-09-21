@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { MediaAsset as MediaAssetRow } from '@prisma/client';
 import type { Env } from '../config/env.schema';
 import { PrismaService } from '../prisma/prisma.service';
+import { renditionLabelForHeight, selectPlaybackRendition } from './asset-selectors';
 import { CloudflareCacheService } from './cloudflare-cache.service';
 import { S3Service } from './s3.service';
 
@@ -223,9 +224,10 @@ export class PublicMediaService {
   }
 
   /**
-   * 공개 대상 자산 선택 — FeedService.getPlayback과 동일 규칙(720p 렌디션 우선, 없으면 최신
-   * 렌디션 + 최신 썸네일)으로 **의도적으로 동기화**한다. 이 선택이 어긋나면 "복사한 것과 피드가
-   * 요구하는 것"이 달라져 공개 URL이 있어도 못 쓰거나, 지운 줄 알았는데 다른 렌디션이 남는다.
+   * 공개 대상 자산 선택 — FeedService.getPlayback과 동일 규칙(선호 레이블 렌디션 우선, 없으면
+   * 최신 렌디션 + 최신 썸네일)으로 **의도적으로 동기화**한다. 이 선택이 어긋나면 "복사한 것과
+   * 피드가 요구하는 것"이 달라져 공개 URL이 있어도 못 쓰거나, 지운 줄 알았는데 다른 렌디션이
+   * 남는다. 선택 규칙의 단일 원천은 asset-selectors.ts(대장 #232 태스크②) — 여기서 재구현하지 않는다.
    */
   private async selectPublicAssets(
     contentId: string,
@@ -240,8 +242,10 @@ export class PublicMediaService {
       },
       orderBy: { createdAt: 'desc' },
     });
-    const renditions = rows.filter((r) => r.kind === 'rendition');
-    const rendition = renditions.find((r) => r.renditionLabel === '720p') ?? renditions[0];
+    const preferredLabel = renditionLabelForHeight(
+      this.config.get('MEDIA_RENDITION_HEIGHT', { infer: true }),
+    );
+    const rendition = selectPlaybackRendition(rows, { preferredLabel });
     const thumbnail = rows.find((r) => r.kind === 'thumbnail');
     return [rendition, thumbnail].filter((x): x is MediaAssetRow => Boolean(x));
   }

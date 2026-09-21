@@ -23,6 +23,8 @@ const setup = (opts: { queue?: unknown } = {}) => {
       const map: Record<string, unknown> = {
         PUBLISH_JOB_ATTEMPTS: 3,
         PUBLISH_JOB_BACKOFF_MS: 5000,
+        // asset-selectors.ts가 파생하는 선호 레이블의 원천 — 기본 720p(실 env 기본값과 정합)
+        MEDIA_RENDITION_HEIGHT: 720,
       };
       return map[key];
     }),

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Content as ContentRow, Publication as PublicationRow } from '@prisma/client';
 import { MediaAssetsService } from '../media/media-assets.service';
+import { renditionLabelForHeight, selectDistributionVideo } from '../media/asset-selectors';
 import { S3Service } from '../media/s3.service';
 import type { Env } from '../config/env.schema';
 import { ChannelAccountsService } from './channel-accounts.service';
@@ -105,16 +106,20 @@ export class DistributionProducerService {
     await this.enqueuePublish(content, requeued);
   }
 
-  /** 송출 메시지 — 제목·설명 + 720p 재생 URL·썸네일 서명(best-effort, 실패해도 인큐 진행) */
+  /**
+   * 송출 메시지 — 제목·설명 + 재생 URL·썸네일 서명(best-effort, 실패해도 인큐 진행).
+   * 영상 자산 선택 규칙의 단일 원천은 asset-selectors.ts(대장 #232 태스크②) — 여기서 재구현하지
+   * 않는다. ⚠️ 오늘은 재생용과 같은 렌디션을 고른다 — `edited_master`로 바꾸는 것은 태스크③ 범위.
+   */
   private async buildMessage(content: ContentRow): Promise<PublishTargetItem['message']> {
     const message: PublishTargetItem['message'] = { title: content.title };
     if (content.description) message.description = content.description;
 
     const assets = await this.assets.listForContent(content.id, content.generation).catch(() => []);
-    const rendition =
-      assets.find(
-        (a) => a.kind === 'rendition' && a.renditionLabel === '720p' && a.status === 'ready',
-      ) ?? assets.find((a) => a.kind === 'rendition' && a.status === 'ready');
+    const preferredLabel = renditionLabelForHeight(
+      this.config.get('MEDIA_RENDITION_HEIGHT', { infer: true }),
+    );
+    const rendition = selectDistributionVideo(assets, { preferredLabel });
     const thumbnail = assets.find((a) => a.kind === 'thumbnail' && a.status === 'ready');
 
     if (rendition) {

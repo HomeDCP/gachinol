@@ -35,6 +35,8 @@ const makeConfig = (over: Record<string, unknown> = {}) => {
     MEDIA_PUBLIC_BUCKET: undefined,
     MEDIA_PUBLIC_PREFIX: 'public',
     MEDIA_PUBLIC_BASE_URL: undefined,
+    // asset-selectors.ts가 파생하는 선호 레이블의 원천 — 기본 720p(실 env 기본값과 정합)
+    MEDIA_RENDITION_HEIGHT: 720,
     ...over,
   };
   return { get: (k: string) => values[k] } as never;
