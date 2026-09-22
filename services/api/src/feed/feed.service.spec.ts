@@ -65,6 +65,11 @@ const rendition = (over: Partial<MediaAssetRow> = {}): MediaAssetRow =>
     ...over,
   }) as MediaAssetRow;
 
+/** MEDIA_RENDITION_HEIGHT 기본값(720) 목 — asset-selectors.ts가 파생하는 선호 레이블과 정합 */
+const makeConfig = (overrides: Record<string, unknown> = {}) => ({
+  get: (k: string) => ({ MEDIA_RENDITION_HEIGHT: 720, ...overrides })[k],
+});
+
 const makeService = () => {
   const prisma = {
     content: { findMany: jest.fn(), findUnique: jest.fn() },
@@ -73,7 +78,7 @@ const makeService = () => {
     station: { findMany: jest.fn() },
   };
   const s3 = { presignGet: jest.fn() };
-  const service = new FeedService(prisma as never, s3 as never);
+  const service = new FeedService(prisma as never, s3 as never, makeConfig() as never);
   return { service, prisma, s3 };
 };
 
@@ -256,7 +261,12 @@ describe('FeedService — 공개 URL(D-T8) 우선, 서명 URL 폴백', () => {
     };
     const s3 = { presignGet: jest.fn() };
     const publicMedia = { publicUrlForAsset: jest.fn() };
-    const service = new FeedService(prisma as never, s3 as never, publicMedia as never);
+    const service = new FeedService(
+      prisma as never,
+      s3 as never,
+      makeConfig() as never,
+      publicMedia as never,
+    );
     return { service, prisma, s3, publicMedia };
   };
 
@@ -353,7 +363,7 @@ describe('FeedService.list — 공개 서빙 ON에서 S3 HEAD 0회(대장 #129 �
       station: { findMany: jest.fn() },
     };
     const s3 = { presignGet: jest.fn() };
-    const service = new FeedService(prisma as never, s3 as never, makeRealPublicMedia(headObject));
+    const service = new FeedService(prisma as never, s3 as never, makeConfig() as never, makeRealPublicMedia(headObject));
 
     const contents = Array.from({ length: N }, (_, i) =>
       row({ id: `01920000-0000-7000-8000-0000000000${String(i).padStart(2, '0')}` }),
@@ -393,7 +403,7 @@ describe('FeedService.list — 공개 서빙 ON에서 S3 HEAD 0회(대장 #129 �
       station: { findMany: jest.fn() },
     };
     const s3 = { presignGet: jest.fn().mockResolvedValue({ url: 'signed', expiresAt: 'x' }) };
-    const service = new FeedService(prisma as never, s3 as never, makeRealPublicMedia(headObject));
+    const service = new FeedService(prisma as never, s3 as never, makeConfig() as never, makeRealPublicMedia(headObject));
 
     const contents = Array.from({ length: N }, (_, i) =>
       row({ id: `01920000-0000-7000-8000-0000000000${String(i).padStart(2, '0')}` }),

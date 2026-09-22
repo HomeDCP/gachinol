@@ -4,6 +4,7 @@ import type { EditPlan, MediaJobData, MediaJobType } from '@gachinol/shared';
 import { mediaJobId } from '@gachinol/shared';
 import type { Content as ContentRow } from '@prisma/client';
 import { MediaAssetsService } from '../media/media-assets.service';
+import { renditionLabelForHeight } from '../media/asset-selectors';
 import { S3Service } from '../media/s3.service';
 import type { Env } from '../config/env.schema';
 import { MEDIA_QUEUE, type MediaQueue } from './queue.constants';
@@ -34,7 +35,7 @@ export class QueueProducerService {
     await this.add('transcode', content, original.storageKey, {
       contentId: content.id as never,
       sourceAssetId: original.id as never,
-      renditionLabels: [`${height}p`],
+      renditionLabels: [renditionLabelForHeight(height)],
     });
   }
 

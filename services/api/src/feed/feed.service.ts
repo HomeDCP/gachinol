@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type {
   CursorPage,
   FeedItem,
@@ -7,8 +8,10 @@ import type {
   TextAnalysis,
 } from '@gachinol/shared';
 import type { MediaAsset as MediaAssetRow, Prisma } from '@prisma/client';
+import type { Env } from '../config/env.schema';
 import { DomainException } from '../common/errors/domain.exception';
 import { PrismaService } from '../prisma/prisma.service';
+import { renditionLabelForHeight, selectPlaybackRendition } from '../media/asset-selectors';
 import { PublicMediaService } from '../media/public-media.service';
 import { S3Service } from '../media/s3.service';
 import { zScene } from '../contents/schemas/content.schemas';
@@ -30,6 +33,7 @@ export class FeedService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
+    private readonly config: ConfigService<Env, true>,
     private readonly publicMedia?: PublicMediaService,
   ) {}
 
@@ -148,12 +152,16 @@ export class FeedService {
       throw new DomainException('not_found', '콘텐츠를 찾을 수 없습니다');
     }
 
-    // 현 세대 ready rendition — 720p 우선, 없으면 최신 createdAt
+    // 현 세대 ready rendition — 선호 레이블(MEDIA_RENDITION_HEIGHT 파생) 우선, 없으면 최신 createdAt.
+    // 선택 규칙의 단일 원천은 asset-selectors.ts(대장 #232 태스크②) — 여기서 재구현하지 않는다.
     const renditions = await this.prisma.mediaAsset.findMany({
       where: { contentId: id, kind: 'rendition', generation: row.generation, status: 'ready' },
       orderBy: { createdAt: 'desc' },
     });
-    const rendition = renditions.find((r) => r.renditionLabel === '720p') ?? renditions[0];
+    const preferredLabel = renditionLabelForHeight(
+      this.config.get('MEDIA_RENDITION_HEIGHT', { infer: true }),
+    );
+    const rendition = selectPlaybackRendition(renditions, { preferredLabel });
     if (!rendition) throw new DomainException('not_found', '재생 가능한 렌디션이 없습니다');
     // 공개 URL(D-T8) 우선 — 없으면 서명 URL(hlsUrl은 required라 이 단계 실패 시 500 그대로 유지)
     const hlsUrl = await this.resolvePlaybackUrl(rendition);
