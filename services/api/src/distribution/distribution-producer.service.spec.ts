@@ -133,6 +133,31 @@ describe('DistributionProducerService', () => {
     expect(t.message.thumbnailUrl).toBe('https://signed');
   });
 
+  it('enqueuePublish: edited_master가 있으면 720p 렌디션이 아니라 마스터 키로 playbackUrl을 서명한다(대장 #232 태스크③)', async () => {
+    const { assets, s3, service, queue } = setup();
+    assets.listForContent.mockResolvedValue([
+      { kind: 'rendition', renditionLabel: '720p', status: 'ready', storageKey: 'r-720.mp4' },
+      { kind: 'edited_master', renditionLabel: null, status: 'ready', storageKey: 'master.mp4' },
+      { kind: 'thumbnail', status: 'ready', storageKey: 't.jpg' },
+    ]);
+    await service.enqueuePublish(contentRow(), [publicationRow()]);
+    const t = (queue as any).add.mock.calls[0][1].publications[0];
+    expect(t.message.playbackUrl).toBe('https://signed');
+    expect((s3 as any).presignGet).toHaveBeenCalledWith('master.mp4');
+    expect((s3 as any).presignGet).not.toHaveBeenCalledWith('r-720.mp4');
+  });
+
+  it('enqueuePublish: edited_master가 없으면(구 콘텐츠·auto_edit 이전 세대) 여전히 720p 렌디션 키로 서명한다(폴백 무회귀)', async () => {
+    const { assets, s3, service, queue } = setup();
+    assets.listForContent.mockResolvedValue([
+      { kind: 'rendition', renditionLabel: '720p', status: 'ready', storageKey: 'r-720.mp4' },
+    ]);
+    await service.enqueuePublish(contentRow(), [publicationRow()]);
+    const t = (queue as any).add.mock.calls[0][1].publications[0];
+    expect(t.message.playbackUrl).toBe('https://signed');
+    expect((s3 as any).presignGet).toHaveBeenCalledWith('r-720.mp4');
+  });
+
   it('enqueuePublish: urgent → priority=1', async () => {
     const { queue, service } = setup();
     await service.enqueuePublish(contentRow({ priority: 'urgent' }), [publicationRow()]);
