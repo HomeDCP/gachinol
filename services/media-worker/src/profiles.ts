@@ -33,16 +33,29 @@ export function renditionProfile(
 }
 
 export interface MasterProfile {
-  height: number;
+  /** 긴 변 상한(px) — 회전 대칭 바운딩 박스(대장 #240), 업스케일 금지 */
+  longEdge: number;
+  /** 짧은 변 상한(px) */
+  shortEdge: number;
   vbrKbps: number;
 }
 
 /**
  * 송출 마스터(대장 #232 태스크①) — YouTube/카카오 등 고화질 송출 원천의 규격.
  * 렌디션(720p·MVP 시연용)과 분리됐다. 값은 env 기본값 그대로 쓰는 게 정상 경로다.
+ *
+ * ⚠️ 舊 `height` 단일 캡(대장 #240 이전)은 세로 소스를 오처리했다 — 항상 '높이'를 캡했는데,
+ * 세로 영상에서는 높이가 **긴 변**이라 짧은 변(너비) 기준 캡보다 더 세게 다운스케일됐다.
+ * `longEdge`/`shortEdge`로 방향과 무관하게 대칭 캡을 적용한다(실제 방향 판정은 ffmpeg.ts의
+ * 필터 식 안에서 `iw`/`ih`로 하지, 여기(env→profile)에서는 하지 않는다 — 회전 메타를 가진
+ * 소스는 ffprobe 치수가 코드된(회전 전) 값이라 TS에서 판정하면 방향을 오판한다).
  */
 export function masterProfile(env: WorkerEnv): MasterProfile {
-  return { height: env.MEDIA_MASTER_HEIGHT, vbrKbps: env.MEDIA_MASTER_VBR_KBPS };
+  return {
+    longEdge: env.MEDIA_MASTER_LONG_EDGE,
+    shortEdge: env.MEDIA_MASTER_SHORT_EDGE,
+    vbrKbps: env.MEDIA_MASTER_VBR_KBPS,
+  };
 }
 
 export interface AutoEditProfile {

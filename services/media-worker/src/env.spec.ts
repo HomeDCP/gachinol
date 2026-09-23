@@ -58,3 +58,37 @@ describe('loadWorkerEnv — 기존 동작 회귀', () => {
     expect(() => loadWorkerEnv(withoutKey)).toThrow(/S3_ACCESS_KEY/);
   });
 });
+
+/**
+ * 대장 #240 — MEDIA_MASTER_HEIGHT → MEDIA_MASTER_LONG_EDGE/MEDIA_MASTER_SHORT_EDGE 개명.
+ * z.object는 모르는 키를 조용히 버린다(process.env 전체를 파싱해 .strict()를 못 쓴다) — 개명만
+ * 하면 구 키를 계속 설정해도 에러도 효과도 없는 조용한 오설정이 된다. loadWorkerEnv가 구 키를
+ * 명시적으로 감지해 즉사시켜야 한다.
+ */
+describe('loadWorkerEnv — MEDIA_MASTER_HEIGHT 폐기 키 fail-fast(대장 #240)', () => {
+  it('MEDIA_MASTER_HEIGHT가 설정되면 부팅 즉시 실패하고 새 키를 안내한다', () => {
+    expect(() =>
+      loadWorkerEnv(baseEnv({ MEDIA_MASTER_HEIGHT: '1080' })),
+    ).toThrow(/MEDIA_MASTER_HEIGHT.*대장 #240/s);
+    expect(() => loadWorkerEnv(baseEnv({ MEDIA_MASTER_HEIGHT: '1080' }))).toThrow(
+      /MEDIA_MASTER_LONG_EDGE/,
+    );
+    expect(() => loadWorkerEnv(baseEnv({ MEDIA_MASTER_HEIGHT: '1080' }))).toThrow(
+      /MEDIA_MASTER_SHORT_EDGE/,
+    );
+  });
+
+  it('새 키(MEDIA_MASTER_LONG_EDGE/MEDIA_MASTER_SHORT_EDGE)는 정상 로드되고 기본값을 갖는다', () => {
+    const env = loadWorkerEnv(baseEnv());
+    expect(env.MEDIA_MASTER_LONG_EDGE).toBe(1920);
+    expect(env.MEDIA_MASTER_SHORT_EDGE).toBe(1080);
+  });
+
+  it('새 키는 override된다', () => {
+    const env = loadWorkerEnv(
+      baseEnv({ MEDIA_MASTER_LONG_EDGE: '2560', MEDIA_MASTER_SHORT_EDGE: '1440' }),
+    );
+    expect(env.MEDIA_MASTER_LONG_EDGE).toBe(2560);
+    expect(env.MEDIA_MASTER_SHORT_EDGE).toBe(1440);
+  });
+});

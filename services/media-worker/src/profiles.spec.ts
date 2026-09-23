@@ -83,17 +83,19 @@ describe('profiles', () => {
   // ★ 대장 #232 태스크① — 舊 설계는 "렌디션과 같은 규격"이었다(마스터=720p/2500kbps).
   // 이제 마스터는 송출(YouTube/카카오) 규격으로 렌디션과 **분리**된다. 이 테스트는 그 분리를
   // 고정하려고 舊 단언을 **교체**한 것이다(조용히 지우지 않음).
-  test('masterProfile — 송출 마스터 규격(1080p/8000kbps 기본, YouTube 권장치)', () => {
-    expect(masterProfile(env)).toEqual({ height: 1080, vbrKbps: 8000 });
+  // ★ 대장 #240 — 舊 단일 `height` 캡을 `longEdge`/`shortEdge` 회전 대칭 바운딩 박스로 교체
+  // (2026-09-23, 세로 영상 오처리 수리). 이 테스트도 다시 **교체**했다(舊: `{ height: 1080, ... }`).
+  test('masterProfile — 송출 마스터 규격(긴 변 1920·짧은 변 1080·8000kbps 기본, YouTube 권장치)', () => {
+    expect(masterProfile(env)).toEqual({ longEdge: 1920, shortEdge: 1080, vbrKbps: 8000 });
   });
 
   test('autoEditProfile — 마스터 규격과 렌디션 규격이 서로 다르다(舊: 같았음)', () => {
     const p = autoEditProfile(env);
-    expect(p.master).toEqual({ height: 1080, vbrKbps: 8000 });
+    expect(p.master).toEqual({ longEdge: 1920, shortEdge: 1080, vbrKbps: 8000 });
     expect(p.rendition).toEqual({ height: 720, vbrKbps: 2500, label: '720p' });
     expect(p.loudnormI).toBe(-16);
     // 마스터가 렌디션보다 고화질이어야 한다 — 이 부등식이 이번 작업의 핵심.
-    expect(p.master.height).toBeGreaterThan(p.rendition.height);
+    expect(p.master.shortEdge).toBeGreaterThan(p.rendition.height);
     expect(p.master.vbrKbps).toBeGreaterThan(p.rendition.vbrKbps);
   });
 
@@ -105,16 +107,20 @@ describe('profiles', () => {
     );
   });
 
-  test('env override — MEDIA_MASTER_HEIGHT/MEDIA_MASTER_VBR_KBPS 반영', () => {
+  test('env override — MEDIA_MASTER_LONG_EDGE/MEDIA_MASTER_SHORT_EDGE/MEDIA_MASTER_VBR_KBPS 반영', () => {
     const custom = loadWorkerEnv({
       ...baseEnv,
-      MEDIA_MASTER_HEIGHT: '1440',
+      MEDIA_MASTER_LONG_EDGE: '2560',
+      MEDIA_MASTER_SHORT_EDGE: '1440',
       MEDIA_MASTER_VBR_KBPS: '12000',
     } as NodeJS.ProcessEnv);
-    expect(masterProfile(custom)).toEqual({ height: 1440, vbrKbps: 12000 });
+    expect(masterProfile(custom)).toEqual({ longEdge: 2560, shortEdge: 1440, vbrKbps: 12000 });
     // 렌디션은 마스터 env와 무관 — 여전히 기본값
     expect(autoEditProfile(custom).rendition).toEqual({ height: 720, vbrKbps: 2500, label: '720p' });
   });
+
+  // 대장 #240 — 구 키 fail-fast(env.ts). 여기(profiles.spec)가 아니라 env.spec.ts에 전수 테스트가
+  // 있다. 이 파일에서는 masterProfile이 구 키를 더는 참조하지 않는다는 사실만 위 테스트들로 고정한다.
 
   test('MEDIA_LOUDNORM_I — 음수 기본값(-16)이 검증을 통과하고 override도 된다', () => {
     expect(env.MEDIA_LOUDNORM_I).toBe(-16);

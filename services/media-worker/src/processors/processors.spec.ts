@@ -24,6 +24,19 @@ import { processTranscode } from './transcode';
  * 모든 프로파일이 `scale=-2:'min(ih,H)'`를 쓰므로 240 높이 소스에는 720이든 1080이든 **항등**이라
  * 마스터를 1080으로 바꿔도 출력이 한 픽셀도 안 바뀌고, 누가 실수로 360으로 낮춰도 전부 초록이었다.
  * 480 높이 전용 `smallSourceMp4`는 업스케일 금지(D1-b④) 검증에만 쓴다.
+ *
+ * ★ 대장 #240 동반 의무(D1-a/D1-b) — 위 승격은 **해상도 축만** 넓혔고 **방향(orientation) 축**은
+ * 그대로 전부 가로였다. 그래서 같은 `autoEdit()` 함수에서 세로 영상 오처리(#240)가 바로
+ * 재발했다 — 이번엔 세로·정사각·회전메타 픽스처를 신설해 그 축도 닫는다:
+ *  · `verticalMp4`(1080×1920) — 세로 코드 소스. 짧은 변(너비)=1080·긴 변(높이)=1920이 각각
+ *    상한과 정확히 같아 **항등**이어야 한다(舊 버그는 여기서 608×1080으로 깨졌다).
+ *  · `squareMp4`(1440×1440) — 정사각(긴 변=짧은 변). 두 변 다 캡을 넘어 1080×1080으로 줄어야
+ *    caps가 "min(...)" 방향 무관하게 실제로 작동함을 드러낸다.
+ *  · `rotatedMp4`(코드 1920×1080 + **rotation=-90 메타**) — iPhone 세로 촬영본과 동형(CLAUDE.md
+ *    §11 실기 촬영본 기록). ffprobe의 streams[].width/height는 **회전 전(코드된)** 값이라
+ *    1920×1080으로 보이지만, ffmpeg 필터그래프의 iw/ih는 표시행렬 자동회전 **이후** 값이라
+ *    1080×1920으로 처리된다 — TS에서 probe()로 방향 판정하면 못 잡는 함정(5-2)을 여기서만 잡는다.
+ *  · `lowResVerticalMp4`(720×1280) — 세로축 업스케일 금지 확인(舊 480p 케이스는 가로축뿐이었다).
  */
 
 const env: WorkerEnv = loadWorkerEnv({
@@ -51,6 +64,13 @@ function localS3(seed: Record<string, string>, outDir: string): { io: S3Io; uplo
   return { io, uploaded };
 }
 
+/** `localS3().io.upload()`가 outDir에 실제로 쓰는 파일명(키의 '/' 등을 '_'로 치환) — 업로드 후
+ *  산출물을 직접 ffprobe하려는 테스트가 이 경로를 써야 한다(uploaded[]의 원본 key 그대로 join하면
+ *  존재하지 않는 경로가 된다). */
+function uploadedFilePath(outDir: string, key: string): string {
+  return join(outDir, key.replace(/[^a-zA-Z0-9._-]/g, '_'));
+}
+
 function fakeJob<T extends MediaJobData>(
   name: string,
   data: T,
@@ -73,7 +93,25 @@ let workDir: string;
 let tinyMp4: string;
 /** 480p 소스 — 업스케일 금지(D1-b④) 전용. 마스터 캡(1080)보다 작아야 검증 의미가 있다 */
 let smallSourceMp4: string;
+/** 대장 #240 D1-a — 세로 코드 소스(1080×1920). 짧은 변=1080·긴 변=1920 각각 상한과 동일 → 항등 */
+let verticalMp4: string;
+/** 대장 #240 D1-a — 정사각(1440×1440). 두 변 다 캡(1080)을 넘어야 min() 양방향이 실제로 작동함이 드러난다 */
+let squareMp4: string;
+/** 대장 #240 D1-b — 코드 1920×1080 + rotation=-90 메타(iPhone 세로 촬영본과 동형). iw/ih 필터
+ *  판정(5-2 함정)을 검증하는 유일한 픽스처 — probe()로 판정했다면 이 소스에서 틀린다. */
+let rotatedMp4: string;
+/** 대장 #240 D1-b④ — 세로축 업스케일 금지. 舊 480p 케이스(smallSourceMp4)는 가로축뿐이었다 */
+let lowResVerticalMp4: string;
 
+/**
+ * 테스트 소스 mp4 생성 — 오디오는 **저엔트로피 sine이 아니라 anoisesrc(white noise)**를 쓴다
+ * (대장 #241). sine 톤은 AAC 인코더가 "단순하다"고 판단해 `-b:a` 목표를 채우지 않는다(실측:
+ * 256k 요청에도 1초 mono sine → 실측 bit_rate ~142kbps, 128k와 구분 안 될 정도로 낮다).
+ * white noise는 고엔트로피라 인코더가 목표 비트레이트를 실제로 채운다(실측: 256k 요청 →
+ * mono ~217kbps, 128k 요청 → mono ~119kbps — 둘이 뚜렷이 갈려 "무슨 설정이 실제로 먹혔는지"를
+ * ffprobe 실측만으로 구분할 수 있다). 채널은 고의로 미지정(-ac 없음) → 기본 모노 유지, 대장
+ * #241의 "채널은 건드리지 마라" 요구를 소스 자체가 모노여야 검증할 수 있다.
+ */
 function genTestVideo(dest: string, size: string): void {
   if (!ffmpegPath) throw new Error('ffmpeg-static 경로 없음');
   execFileSync(
@@ -86,7 +124,7 @@ function genTestVideo(dest: string, size: string): void {
       '-f',
       'lavfi',
       '-i',
-      'sine=frequency=440:duration=1',
+      'anoisesrc=duration=1:color=white',
       '-pix_fmt',
       'yuv420p',
       '-movflags',
@@ -94,6 +132,24 @@ function genTestVideo(dest: string, size: string): void {
       '-shortest',
       dest,
     ],
+    { stdio: 'ignore' },
+  );
+}
+
+/**
+ * 회전 메타(rotation=-90) 픽스처 생성 — 코드 치수는 `codedSize`(예: 1920x1080) 그대로 두고
+ * mp4 표시행렬(display matrix)에만 회전을 싣는다. ⚠️ 실측 함정: `-metadata:s:v:0 rotate=X`를
+ * **재인코딩(-c:v libx264)과 함께 주면 조용히 무시된다**(경고만 뜨고 side_data가 안 실린다,
+ * 이 파일 작성 중 직접 확인). **`-c copy`(스트림 복사) 리먹스에서만** mov 먹서가 deprecated
+ * rotate 태그를 실제 Display Matrix로 변환한다 — 그래서 2단계(인코딩 → 무손실 리먹스)로 만든다.
+ */
+function genRotatedTestVideo(dest: string, codedSize: string, rotateDeg: number): void {
+  if (!ffmpegPath) throw new Error('ffmpeg-static 경로 없음');
+  const base = `${dest}.base.mp4`;
+  genTestVideo(base, codedSize);
+  execFileSync(
+    ffmpegPath,
+    ['-i', base, '-c', 'copy', '-metadata:s:v:0', `rotate=${rotateDeg}`, dest],
     { stdio: 'ignore' },
   );
 }
@@ -124,12 +180,47 @@ function keyframePtsSeconds(file: string): number[] {
     .map(([, pts]) => Number(pts));
 }
 
+/**
+ * ffprobe로 오디오 스트림의 sample_rate·bit_rate·channels 실측(대장 #241 — `ProbeResult`에는
+ * 없는 필드라 여기서 직접 ffprobe를 호출한다).
+ */
+function probeAudioStream(file: string): { sampleRate: number; bitRateKbps: number; channels: number } {
+  const raw = execFileSync(ffprobePath, [
+    '-v',
+    'error',
+    '-select_streams',
+    'a:0',
+    '-show_entries',
+    'stream=sample_rate,bit_rate,channels',
+    '-of',
+    'json',
+    file,
+  ]).toString();
+  const parsed = JSON.parse(raw) as {
+    streams: [{ sample_rate: string; bit_rate: string; channels: number }];
+  };
+  const s = parsed.streams[0];
+  return {
+    sampleRate: Number(s.sample_rate),
+    bitRateKbps: Math.round(Number(s.bit_rate) / 1000),
+    channels: s.channels,
+  };
+}
+
 beforeAll(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'gachinol-proc-test-'));
   tinyMp4 = join(workDir, 'source-1080p.mp4');
   smallSourceMp4 = join(workDir, 'source-480p.mp4');
+  verticalMp4 = join(workDir, 'source-vertical-1080x1920.mp4');
+  squareMp4 = join(workDir, 'source-square-1440x1440.mp4');
+  rotatedMp4 = join(workDir, 'source-rotated-1920x1080-rotm90.mp4');
+  lowResVerticalMp4 = join(workDir, 'source-vertical-720x1280.mp4');
   genTestVideo(tinyMp4, '1920x1080');
   genTestVideo(smallSourceMp4, '854x480');
+  genTestVideo(verticalMp4, '1080x1920');
+  genTestVideo(squareMp4, '1440x1440');
+  genRotatedTestVideo(rotatedMp4, '1920x1080', -90);
+  genTestVideo(lowResVerticalMp4, '720x1280');
 }, 60000);
 
 afterAll(async () => {
@@ -284,14 +375,28 @@ describe('processAutoEdit', () => {
     const master = result.assets.find((a) => a.kind === 'edited_master')!;
     const rendition = result.assets.find((a) => a.kind === 'rendition')!;
 
-    // ★ D1-b① 마스터 height == min(소스 height, MEDIA_MASTER_HEIGHT) — 소스가 정확히 1080이라
-    //   env 기본값(1080)과 일치해야 캡이 실제로 반영됐음이 드러난다.
-    expect(master.height).toBe(Math.min(1080, env.MEDIA_MASTER_HEIGHT));
+    // ★ 대장 #240 — 마스터 width/height == 회전 대칭 바운딩 박스 캡(가로 1920×1080 소스는
+    //   긴 변=1920(=MEDIA_MASTER_LONG_EDGE)·짧은 변=1080(=MEDIA_MASTER_SHORT_EDGE)과 각각
+    //   정확히 일치 → **항등**이어야 한다(舊 단언 `Math.min(1080, env.MEDIA_MASTER_HEIGHT)`는
+    //   구 env 키가 사라져 컴파일이 깨지므로 교체 — CLAUDE.md §0-3 "테스트 계수가 줄면서 초록이
+    //   될 때" 정지 조건을 피하려고 **지우지 않고 교체**했다).
+    expect(master.width).toBe(env.MEDIA_MASTER_LONG_EDGE);
+    expect(master.height).toBe(env.MEDIA_MASTER_SHORT_EDGE);
     // ★ D1-b② 마스터가 렌디션보다 고화질(舊 설계는 둘이 같았다)
     expect(master.height!).toBeGreaterThan(rendition.height!);
     expect(rendition.height).toBe(720);
     // ★ D1-b③ 서로 다른 바이트 — 舊 설계(같은 로컬 파일을 두 좌표로 업로드)의 반증
     expect(master.checksumSha256).not.toBe(rendition.checksumSha256);
+
+    // ★ 대장 #241 — 마스터 오디오 48kHz·256kbps 실측(방송 표준 loudnorm과 별개 축).
+    //   sine 톤이 아니라 anoisesrc(고엔트로피)로 소스를 만들었기 때문에 실측 bit_rate가
+    //   목표치에 의미 있게 수렴한다 — 128k 요청 시 실측 ~119kbps, 256k 요청 시 ~217kbps로
+    //   뚜렷이 갈린다(이 파일 작성 중 직접 측정). 채널은 소스가 모노라 그대로 모노여야 한다
+    //   (-ac 미지정 확인 — 스테레오로 뜨면 신호가 2회 적재된 것).
+    const masterAudio = probeAudioStream(uploadedFilePath(outDir, uploaded[0]!));
+    expect(masterAudio.sampleRate).toBe(48000);
+    expect(masterAudio.bitRateKbps).toBeGreaterThan(150); // 舊 128k 실측(~119)과 뚜렷이 구분
+    expect(masterAudio.channels).toBe(1); // 소스가 모노 — -ac 강제 없음의 증거
 
     // ★ 타임라인 항등 — 이게 깨지면 구독자 자막이 밀린다
     expect(result.timeline).toHaveLength(1);
@@ -302,9 +407,11 @@ describe('processAutoEdit', () => {
     await rm(outDir, { recursive: true, force: true });
   }, 60000);
 
-  // ★ D1-b④ 업스케일 금지 — 마스터 캡(1080)보다 낮은 소스(480)를 넣으면 마스터도 480이어야 한다.
-  // "마스터=1080p"라는 이름/설정값에 이끌려 업스케일하면 화질 이득 없이 용량만 커진다.
-  test('업스케일 금지 — 480 높이 소스는 마스터도 480(캡 1080을 채우지 않는다)', async () => {
+  // ★ D1-b④ 업스케일 금지(가로축) — 마스터 짧은 변 캡(1080)보다 낮은 소스(480)를 넣으면
+  // 마스터도 480이어야 한다. "마스터=1080p"라는 설정값에 이끌려 업스케일하면 화질 이득 없이
+  // 용량만 커진다. 세로축 업스케일 금지는 아래 '회전 대칭 바운딩 박스' describe의
+  // `lowResVerticalMp4` 케이스가 담당한다(舊: 가로축뿐이었다 — 대장 #240 동반 의무 D1-b④).
+  test('업스케일 금지 — 480 높이 소스는 마스터도 항등(854×480, 캡 1920×1080을 채우지 않는다)', async () => {
     const outDir = await mkdtemp(join(tmpdir(), 'out-'));
     const { io } = localS3({ [source.key]: smallSourceMp4 }, outDir);
     const { job } = fakeJob('auto_edit', {
@@ -325,6 +432,7 @@ describe('processAutoEdit', () => {
     const result = await processAutoEdit(job, io, env);
     const master = result.assets.find((a) => a.kind === 'edited_master')!;
     const rendition = result.assets.find((a) => a.kind === 'rendition')!;
+    expect(master.width).toBe(854);
     expect(master.height).toBe(480);
     // 렌디션(캡 720)도 같은 이유로 480에 머문다 — 소스보다 커질 수 없다
     expect(rendition.height).toBe(480);
@@ -379,6 +487,146 @@ describe('processAutoEdit', () => {
   }, 60000);
 });
 
+/**
+ * 대장 #240 D1-d — 마스터가 세로·정사각·회전메타 소스에서 기대 해상도를 내는지 ffprobe 실측.
+ * 舊 테스트(위 describe)는 전부 가로였다 — 이 블록이 방향(orientation) 축을 닫는다.
+ */
+describe('processAutoEdit — 회전 대칭 바운딩 박스(대장 #240)', () => {
+  test('세로 코드 소스(1080×1920) — 짧은 변=긴 변 각각 상한과 동일해 항등', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'out-'));
+    const { io } = localS3({ [source.key]: verticalMp4 }, outDir);
+    const { job } = fakeJob('auto_edit', {
+      type: 'auto_edit',
+      payload: {
+        contentId: 'c1' as never,
+        sourceAssetId: 'a1' as never,
+        revisionRequestId: null,
+        reanalyze: false,
+        editPlan: null,
+      },
+      generation: 1,
+      source,
+      outputBucket,
+      outputKeyPrefix: 'contents/c1/vert/',
+    } satisfies MediaJobData<'auto_edit'>);
+
+    const result = await processAutoEdit(job, io, env);
+    const master = result.assets.find((a) => a.kind === 'edited_master')!;
+    // 舊 버그(단일 height 캡)였다면 608×1080이 나왔을 자리 — 항등 1080×1920이 그 반증이다.
+    expect(master.width).toBe(1080);
+    expect(master.height).toBe(1920);
+    await rm(outDir, { recursive: true, force: true });
+  }, 60000);
+
+  test('정사각 소스(1440×1440) — 두 변 다 캡을 넘어 1080×1080으로 축소(min() 양방향 확인)', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'out-'));
+    const { io } = localS3({ [source.key]: squareMp4 }, outDir);
+    const { job } = fakeJob('auto_edit', {
+      type: 'auto_edit',
+      payload: {
+        contentId: 'c1' as never,
+        sourceAssetId: 'a1' as never,
+        revisionRequestId: null,
+        reanalyze: false,
+        editPlan: null,
+      },
+      generation: 1,
+      source,
+      outputBucket,
+      outputKeyPrefix: 'contents/c1/sq/',
+    } satisfies MediaJobData<'auto_edit'>);
+
+    const result = await processAutoEdit(job, io, env);
+    const master = result.assets.find((a) => a.kind === 'edited_master')!;
+    expect(master.width).toBe(1080);
+    expect(master.height).toBe(1080);
+    await rm(outDir, { recursive: true, force: true });
+  }, 60000);
+
+  // ★ 5-2 함정의 유일한 증거 — probe()로 방향을 판정했다면 이 소스(코드 1920×1080)를 가로로
+  // 오판해 1920×1080을 캡으로 써 세로 결과가 나오지 않는다. 필터 식 안 iw/ih 판정만 이 케이스를
+  // 통과시킨다(ffmpeg 자동회전이 필터 적용 전에 iw/ih를 이미 1080×1920으로 바꿔놓기 때문).
+  test('회전 메타 소스(코드 1920×1080 + rotation=-90) — iw/ih가 자동회전 이후 값이라 세로로 처리', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'out-'));
+    const { io } = localS3({ [source.key]: rotatedMp4 }, outDir);
+    const { job } = fakeJob('auto_edit', {
+      type: 'auto_edit',
+      payload: {
+        contentId: 'c1' as never,
+        sourceAssetId: 'a1' as never,
+        revisionRequestId: null,
+        reanalyze: false,
+        editPlan: null,
+      },
+      generation: 1,
+      source,
+      outputBucket,
+      outputKeyPrefix: 'contents/c1/rot/',
+    } satisfies MediaJobData<'auto_edit'>);
+
+    const result = await processAutoEdit(job, io, env);
+    const master = result.assets.find((a) => a.kind === 'edited_master')!;
+    expect(master.width).toBe(1080);
+    expect(master.height).toBe(1920);
+    await rm(outDir, { recursive: true, force: true });
+  }, 60000);
+
+  // ★ 컷 경로(filter_complex)도 회전을 같은 방식으로 처리하는지 — 196행 `scale` 상수는
+  // 컷 없음(-vf)·컷 있음(filter_complex) 양쪽에서 재사용되므로, 컷 있음 경로에서도 회전 소스가
+  // 세로로 처리돼야 "한쪽만 고쳐 컷 도입 시 조용히 갈리는" 사고가 없음이 드러난다.
+  test('회전 메타 소스 + 컷(segments) — filter_complex 경로도 세로로 처리', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'out-'));
+    const { io } = localS3({ [source.key]: rotatedMp4 }, outDir);
+    const { job } = fakeJob('auto_edit', {
+      type: 'auto_edit',
+      payload: {
+        contentId: 'c1' as never,
+        sourceAssetId: 'a1' as never,
+        revisionRequestId: null,
+        reanalyze: false,
+        editPlan: { segments: [{ startSec: 0, endSec: 0.5 }] },
+      },
+      generation: 2,
+      source,
+      outputBucket,
+      outputKeyPrefix: 'contents/c1/rotcut/',
+    } satisfies MediaJobData<'auto_edit'>);
+
+    const result = await processAutoEdit(job, io, env);
+    const master = result.assets.find((a) => a.kind === 'edited_master')!;
+    expect(master.width).toBe(1080);
+    expect(master.height).toBe(1920);
+    await rm(outDir, { recursive: true, force: true });
+  }, 60000);
+
+  // ★ D1-b④(세로축) — 舊 업스케일 금지 테스트(smallSourceMp4)는 가로축뿐이었다. 캡(1080)보다
+  // 낮은 세로 소스(720×1280)를 넣으면 마스터도 항등(720×1280)이어야 한다.
+  test('세로 저해상 소스(720×1280) — 업스케일 금지(캡 1080×1920을 채우지 않는다)', async () => {
+    const outDir = await mkdtemp(join(tmpdir(), 'out-'));
+    const { io } = localS3({ [source.key]: lowResVerticalMp4 }, outDir);
+    const { job } = fakeJob('auto_edit', {
+      type: 'auto_edit',
+      payload: {
+        contentId: 'c1' as never,
+        sourceAssetId: 'a1' as never,
+        revisionRequestId: null,
+        reanalyze: false,
+        editPlan: null,
+      },
+      generation: 1,
+      source,
+      outputBucket,
+      outputKeyPrefix: 'contents/c1/lowvert/',
+    } satisfies MediaJobData<'auto_edit'>);
+
+    const result = await processAutoEdit(job, io, env);
+    const master = result.assets.find((a) => a.kind === 'edited_master')!;
+    expect(master.width).toBe(720);
+    expect(master.height).toBe(1280);
+    await rm(outDir, { recursive: true, force: true });
+  }, 60000);
+});
+
 describe('autoEdit — closed GOP (대장 #232 A6 무반응 수리)', () => {
   test('키프레임 간격이 gopFromFps(fps) 프레임을 따른다', async () => {
     const outDir = await mkdtemp(join(tmpdir(), 'gop-'));
@@ -389,7 +637,8 @@ describe('autoEdit — closed GOP (대장 #232 A6 무반응 수리)', () => {
     // processAutoEdit 전체가 아니라 ffmpeg 인자 조립을 쥔 autoEdit()을 직접 호출한다
     // (워치독 테스트와 동일 관례 — 아래 'ffmpeg 워치독' describe 참고).
     await autoEdit(tinyMp4, output, {
-      height: 1080,
+      longEdge: 1920,
+      shortEdge: 1080,
       vbrKbps: 8000,
       loudnormI: -16,
       segments: [],
