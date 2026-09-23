@@ -108,8 +108,9 @@ export class DistributionProducerService {
 
   /**
    * 송출 메시지 — 제목·설명 + 재생 URL·썸네일 서명(best-effort, 실패해도 인큐 진행).
-   * 영상 자산 선택 규칙의 단일 원천은 asset-selectors.ts(대장 #232 태스크②) — 여기서 재구현하지
-   * 않는다. ⚠️ 오늘은 재생용과 같은 렌디션을 고른다 — `edited_master`로 바꾸는 것은 태스크③ 범위.
+   * 영상 자산 선택 규칙의 단일 원천은 asset-selectors.ts(대장 #232 태스크②·③) — 여기서 재구현하지
+   * 않는다. `selectDistributionVideo`가 현 세대 `edited_master`(고화질 편집본)를 우선 고르고,
+   * 없으면(재마스터링하지 않는 기존 콘텐츠·auto_edit 이전 세대) 렌디션으로 폴백한다.
    */
   private async buildMessage(content: ContentRow): Promise<PublishTargetItem['message']> {
     const message: PublishTargetItem['message'] = { title: content.title };

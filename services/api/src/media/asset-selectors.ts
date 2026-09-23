@@ -15,14 +15,18 @@
  *
  * **순수 함수만 둔다**(DB·config 의존 금지) — 호출부(Nest 서비스)가 `ConfigService`에서 읽은 값을
  * 주입한다. 목적별로 이름을 나눈 것은 태스크③("송출은 마스터를 싣는다")에서 `selectDistributionVideo`만
- * `edited_master`를 고르도록 바뀔 예정이기 때문이다 — **오늘은 두 함수가 완전히 같은 자산을
- * 고른다**(동작 변경 없음, 이름만 분리).
+ * `edited_master`를 고르도록 바뀌었기 때문이다 — `selectPlaybackRendition`(시청 재생)은 여전히
+ * 720p 렌디션만 고른다(정본 §11 2026-09-20 결정 — 프리뷰/재생은 저화질, 송출만 고화질).
  */
 
 /**
  * 세 호출부(Prisma `MediaAsset` 행 · distribution의 자산 목록)가 모두 만족하는 구조적 최소 타입.
  * Prisma는 이 리포 컨벤션상 enum을 text로 저장하므로(`packages/shared` 계약 — Prisma enum 금지)
  * `kind`/`status`/`renditionLabel` 전부 plain string(nullable)이라 별도 어댑팅 없이 대입 가능하다.
+ *
+ * ⚠️ 이름은 "렌디션 선택"이지만 `edited_master` 행도 이 타입을 만족한다(`renditionLabel`이 항상
+ * null일 뿐) — `selectDistributionVideo`가 같은 배열에서 렌디션과 마스터를 함께 고려해야 하므로
+ * 타입을 굳이 쪼개지 않는다.
  */
 export interface RenditionSelectable {
   readonly kind: string;
@@ -64,14 +68,23 @@ export function selectPlaybackRendition<T extends RenditionSelectable>(
 /**
  * 외부 플랫폼(YouTube·카카오) 송출 메시지용 — `DistributionProducerService.buildMessage`.
  *
- * ⚠️ **오늘은 재생 렌디션과 같은 자산을 고른다.** 대장 #232 태스크③(정본 §11 2026-09-20 결정 —
- * "고화질 편집본이 그대로 송출되어야 한다")에서 이 함수만 `edited_master`를 고르도록 바뀔 자리다.
- * 이름을 지금 분리해 두는 것은 그 변경이 `selectPlaybackRendition` 호출부(시청 재생)에 새지 않게
- * 하기 위해서다 — 여기서 마스터로 바꾸지 않는다(태스크③ 범위).
+ * **1순위 — 현 세대 `edited_master`(status==='ready')**(대장 #232 태스크③, 정본 §11 2026-09-20
+ * 결정 — "고화질 편집본이 그대로 송출되어야 한다. 송출은 유튜브, 카카오페이지 업로드를 의미한다").
+ * **2순위(폴백) — 기존 렌디션 선택 규칙**(`selectReadyRendition`, `selectPlaybackRendition`과 동일).
+ *
+ * ⚠️ **폴백을 지우면 안 된다**: ⓐ 사용자 결정(2026-09-22) — 기존 published 콘텐츠는 재마스터링하지
+ * 않는다. 구 콘텐츠는 720p 규격 마스터이거나 마스터가 아예 없다. ⓑ auto_edit 도입 이전 세대에는
+ * `edited_master` 자체가 없다. 폴백이 없으면 그 콘텐츠들의 송출이 조용히 깨진다.
+ *
+ * 호출부가 이미 `generation`으로 좁힌 배열을 넘긴다(`MediaAssetsService.listForContent`) — 이
+ * 함수는 그 전제를 다시 확인하지 않는다(마스터가 여러 건이면 배열에서 먼저 발견되는 것을 쓴다,
+ * `selectReadyRendition`이 `ready[0]`을 쓰는 것과 같은 관례).
  */
 export function selectDistributionVideo<T extends RenditionSelectable>(
   assets: readonly T[],
   opts: { preferredLabel: string },
 ): T | undefined {
+  const master = assets.find((a) => a.kind === 'edited_master' && a.status === 'ready');
+  if (master) return master;
   return selectReadyRendition(assets, opts);
 }
