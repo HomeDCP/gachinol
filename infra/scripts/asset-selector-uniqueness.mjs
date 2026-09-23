@@ -20,11 +20,24 @@
  *
  * ── 검사 정의 ───────────────────────────────────────────────────────────────────
  * `services/api/src` 아래 `*.ts`(스펙 파일 `*.spec.ts` 제외 — 아래 "spec 제외 근거" 참조, 지정
- * 단일 원천 파일 `media/asset-selectors.ts` 자신도 제외)에 대해 각 줄을 두 패턴으로 스캔한다:
+ * 단일 원천 파일 `media/asset-selectors.ts` 자신도 제외)에 대해 각 줄을 세 패턴으로 스캔한다:
  *   1) `renditionLabel\s*===` — `renditionLabel` 필드를 직접 비교하는 코드(선택 규칙 재구현).
  *   2) `['"][0-9]+p['"]` — `'720p'`처럼 따옴표로 감싼 렌디션 레이블 리터럴(선호 레이블 하드코딩).
- * 둘 중 하나라도 걸리면 그 줄은 위반. 위반이 1건이라도 있으면 exit 1. 스캔 대상이 0건이어도
+ *   3) `kind\s*===\s*['"]edited_master['"]` — `kind`를 `'edited_master'`와 **비교**하는 코드
+ *      (대장 #236, 태스크③ 후속 — "송출은 마스터를 싣는다" 규칙의 사본 재발 방지).
+ * 셋 중 하나라도 걸리면 그 줄은 위반. 위반이 1건이라도 있으면 exit 1. 스캔 대상이 0건이어도
  * exit 1(조용한 통과 금지 — `controller-role-gate.mjs`·`reporter-app-thinness-gate.mjs`와 동형).
+ *
+ * ── 패턴③이 "비교"만 잡고 "콜론"은 잡지 않는 이유 (대장 #236 후속, 오탐 방지 실측) ──────────
+ * `kind: 'edited_master'`(Prisma `where:` 절의 객체 속성 — 콜론)는 **정당한 사용**이다. 실측
+ * (재현: 검사 대상 규약과 동일한 정규식으로 `grep -rnE` 실행, 아래 "재현" 참조)상
+ * `media-assets.service.ts`의 `findEditedMaster`·`findDurationSec` 2곳뿐이며, 둘 다 Prisma
+ * 쿼리 조건이지 "선택 규칙 재구현"이 아니다. 반대로 `kind === 'edited_master'`(비교)는 같은 방식
+ * 실측상 `asset-selectors.ts`(단일 원천, 스캔 제외) 안에서 **딱 1곳**뿐이다 — 그래서 비교 형태만
+ * 좁게 잡아도 기존 정당 코드에 오탐이 나지 않는다. 콜론까지 잡으면 `findEditedMaster` 같은 정당한
+ * Prisma 조회가 전부 위반으로 잘못 걸린다.
+ * 재현(따옴표는 backtick 안 그대로): 콜론 형태 `grep -rnE 'kind:\s*.edited_master.' services/api/src`,
+ * 비교 형태 `grep -rnE 'kind\s*===\s*.edited_master.' services/api/src` (`.`은 홑/쌍따옴표 자리).
  *
  * ── spec 제외 근거 ─────────────────────────────────────────────────────────────
  * `*.spec.ts`는 스캔하지 않는다. 테스트 픽스처가 `renditionLabel: '720p'`처럼 **목 데이터** 값을
@@ -61,6 +74,12 @@ export const SELECTOR_SOURCE_FILE = 'services/api/src/media/asset-selectors.ts';
 const RENDITION_LABEL_COMPARISON_RE = /renditionLabel\s*===/;
 /** ② 따옴표로 감싼 렌디션 레이블 리터럴(`'720p'`류) — 선호 레이블 하드코딩. */
 const RENDITION_LABEL_LITERAL_RE = /['"][0-9]+p['"]/;
+/**
+ * ③ `kind`를 `'edited_master'`와 **비교**하는 코드(대장 #236 후속) — 송출 마스터 선택 규칙의
+ * 사본 재발 신호. `kind: 'edited_master'`(Prisma `where:` 절의 콜론 객체 속성)는 걸리지 않는다
+ * — 파일 헤더 "패턴③이 비교만 잡고 콜론은 잡지 않는 이유" 참조.
+ */
+const MASTER_KIND_COMPARISON_RE = /kind\s*===\s*['"]edited_master['"]/;
 
 /**
  * 파일 1개(이미 읽어들인 내용)를 줄 단위로 스캔해 위반 목록을 반환한다 — 순수 함수.
@@ -80,6 +99,15 @@ export function scanFileForViolations({ relFile, content }) {
         snippet: line.trim(),
       });
       continue; // 한 줄에서 두 패턴이 동시에 걸려도 위반 1건으로 충분(중복 보고 방지)
+    }
+    if (MASTER_KIND_COMPARISON_RE.test(line)) {
+      violations.push({
+        file: relFile,
+        line: i + 1,
+        pattern: 'master-kind-comparison',
+        snippet: line.trim(),
+      });
+      continue; // 위와 동일 — 중복 보고 방지
     }
     if (RENDITION_LABEL_LITERAL_RE.test(line)) {
       violations.push({
@@ -149,7 +177,7 @@ export function checkAssetSelectorUniqueness(repoRoot) {
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 function main() {
-  console.log('── 자산 셀렉터 유일성 게이트 (동반 의무 D1-c, 대장 #232 태스크②·#139) ──');
+  console.log('── 자산 셀렉터 유일성 게이트 (동반 의무 D1-c, 대장 #232 태스크②·#139·#236 후속) ──');
 
   const args = process.argv.slice(2);
   const repoRootIdx = args.indexOf('--repo-root');

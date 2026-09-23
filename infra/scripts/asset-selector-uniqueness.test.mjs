@@ -89,6 +89,26 @@ test('scanFileForViolations: 무관한 코드는 위반 0건', () => {
   assert.equal(violations.length, 0);
 });
 
+// ── 패턴③ (대장 #236 후속) — kind === 'edited_master' 비교 ──────────────────────
+
+test("scanFileForViolations: kind === 'edited_master' 비교는 위반(master-kind-comparison)", () => {
+  const violations = scanFileForViolations({
+    relFile: 'services/api/src/some-other-service.ts',
+    content: "const master = assets.find((a) => a.kind === 'edited_master' && a.status === 'ready');\n",
+  });
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].pattern, 'master-kind-comparison');
+  assert.equal(violations[0].line, 1);
+});
+
+test("scanFileForViolations: kind: 'edited_master' 콜론(Prisma where 절)은 위반 아님 — 오탐 방지", () => {
+  const violations = scanFileForViolations({
+    relFile: 'services/api/src/media/media-assets.service.ts',
+    content: "where: { contentId, kind: 'edited_master', generation, status: { not: 'failed' } },\n",
+  });
+  assert.equal(violations.length, 0);
+});
+
 // ── findScanTargetFiles ──────────────────────────────────────────────────────
 
 test('findScanTargetFiles: *.spec.ts와 단일 원천 파일(asset-selectors.ts)을 제외한다', () => {
@@ -160,6 +180,55 @@ test('[양성] checkAssetSelectorUniqueness: 사본이 복제되면(세 파일�
         'services/api/src/feed/feed.service.ts',
         'services/api/src/media/public-media.service.ts',
       ]);
+    },
+  );
+});
+
+// ★ 양성 케이스(패턴③, 대장 #236 후속) — kind === 'edited_master' 사본을 **한 파일에만** 심는다.
+// ⚠️ 여러 파일에 동시에 심지 않는다 — "한 곳만"이어야 게이트의 실효(단일 파일 탐지력)를 증명한다.
+test("[양성/패턴③] checkAssetSelectorUniqueness: kind === 'edited_master' 사본이 한 파일에만 있어도 위반으로 잡는다", () => {
+  withFixtureRepo(
+    (root) => {
+      writeSrcFile(
+        root,
+        'some-other-module',
+        'rogue-master-picker.service.ts',
+        "const master = assets.find((a) => a.kind === 'edited_master' && a.status === 'ready');\n" +
+          "if (master) return master;\n",
+      );
+    },
+    (root) => {
+      const outcome = checkAssetSelectorUniqueness(root);
+      assert.equal(outcome.ok, false);
+      assert.equal(outcome.violations.length, 1);
+      assert.equal(
+        outcome.violations[0].file,
+        'services/api/src/some-other-module/rogue-master-picker.service.ts',
+      );
+      assert.equal(outcome.violations[0].pattern, 'master-kind-comparison');
+    },
+  );
+});
+
+// ★ 음성 케이스(패턴③, 대장 #236 후속) — Prisma where: 콜론 형태만 있으면 통과해야 한다(오탐 방지)
+test("[음성/패턴③] checkAssetSelectorUniqueness: Prisma where: { kind: 'edited_master' } 콜론 형태만 있으면 통과한다", () => {
+  withFixtureRepo(
+    (root) => {
+      writeSrcFile(
+        root,
+        'media',
+        'media-assets.service.ts',
+        "async findEditedMaster(contentId, generation) {\n" +
+          "  return this.prisma.mediaAsset.findFirst({\n" +
+          "    where: { contentId, kind: 'edited_master', generation, status: { not: 'failed' } },\n" +
+          '  });\n' +
+          '}\n',
+      );
+    },
+    (root) => {
+      const outcome = checkAssetSelectorUniqueness(root);
+      assert.equal(outcome.ok, true);
+      assert.equal(outcome.violations.length, 0);
     },
   );
 });
