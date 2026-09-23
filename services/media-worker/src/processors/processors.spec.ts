@@ -136,22 +136,113 @@ function genTestVideo(dest: string, size: string): void {
   );
 }
 
+/** ffprobe로 비디오 스트림의 코드 치수(width/height, 회전 전 값)와 Display Matrix rotation을 읽는다.
+ *  ⚠️ CI(대장 #242) — `-metadata:s:v:0 rotate=`가 mov 먹서에서 Display Matrix로 변환되는지는
+ *  ffmpeg 빌드마다 다르다(플랫폼별 3종 바이너리, `genRotatedTestVideo` 문서 참고). 이 함수가 그
+ *  변환 성공 여부를 **생성 직후 실측**해 픽스처 자체를 자기검증하게 만드는 유일한 통로다. */
+function probeVideoStream(file: string): { width: number; height: number; rotation: number | null } {
+  const raw = execFileSync(ffprobePath, [
+    '-v',
+    'error',
+    '-select_streams',
+    'v:0',
+    '-show_streams',
+    '-of',
+    'json',
+    file,
+  ]).toString();
+  const parsed = JSON.parse(raw) as {
+    streams?: Array<{
+      width?: number;
+      height?: number;
+      side_data_list?: Array<{ side_data_type?: string; rotation?: number }>;
+    }>;
+  };
+  const s = parsed.streams?.[0];
+  const displayMatrix = s?.side_data_list?.find((sd) => sd.side_data_type === 'Display Matrix');
+  return {
+    width: s?.width ?? 0,
+    height: s?.height ?? 0,
+    rotation: typeof displayMatrix?.rotation === 'number' ? displayMatrix.rotation : null,
+  };
+}
+
+/** `ffmpeg -version` 첫 줄 — 플랫폼별 바이너리 차이를 진단 로그·에러 메시지에 남기기 위함(대장 #242). */
+function ffmpegVersionFirstLine(): string {
+  if (!ffmpegPath) throw new Error('ffmpeg-static 경로 없음');
+  return execFileSync(ffmpegPath, ['-version']).toString().split('\n')[0] ?? '(버전 확인 실패)';
+}
+
 /**
  * 회전 메타(rotation=-90) 픽스처 생성 — 코드 치수는 `codedSize`(예: 1920x1080) 그대로 두고
  * mp4 표시행렬(display matrix)에만 회전을 싣는다. ⚠️ 실측 함정: `-metadata:s:v:0 rotate=X`를
  * **재인코딩(-c:v libx264)과 함께 주면 조용히 무시된다**(경고만 뜨고 side_data가 안 실린다,
  * 이 파일 작성 중 직접 확인). **`-c copy`(스트림 복사) 리먹스에서만** mov 먹서가 deprecated
  * rotate 태그를 실제 Display Matrix로 변환한다 — 그래서 2단계(인코딩 → 무손실 리먹스)로 만든다.
+ *
+ * ★ 대장 #242 — 위 변환은 **ffmpeg 빌드마다 동작이 다르다**(로컬 macOS `ffmpeg-static` 6.0에서는
+ * 되지만, CI Linux `ffmpeg-static` 빌드에서는 조용히 무시되어 회전 메타 없는 파일이 만들어졌고,
+ * 그 결과 회전 테스트 2건이 "회전을 검증한다"는 이름을 달고 사실은 가로 소스를 테스트하다가
+ * 엉뚱한 단언(폭 1080 기대·1920 실측)에서 터졌다). 그래서 **생성 직후 반드시 ffprobe로 검증**하고,
+ * 실패하면 ffmpeg≥6.0 전용 `-display_rotation`(입력 옵션)으로 재시도한다.
+ * ⛔ **`-display_rotation`은 픽스처 생성 전용이다** — 프로덕션 ffmpeg 5.1.9(제온)에는 없는 옵션이라
+ * `ffmpeg.ts`/`auto-edit.ts` 등 프로덕션 경로에 절대 넣지 않는다.
+ * 두 방법 다 실패하면(=이 맥·CI 어느 쪽도 회전 메타를 못 만드는 ffmpeg 빌드) **조용히 넘어가지
+ * 않고 즉시 throw**한다 — 침묵하는 픽스처가 이 파일에서 이미 네 번째로 검사를 무력화시킨 사례가
+ * 되는 것을 막기 위함이다(320×240 항등·전부 가로·사인파 오디오에 이은 네 번째, 상단 파일 주석 참고).
  */
 function genRotatedTestVideo(dest: string, codedSize: string, rotateDeg: number): void {
   if (!ffmpegPath) throw new Error('ffmpeg-static 경로 없음');
   const base = `${dest}.base.mp4`;
   genTestVideo(base, codedSize);
+
+  // 방법 A(현행) — 인코딩 후 무손실 리먹스에 deprecated rotate 태그를 실어 mov 먹서가
+  // Display Matrix로 변환하도록 한다.
   execFileSync(
     ffmpegPath,
-    ['-i', base, '-c', 'copy', '-metadata:s:v:0', `rotate=${rotateDeg}`, dest],
+    ['-y', '-i', base, '-c', 'copy', '-metadata:s:v:0', `rotate=${rotateDeg}`, dest],
     { stdio: 'ignore' },
   );
+  const attempts: string[] = [];
+  let probed = probeVideoStream(dest);
+  attempts.push(
+    `방법A(-metadata:s:v:0 rotate=${rotateDeg}) → probe rotation=${String(probed.rotation)}`,
+  );
+
+  if (probed.rotation !== rotateDeg) {
+    // 방법 B(폴백) — 입력 옵션 -display_rotation으로 직접 Display Matrix를 만든다(ffmpeg≥6.0 전용).
+    execFileSync(
+      ffmpegPath,
+      ['-y', '-display_rotation', String(rotateDeg), '-i', base, '-c', 'copy', dest],
+      { stdio: 'ignore' },
+    );
+    probed = probeVideoStream(dest);
+    attempts.push(
+      `방법B(-display_rotation ${rotateDeg}) → probe rotation=${String(probed.rotation)}`,
+    );
+  }
+
+  if (probed.rotation !== rotateDeg) {
+    const raw = execFileSync(ffprobePath, [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_streams',
+      '-of',
+      'json',
+      dest,
+    ]).toString();
+    throw new Error(
+      [
+        `회전 메타 픽스처 생성 실패 — 이 ffmpeg 빌드에서는 두 방법 모두 ` +
+          `Display Matrix rotation=${rotateDeg}를 만들지 못했다(대장 #242).`,
+        `시도: ${attempts.join(' / ')}`,
+        `ffmpeg -version: ${ffmpegVersionFirstLine()}`,
+        `ffprobe side_data_list 원문: ${raw}`,
+      ].join('\n'),
+    );
+  }
 }
 
 /**
@@ -208,6 +299,9 @@ function probeAudioStream(file: string): { sampleRate: number; bitRateKbps: numb
 }
 
 beforeAll(async () => {
+  // ★ 대장 #242 — 플랫폼별 ffmpeg 빌드 3종(제온 5.1.9 / 로컬 macOS 6.0 / CI Linux 미확인) 차이가
+  // 회전 메타 리먹스 동작을 갈랐다. CI 로그에 버전이 항상 남아야 다음 함정을 5분 만에 잡는다.
+  console.log(`[processors.spec] ${ffmpegVersionFirstLine()}`);
   workDir = await mkdtemp(join(tmpdir(), 'gachinol-proc-test-'));
   tinyMp4 = join(workDir, 'source-1080p.mp4');
   smallSourceMp4 = join(workDir, 'source-480p.mp4');
@@ -547,6 +641,15 @@ describe('processAutoEdit — 회전 대칭 바운딩 박스(대장 #240)', () =
   // 오판해 1920×1080을 캡으로 써 세로 결과가 나오지 않는다. 필터 식 안 iw/ih 판정만 이 케이스를
   // 통과시킨다(ffmpeg 자동회전이 필터 적용 전에 iw/ih를 이미 1080×1920으로 바꿔놓기 때문).
   test('회전 메타 소스(코드 1920×1080 + rotation=-90) — iw/ih가 자동회전 이후 값이라 세로로 처리', async () => {
+    // ★ 대장 #242 — 픽스처 전제를 먼저 단언한다(6-2). 이게 실패하면 "픽스처가 잘못됐다"이고,
+    // 아래 마스터 치수 단언만 실패하면 "스케일 식이 잘못됐다"다. genRotatedTestVideo의 자기검증
+    // 폴백 체인 덕에 이 시점엔 rotation이 이미 -90이어야 하지만, 회귀 시 원인을 즉시 구분하기
+    // 위해 여기서도 다시 확인한다.
+    const fixture = probeVideoStream(rotatedMp4);
+    expect(fixture.width).toBe(1920);
+    expect(fixture.height).toBe(1080);
+    expect(fixture.rotation).toBe(-90);
+
     const outDir = await mkdtemp(join(tmpdir(), 'out-'));
     const { io } = localS3({ [source.key]: rotatedMp4 }, outDir);
     const { job } = fakeJob('auto_edit', {
@@ -575,6 +678,12 @@ describe('processAutoEdit — 회전 대칭 바운딩 박스(대장 #240)', () =
   // 컷 없음(-vf)·컷 있음(filter_complex) 양쪽에서 재사용되므로, 컷 있음 경로에서도 회전 소스가
   // 세로로 처리돼야 "한쪽만 고쳐 컷 도입 시 조용히 갈리는" 사고가 없음이 드러난다.
   test('회전 메타 소스 + 컷(segments) — filter_complex 경로도 세로로 처리', async () => {
+    // ★ 대장 #242 — 전제 단언(6-2), 위 테스트와 동일 근거.
+    const fixture = probeVideoStream(rotatedMp4);
+    expect(fixture.width).toBe(1920);
+    expect(fixture.height).toBe(1080);
+    expect(fixture.rotation).toBe(-90);
+
     const outDir = await mkdtemp(join(tmpdir(), 'out-'));
     const { io } = localS3({ [source.key]: rotatedMp4 }, outDir);
     const { job } = fakeJob('auto_edit', {
