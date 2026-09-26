@@ -1,0 +1,379 @@
+name: Rollback Drill
+
+# 배포 자동 롤백 드릴 (대장 #243 태스크③) — "롤백 경로가 실제로 작동함을 프로덕션을 깨지 않고
+# 증명"한다(규율 21 — "없음이 아니라 있는 척" 금지). `infra/scripts/deploy-rollback.mjs`(태스크①)를
+# `.github/workflows/build-images.yml`의 `deploy` 잡(태스크②)에 배선했지만, 그 잡은 `report` 모드로
+# 머지돼 **원격 실행 코드 경로가 한 번도 실제로 돌아본 적이 없다** — "코드가 있다"와 "코드가 동작한다"
+# 사이의 간극을 이 워크플로가 메운다.
+#
+# ── 유일하게 위조하는 값 1개 — 코드 경로는 100% 실물 ─────────────────────────────────────
+# 위조하는 것은 "api SHA 검증의 기대값" 하나뿐이다(`verify-deployed-sha.mjs --expect`에 실존하지
+# 않는 40자 SHA를 준다 — `monitor.yml`의 `expect_sha_override` 관용구와 동일하게 40자 hex 고정값을
+# 쓴다). 그 외 모든 것 — 캡처·라우트 검증·워커 SHA 검증·`decide`(mode=enforce)·`plan`이 생성한
+# 원격 명령·실제 SSH 실행·재검증·최종 판정 — 은 `build-images.yml`이 쓰는 것과 **완전히 동일한
+# 스크립트·완전히 동일한 셸 경로**다.
+#
+# ── 왜 프로덕션이 깨지지 않는가 ────────────────────────────────────────────────────────────
+# ⛔ 이 워크플로는 **배포하지 않는다** — `docker compose pull` 0회, 새 이미지 참조 0건. 롤백이
+# 대상으로 삼는 이미지는 "지금 이미 돌고 있는 바로 그 이미지"다(캡처 직후 바로 롤백 계획을 세우므로).
+# `generateRollbackPlan`이 만드는 명령은 그 이미지를 `rollback-<runId>` 태그로 재태깅하고
+# `docker compose up -d --no-build --no-deps`로 같은 이미지를 다시 기동할 뿐이다 — 결과 상태(어떤
+# 코드가 서빙되는가)는 드릴 전후로 **동일**하다(무해한 재기동).
+#
+# ── 왜 이름이 "Build Images"·"Deploy Web"이 아닌가 ───────────────────────────────────────
+# `infra/scripts/monitor-freshness.mjs`가 배포 런을 **워크플로 이름만으로** 걸러 event 필터 없이
+# 조회한다(`.name == "Build Images" or .name == "Deploy Web"`, `.github/workflows/monitor.yml`의
+# `fetch-jobs` 스텝 실측). 이 드릴은 **의도적으로 최종 판정을 red로 낸다**(아래 참조) — 이름을
+# 저 둘 중 하나로 지으면 `monitor-freshness.mjs`가 이 드릴의 의도된 red를 진짜 배포 실패
+# (`deploy-failed`)로 오탐한다. 그래서 이름을 `Rollback Drill`로 분리했다.
+#
+# ── 최종 판정이 반드시 red인 이유 ────────────────────────────────────────────────────────
+# `computeFinalVerdict`(deploy-rollback.mjs)는 "롤백을 실제로 수행했다는 사실 자체가 이미 실패"로
+# 판정한다(재검증이 통과해도 뒤집지 않는다 — 롤백 성공을 초록으로 덮지 않는다는 이 파일의 핵심
+# 설계). 이 드릴은 항상 롤백을 트리거하므로 항상 red로 끝난다 — **이것이 정상 동작이다**(green이면
+# 오히려 `computeFinalVerdict`가 깨졌다는 뜻).
+#
+# ── mode=enforce를 이 워크플로에서만 쓰는 이유 ───────────────────────────────────────────
+# `build-images.yml`의 `deploy` 잡은 `--mode`를 주지 않아 `deploy-rollback.mjs`의
+# `DEFAULT_ROLLBACK_MODE`(현재 report)를 그대로 쓴다. 이 드릴만 `decide` 호출에 `--mode enforce`를
+# **스텝 인자로 직접** 준다 — 실행 경로를 증명하는 것이 이 워크플로의 목적이므로 여기서는 enforce가
+# 맞고, `build-images.yml`의 기본 승격 절차(`DEFAULT_ROLLBACK_MODE` 상수를 바꾸는 PR)와는 무관하다.
+#
+# ── 마이그레이션 축을 생략하는 이유 ───────────────────────────────────────────────────────
+# 이 드릴은 새 이미지를 배포하지 않으므로 스키마 드리프트 개념 자체가 적용되지 않는다.
+# `migrations-changed.txt`를 항상 빈 파일로 둔다(=변경 없음 — `decide`의 `--migrations-file`은
+# 필수 플래그라 뭔가는 줘야 하고, "드릴은 스키마를 절대 건드리지 않는다"는 전제를 그대로 인코딩한
+# 값이 정확히 빈 파일이다).
+#
+# ── 미디어 축을 생략하는 이유 ─────────────────────────────────────────────────────────────
+# `decide`의 `--media-json`은 선택 플래그다. 드릴의 목적은 "api SHA 축이 rollback=true를 트리거하고
+# 그 계획이 실제로 실행되는가"이므로 무관한 축(외부 네트워크에 의존해 flake가 있는 미디어 도달성)을
+# 끌어들이지 않는다 — 관여 축이 적을수록 드릴 결과의 원인이 명확하다.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rollback-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: drill (api SHA 축을 의도적으로 실패시켜 롤백 경로 실증)
+    runs-on: ubuntu-latest
+    # build-images.yml의 `deploy` 잡과 동일 Environment를 쓴다 — 이 드릴도 프로덕션 제온에 실제
+    # SSH로 접속해 실제 컨테이너를 재기동한다(무해하다고 해서 승인 없이 트리거하지 않는다).
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tailscale 합류 (러너 → 테일넷)
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: SSH 키 준비
+        env:
+          SSH_KEY: ${{ secrets.WEB_DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.WEB_DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      # ⑴ 캡처 — build-images.yml의 "복구 지점 캡처" 스텝과 동일 로직(사본이지만 코드 경로는
+      # 동일한 deploy-rollback.mjs capture 서브커맨드). 이 값이 그대로 "롤백 대상"이 된다 —
+      # 지금 이미 돌고 있는 이미지 그 자체이므로 롤백은 곧 무해한 재기동이다.
+      - name: 캡처 (현재 서빙 중인 상태 — 이것이 곧 롤백 대상)
+        id: capture
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+        run: |
+          set -euo pipefail
+          : > capture-raw.txt
+          for svc in api media-worker ai-worker; do
+            line="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+              "set -euo pipefail; cd '$COMPOSE_DIR'; \
+               cid=\$(docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q $svc); \
+               if [ -z \"\$cid\" ]; then echo '$svc|||'; exit 0; fi; \
+               ref=\$(docker inspect -f '{{.Config.Image}}' \"\$cid\"); \
+               imageId=\$(docker inspect -f '{{.Image}}' \"\$cid\"); \
+               gitSha=\$(docker image inspect \"\$imageId\" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^GIT_SHA=' | head -1 | cut -d= -f2-); \
+               echo \"$svc|\$ref|\$imageId|\$gitSha\"")"
+            echo "$line" >> capture-raw.txt
+          done
+          echo "── 캡처 원본 ──"
+          cat capture-raw.txt
+          node infra/scripts/deploy-rollback.mjs capture \
+            --input capture-raw.txt --run-id "$GITHUB_RUN_ID" --json-out capture.json
+
+      # 드릴은 배포하지 않으므로 스키마 드리프트 축은 무관하다 — 항상 "변경 없음"(빈 파일)으로 고정.
+      - name: 마이그레이션 변경 판정 (드릴 — 항상 변경 없음, 배포하지 않으므로)
+        id: migrations
+        run: |
+          set -euo pipefail
+          : > migrations-changed.txt
+          echo "드릴은 새 이미지를 배포하지 않는다 — 마이그레이션 축은 항상 '변경 없음'"
+
+      # ⑵ 검증을 위조하지 않고 진짜로 실패시킨다 — `--expect`에 실존하지 않는 40자 SHA를 준다.
+      # HTTP 응답(api-version.json)은 지금 실제로 서빙 중인 진짜 응답이다 — 위조하는 것은 그것과
+      # 대조할 기대값 하나뿐이다. `verify-deployed-sha.mjs`는 정확한 문자열 불일치로 exit 1을 내는
+      # **실물 코드 경로**를 그대로 탄다.
+      - name: 검증① api SHA 대조 (의도적 불일치 — monitor.yml expect_sha_override 관용구)
+        id: verify_api_sha
+        continue-on-error: true
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+          # 40자 hex 고정값 — 실존하는 커밋 SHA와 충돌할 확률은 무시 가능하다. 위조하는 값은
+          # 이것 하나뿐이다(헤더 주석 "유일하게 위조하는 값 1개" 참조).
+          FAKE_SHA: deaddeaddeaddeaddeaddeaddeaddeaddeaddead
+        run: |
+          set -euo pipefail
+          cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q api")"
+          if [ -z "$cid" ]; then
+            echo "api 컨테이너 ID를 얻지 못함(compose ps -q api 결과 없음) — 드릴 진행 불가" >&2
+            exit 1
+          fi
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "docker exec '$cid' node -e \"fetch('http://127.0.0.1:4000/health/version').then(r=>r.text()).then(t=>process.stdout.write(t))\"" \
+            > api-version.json
+          echo "실제 응답(위조 없음):"
+          cat api-version.json
+          echo ""
+          echo "기대값(의도적으로 위조 — 이 스텝은 반드시 실패해야 정상이다): $FAKE_SHA"
+          node infra/scripts/verify-deployed-sha.mjs --kind api --expect "$FAKE_SHA" --body-file api-version.json
+
+      # 라우트 축은 위조하지 않는다 — 실제 상태가 정상이면 이 축은 통과해야 한다(관여 축을 좁혀
+      # 드릴 결과의 원인을 api SHA 축 하나로 명확히 하기 위해).
+      - name: 검증② 라우트 스모크 (실측 — 위조 없음)
+        id: verify_routes
+        continue-on-error: true
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+        run: |
+          set -euo pipefail
+          cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; \
+             docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q api")"
+          if [ -z "$cid" ]; then
+            echo "api 컨테이너 ID를 얻지 못함(compose ps -q api 결과 없음) — 스모크 확인 불가" >&2
+            exit 1
+          fi
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "docker exec '$cid' node -e \"(async()=>{const c=require('crypto');const paths=['/health/version','/health/readiness','/v1/feed','/v1/contents','/v1/resident-uploads/'+c.randomUUID()];const absent='/v1/__smoke_absent__'+c.randomUUID();async function probe(p){try{const r=await fetch('http://127.0.0.1:4000'+p);return{path:p,status:r.status,error:null,contentType:r.headers.get('content-type')};}catch(e){return{path:p,status:null,error:String(e&&e.message?e.message:e)};}}function sleep(ms){return new Promise(res=>setTimeout(res,ms));}async function probeReadiness(p){let last;for(let i=0;i<3;i++){last=await probe(p);if(last.status===200)return last;if(i<2)await sleep(10000);}return last;}const routes=[];for(const p of paths){routes.push(p==='/health/readiness'?await probeReadiness(p):await probe(p));}const a=await probe(absent);process.stdout.write(JSON.stringify({routes:routes,absent:a}));})();\"" \
+            > smoke-status.json
+          node infra/scripts/deploy-smoke.mjs --status-file smoke-status.json
+
+      # 워커 축도 위조하지 않는다 — 단, `github.sha`(이 드릴을 실행한 커밋)가 아니라 **캡처한
+      # gitSha**와 비교한다. 드릴은 배포하지 않으므로 "지금 서빙 중인 것"이 곧 정답이고, 드릴이
+      # 어느 브랜치/커밋에서 트리거됐는지는 이 축의 통과 여부와 무관해야 한다(그래야 드릴이 항상
+      # api SHA 축 하나로만 rollback=true를 내는 결정적 시나리오가 된다).
+      - name: 검증④ 워커 SHA 대조 (실측 — 캡처한 gitSha와 대조, 위조 없음)
+        id: verify_workers
+        continue-on-error: true
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+        run: |
+          set +e
+          fail=0
+          declare -A status
+          declare -A reason
+          for svc in media-worker ai-worker; do
+            expect_sha="$(node -e "console.log(JSON.parse(require('fs').readFileSync('capture.json','utf8')).services['$svc'].gitSha)")"
+            cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+              "set -euo pipefail; cd '$COMPOSE_DIR'; \
+               docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q $svc")"
+            if [ -z "$cid" ]; then
+              status[$svc]=fail
+              reason[$svc]="컨테이너 ID를 얻지 못함(compose ps -q $svc 결과 없음)"
+              fail=1
+              continue
+            fi
+            actual="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+              "docker exec '$cid' printenv GIT_SHA" 2>/dev/null)"
+            if [ "$actual" != "$expect_sha" ]; then
+              status[$svc]=fail
+              reason[$svc]="SHA 불일치: 기대(캡처값)=$expect_sha 실제=${actual:-미검출}"
+              fail=1
+            else
+              status[$svc]=ok
+              reason[$svc]="SHA 일치 확인(캡처값 대조): $actual"
+              echo "SHA 일치 확인($svc): $actual"
+            fi
+          done
+          {
+            echo "media_worker_status=${status[media-worker]:-fail}"
+            echo "media_worker_reason=${reason[media-worker]:-검사 미완료}"
+            echo "ai_worker_status=${status[ai-worker]:-fail}"
+            echo "ai_worker_reason=${reason[ai-worker]:-검사 미완료}"
+          } >> "$GITHUB_OUTPUT"
+          exit "$fail"
+
+      # ⑶ decide가 rollback=true를 내는지 — mode=enforce를 이 스텝에서만 하드코딩한다(헤더 주석
+      # "mode=enforce를 이 워크플로에서만 쓰는 이유" 참조). `--media-json`은 주지 않는다(헤더 주석
+      # "미디어 축을 생략하는 이유").
+      - name: 롤백 판정 (mode=enforce — 실행 경로 증명)
+        id: decide
+        run: |
+          set -euo pipefail
+          node infra/scripts/deploy-rollback.mjs decide \
+            --capture-file capture.json \
+            --migrations-file migrations-changed.txt \
+            --run-id "$GITHUB_RUN_ID" \
+            --api-sha-status ${{ steps.verify_api_sha.outcome == 'success' && 'ok' || 'fail' }} \
+            --api-sha-reason "드릴 — 의도적 SHA 불일치, step outcome=${{ steps.verify_api_sha.outcome }}" \
+            --routes-status ${{ steps.verify_routes.outcome == 'success' && 'ok' || 'fail' }} \
+            --routes-reason "step outcome=${{ steps.verify_routes.outcome }}" \
+            --media-worker-sha-status "${{ steps.verify_workers.outputs.media_worker_status }}" \
+            --media-worker-sha-reason "${{ steps.verify_workers.outputs.media_worker_reason }}" \
+            --ai-worker-sha-status "${{ steps.verify_workers.outputs.ai_worker_status }}" \
+            --ai-worker-sha-reason "${{ steps.verify_workers.outputs.ai_worker_reason }}" \
+            --mode enforce \
+            --json-out decide.json
+          rollback="$(node -e "console.log(JSON.parse(require('fs').readFileSync('decide.json','utf8')).rollback)")"
+          escalate="$(node -e "const d=JSON.parse(require('fs').readFileSync('decide.json','utf8'));console.log(d.escalate||'')")"
+          enforce="$(node -e "console.log(JSON.parse(require('fs').readFileSync('decide.json','utf8')).enforce)")"
+          echo "판정 결과: rollback=$rollback escalate=${escalate:-(없음)} enforce=$enforce"
+          if [ "$rollback" != "true" ]; then
+            echo "⛔ 드릴 실패: api SHA 축을 의도적으로 실패시켰는데도 rollback=true가 아니다 — decide 로직 또는 이 드릴의 배선이 깨졌다" >&2
+            exit 1
+          fi
+          {
+            echo "rollback=$rollback"
+            echo "escalate=$escalate"
+            echo "enforce=$enforce"
+          } >> "$GITHUB_OUTPUT"
+
+      # ⑷ 롤백 실행 — 지금 이미 돌고 있는 이미지를 새 태그로 재태깅하고 같은 이미지로 재기동한다.
+      # ⛔ `pull` 없음, 새 이미지 참조 없음(`generateRollbackPlan`은 애초에 `pull`을 생성하지 않는다 —
+      # `rollback-*` 태그는 GHCR에 없다).
+      - name: 롤백 실행 (실물 SSH — 무해한 재기동)
+        id: rollback_exec
+        if: steps.decide.outputs.rollback == 'true' && steps.decide.outputs.enforce == 'true'
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+        run: |
+          set -euo pipefail
+          remote_command="$(node -e "console.log(JSON.parse(require('fs').readFileSync('decide.json','utf8')).plan.remoteCommand)")"
+          echo "원격 실행 명령(생성기 산출물 그대로 — 사람이 조립하지 않음):"
+          echo "$remote_command"
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; $remote_command"
+
+      # ⑸ 캡처한 실제 SHA로 재검증 → 통과해야 한다(같은 이미지로 재기동했으므로).
+      - name: 재검증 — 캡처한 실제 SHA로 통과 확인
+        id: reverify
+        if: always() && steps.rollback_exec.outcome != 'skipped'
+        continue-on-error: true
+        env:
+          SSH_HOST: ${{ secrets.WEB_DEPLOY_SSH_HOST }}
+          SSH_USER: ${{ secrets.WEB_DEPLOY_SSH_USER }}
+          SSH_PORT: ${{ vars.WEB_DEPLOY_SSH_PORT || '22' }}
+          COMPOSE_DIR: ${{ vars.WEB_DEPLOY_COMPOSE_DIR }}
+        run: |
+          set +e
+          fail=0
+          reasons=()
+
+          expect_api_sha="$(node -e "console.log(JSON.parse(require('fs').readFileSync('capture.json','utf8')).services.api.gitSha)")"
+          cid_api="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+            "set -euo pipefail; cd '$COMPOSE_DIR'; docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q api")"
+          if [ -z "$cid_api" ]; then
+            fail=1; reasons+=("api 컨테이너 없음")
+          else
+            if ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+              "docker exec '$cid_api' node -e \"fetch('http://127.0.0.1:4000/health/version').then(r=>r.text()).then(t=>process.stdout.write(t))\"" \
+              > reverify-api-version.json; then
+              if ! node infra/scripts/verify-deployed-sha.mjs --kind api --expect "$expect_api_sha" --body-file reverify-api-version.json; then
+                fail=1; reasons+=("api SHA 불일치(기대=$expect_api_sha)")
+              fi
+            else
+              fail=1; reasons+=("api 재검증 응답 실패")
+            fi
+          fi
+
+          for svc in media-worker ai-worker; do
+            expect_sha="$(node -e "console.log(JSON.parse(require('fs').readFileSync('capture.json','utf8')).services['$svc'].gitSha)")"
+            cid="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" \
+              "set -euo pipefail; cd '$COMPOSE_DIR'; docker compose -f docker-compose.prod.yml -f docker-compose.xeon.yml ps -q $svc")"
+            if [ -z "$cid" ]; then
+              fail=1; reasons+=("$svc 컨테이너 없음"); continue
+            fi
+            actual="$(ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes "$SSH_USER@$SSH_HOST" "docker exec '$cid' printenv GIT_SHA" 2>/dev/null)"
+            if [ "$actual" != "$expect_sha" ]; then
+              fail=1; reasons+=("$svc SHA 불일치(기대=$expect_sha 실제=${actual:-미검출})")
+            fi
+          done
+
+          if [ "${#reasons[@]}" -eq 0 ]; then
+            reason_joined="복구 지점(캡처값)으로 정상 서빙 확인 — 드릴 성공"
+          else
+            reason_joined="$(IFS='; '; echo "${reasons[*]}")"
+          fi
+          ok_json=false
+          [ "$fail" -eq 0 ] && ok_json=true
+          printf '{"ok":%s,"reason":"%s"}' "$ok_json" "$reason_joined" > reverify.json
+          cat reverify.json
+          exit "$fail"
+
+      # ⑹ 최종 판정이 red — 롤백을 실제로 수행했다는 사실 자체가 `computeFinalVerdict`를 실패로
+      # 만든다(재검증이 통과해도 뒤집지 않는다). **이 스텝이 exit 1로 끝나는 것이 드릴의 성공
+      # 기준이다** — green이면 오히려 `computeFinalVerdict`나 이 드릴의 배선이 깨진 것이다.
+      - name: 최종 판정 (반드시 red — 롤백 성공을 초록으로 덮지 않는다는 것의 증명)
+        id: verdict
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          reverify_args=()
+          if [ -f reverify.json ]; then
+            reverify_ok="$(node -e "console.log(JSON.parse(require('fs').readFileSync('reverify.json','utf8')).ok ? 'ok' : 'fail')")"
+            reverify_reason="$(node -e "console.log(JSON.parse(require('fs').readFileSync('reverify.json','utf8')).reason || '')")"
+            reverify_args=(--reverify-status "$reverify_ok" --reverify-reason "$reverify_reason")
+          fi
+          node infra/scripts/deploy-rollback.mjs verdict \
+            --decide-file decide.json \
+            --capture-file capture.json \
+            --run-id "$GITHUB_RUN_ID" \
+            "${reverify_args[@]}" \
+            --summary-out recovery-runbook.md \
+            --json-out verdict.json
+          verdict_exit=$?
+          {
+            echo "## 드릴 결과 해석"
+            echo ""
+            echo "이 워크플로는 **항상 red로 끝나야 정상**이다(위 헤더 주석 참조 — 롤백을 실제로"
+            echo "수행했다는 사실 자체가 이미 실패 판정이다). 아래 판정 exit code: \`$verdict_exit\`"
+            echo "(0이 아니어야 드릴이 성공한 것이다 — decide가 rollback=true를 냈고 실제로 실행했다는 뜻)."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f recovery-runbook.md ]; then
+            cat recovery-runbook.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # 드릴 자신의 최종 스텝은 항상 실패(exit 1)로 끝난다 — verdict.mjs의 판정(exit 1)을
+          # 그대로 드릴의 잡 결과로 노출한다(위조하지 않는다 — 실제로 rollback=true였으므로 실제로
+          # exit 1이 나오는 것이지, 이 스텝이 인위적으로 강제하는 것이 아니다).
+          exit "$verdict_exit"

@@ -10,8 +10,13 @@
 // `daejang-recheck.test.mjs`의 self-check(test:scripts 등재 검사)가 레드로 잡는다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:http';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   classifyHostFailures,
   classifyReachabilityFailure,
@@ -571,4 +576,69 @@ test('CLI: 잘못된 --timeout-ms는 exit 1', () => {
   const { code, stderr } = runCli(['--api-url', 'https://api.bapfull.com', '--timeout-ms', 'nope']);
   assert.equal(code, 1);
   assert.match(stderr, /timeout-ms/);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════
+// CLI --json-out (대장 #243 태스크① — deploy-rollback.mjs가 이 파일을 그대로 축 입력으로 소비)
+// ⚠️ 판정 로직은 건드리지 않았다 — 이 테스트는 "이미 계산된 verdict가 그대로 파일에 적히는가"만 본다.
+// ═══════════════════════════════════════════════════════════════════════════════════
+
+// ⚠️ 함정(deploy-smoke.test.mjs와 동일 — 그 파일 300행 주석 참조): `execFileSync`(동기)로 CLI를
+// 실행하면 이 테스트 프로세스의 이벤트 루프가 멈춘다 — 그런데 그 CLI 자식 프로세스가 접속하려는
+// http 서버가 **같은 프로세스**(이 테스트 러너)에서 떠 있으므로, 이벤트 루프 정지 때문에 서버
+// 핸들러가 전혀 실행되지 못해 자식이 타임아웃까지 응답을 못 받고 무한 대기한다(실측: 120초
+// 하드타임아웃까지 걸려서야 강제 종료됐다). 비동기 `execFile`을 `await`해야 서버가 응답한다.
+const execFileAsync = promisify(execFile);
+
+async function runCliAsync(args) {
+  try {
+    const { stdout } = await execFileAsync('node', [SCRIPT_PATH, ...args]);
+    return { code: 0, stdout };
+  } catch (err) {
+    return { code: err.code ?? 1, stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
+  }
+}
+
+function listenAsync(server) {
+  return new Promise((resolvePromise) => {
+    server.listen(0, '127.0.0.1', () => resolvePromise(server.address().port));
+  });
+}
+
+function closeAsync(server) {
+  return new Promise((resolvePromise) => server.close(() => resolvePromise()));
+}
+
+test('⭐ CLI --json-out: 이미 계산된 verdict를 그대로 파일에 적는다(판정 로직 무변경 확인)', async () => {
+  const server = createServer((req, res) => {
+    if (req.url === '/v1/feed?limit=1') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      // 대장 #169 실물 재현 패턴 그대로: 사설/http URL → 호스트 판정에서 즉시 FAIL(네트워크 미시도).
+      res.end(JSON.stringify({ items: [{ contentId: 'c1', thumbnailUrl: 'http://127.0.0.1:1/thumb.jpg' }] }));
+    } else if (req.url === '/v1/feed/c1/playback') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ hlsUrl: 'http://127.0.0.1:1/video.mp4' }));
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  const port = await listenAsync(server);
+  const dir = mkdtempSync(join(tmpdir(), 'media-reachability-jsonout-'));
+  const outPath = join(dir, 'verdict.json');
+  try {
+    const { code, stdout } = await runCliAsync(['--api-url', `http://127.0.0.1:${port}`, '--json-out', outPath]);
+    assert.equal(code, 1, stdout); // 사설 호스트 → FAIL이 정상(이 테스트의 전제)
+    const written = JSON.parse(readFileSync(outPath, 'utf8'));
+    assert.equal(written.ok, false);
+    assert.equal(written.status, 'FAIL');
+    assert.ok(written.targets.length >= 2, 'thumbnail+hls 2타깃 이상이 기록돼야 함');
+    assert.ok(
+      written.failures.some((f) => (f.failureKinds ?? []).includes('loopback-host')),
+      'loopback-host 실패가 기록 JSON에 그대로 남아야 함(재분류는 소비자인 deploy-rollback.mjs 몫)',
+    );
+  } finally {
+    await closeAsync(server);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
