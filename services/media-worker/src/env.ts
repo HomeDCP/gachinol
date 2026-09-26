@@ -42,8 +42,14 @@ export const workerEnvSchema = z.object({
   // 송출 마스터(대장 #232 태스크①) — auto_edit이 렌디션과 별도로 만드는 고화질 원천.
   // ⚠️ 기본값 자체가 목표 규격이다 — 제온은 git 체크아웃이 아니라 파일 복사본이라 `.env`에
   // `MEDIA_*`가 없고, 여기 기본값이 실효 수단이다(대장 #195).
-  // 1080: YouTube 1080p Premium은 1080p로 업로드한 영상만 대상(4K로 올리면 오히려 자격을 잃는다, 공식).
-  MEDIA_MASTER_HEIGHT: z.coerce.number().int().positive().default(1080),
+  // 대장 #240 — 舊 MEDIA_MASTER_HEIGHT(단일 높이 캡)는 세로 영상을 오처리했다: 항상 '높이'를
+  // 캡 대상으로 가정해서, 세로 소스(짧은 변=너비)에서는 오히려 긴 변(높이)을 캡해 불필요하게
+  // 다운스케일했다(1080×1920 → 608×1080). 회전 대칭 바운딩 박스로 교체한다:
+  // 긴 변 ≤ MEDIA_MASTER_LONG_EDGE ∧ 짧은 변 ≤ MEDIA_MASTER_SHORT_EDGE(업스케일 금지 유지).
+  // 1920/1080: YouTube 1080p Premium은 1080p로 업로드한 영상만 대상(4K로 올리면 오히려 자격을
+  // 잃는다, 공식) — 가로 기준 1920×1080이 그 규격이고, 세로는 대칭으로 1080×1920까지 허용한다.
+  MEDIA_MASTER_LONG_EDGE: z.coerce.number().int().positive().default(1920),
+  MEDIA_MASTER_SHORT_EDGE: z.coerce.number().int().positive().default(1080),
   // 8000: YouTube 1080p/30fps SDR 권장 비트레이트(공식). 현행 렌디션 2500의 3.2배.
   MEDIA_MASTER_VBR_KBPS: z.coerce.number().int().positive().default(8000),
   // 프리뷰 (360p·600kbps) — payload가 우선하나 미지정 시 기본값
@@ -58,6 +64,17 @@ export type WorkerEnv = z.infer<typeof workerEnvSchema>;
 
 /** process.env 파싱 — 실패 시 누락/오류 키를 나열하고 즉사 */
 export function loadWorkerEnv(source: NodeJS.ProcessEnv = process.env): WorkerEnv {
+  // 대장 #240 — MEDIA_MASTER_HEIGHT 폐기 키 fail-fast. `workerEnvSchema`는 z.object라 모르는
+  // 키를 조용히 버린다(process.env 전체를 파싱하므로 .strict()는 못 쓴다 — 관계없는 OS
+  // 환경변수까지 다 걸린다). 개명만 하면 이 키를 계속 설정해도 에러도 효과도 없는 조용한
+  // 오설정이 되므로, 부팅 즉시 명시적으로 막고 새 키로 옮기라고 안내한다.
+  if (source.MEDIA_MASTER_HEIGHT != null) {
+    throw new Error(
+      '미디어 워커 환경변수 검증 실패:\n' +
+        '  - MEDIA_MASTER_HEIGHT: 폐기된 키입니다(대장 #240). ' +
+        'MEDIA_MASTER_LONG_EDGE(긴 변 상한, 기본 1920)·MEDIA_MASTER_SHORT_EDGE(짧은 변 상한, 기본 1080)로 옮기세요.',
+    );
+  }
   const parsed = workerEnvSchema.safeParse(source);
   if (!parsed.success) {
     const issues = parsed.error.issues

@@ -56,7 +56,8 @@ export async function processAutoEdit(
       input,
       masterOutput,
       {
-        height: profile.master.height,
+        longEdge: profile.master.longEdge,
+        shortEdge: profile.master.shortEdge,
         vbrKbps: profile.master.vbrKbps,
         loudnormI: profile.loudnormI,
         segments,

@@ -181,7 +181,10 @@ export function autoEdit(
   input: string,
   output: string,
   opts: {
-    height: number;
+    /** 긴 변 상한(px) — 회전 대칭 바운딩 박스(대장 #240) */
+    longEdge: number;
+    /** 짧은 변 상한(px) */
+    shortEdge: number;
     vbrKbps: number;
     /** loudnorm 목표 라우드니스(LUFS). 방송 표준 -16 */
     loudnormI: number;
@@ -193,7 +196,18 @@ export function autoEdit(
   },
   onProgress?: ProgressFn,
 ): Promise<void> {
-  const scale = `scale=-2:'min(ih,${opts.height})'`;
+  // 회전 대칭 바운딩 박스(대장 #240) — 긴 변 ≤ longEdge ∧ 짧은 변 ≤ shortEdge, 업스케일 금지.
+  // ⚠️ 방향 판정(`if(gte(iw,ih), ...)`)은 반드시 **필터 식 안에서** iw/ih로 한다 — iPhone 세로
+  // 촬영본은 `1920×1080 코드 + rotation=-90` 메타로 저장되고(CLAUDE.md §11 실기 촬영본 기록),
+  // ffprobe의 streams[].width/height는 **코드된(회전 전) 치수**라 TS에서 미리 판정하면 세로를
+  // 가로로 오판한다. 필터그래프 안의 iw/ih는 ffmpeg가 표시행렬(display matrix)로 자동회전을
+  // 먼저 적용한 **이후** 값이라 정확하다(실측 확인 — 회전 메타 소스 1920×1080+rotate=-90 →
+  // 이 필터 통과 시 1080×1920, 항등). `force_original_aspect_ratio=decrease`가 왜곡 방지
+  // 안전망이다 — 방향 판정이 틀려도 종횡비는 안 깨지고 작아질 뿐이다.
+  // ⚠️ 한 줄로 유지한다 — 동반 게이트(infra/scripts/master-scale-dual-axis-gate.mjs)가 "같은 줄에
+  // min(iw...와 min(ih...가 함께 있는가"로 두 변 상한을 정적 확인한다. 가독성을 위해서라도 줄을
+  // 쪼개면(w=/h= 분리 등) 그 검사가 조용히 못 잡게 된다(대장 #240 동반 의무 D1-c).
+  const scale = `scale=w='min(iw,if(gte(iw,ih),${opts.longEdge},${opts.shortEdge}))':h='min(ih,if(gte(iw,ih),${opts.shortEdge},${opts.longEdge}))':force_original_aspect_ratio=decrease:force_divisible_by=2`;
   const loudnorm = `loudnorm=I=${opts.loudnormI}:TP=-1.5:LRA=11`;
   const common = [
     '-preset veryfast',
@@ -205,10 +219,16 @@ export function autoEdit(
     `-g ${opts.gopFrames}`,
     `-keyint_min ${opts.gopFrames}`,
     '-sc_threshold 0',
+    // 대장 #241 — 오디오 256kbps/48kHz(AAC-LC). YouTube 권장치(384k)보다 일부러 낮췄다: 소스가
+    // 휴대폰 마이크 AAC(~128kbps)라 384k로 올려도 없던 정보가 생기지 않는다. 막아야 할 것은
+    // 2세대 손실 누적(원본→마스터 재인코딩)이고, 256k면 그 열화가 청각 임계 아래로 내려간다.
+    // 채널(-ac)은 의도적으로 미지정 — 모노 소스에 스테레오를 강제하면 같은 신호를 2회 적재할
+    // 뿐이다. loudnorm(I=${opts.loudnormI})은 방송 표준(-16)이라 이 규격 변경과 무관하게 유지.
+    '-ar 48000',
   ];
 
   const segments = opts.segments ?? [];
-  const command = ffmpeg(input).videoCodec('libx264').audioCodec('aac').audioBitrate('128k');
+  const command = ffmpeg(input).videoCodec('libx264').audioCodec('aac').audioBitrate('256k');
 
   if (segments.length === 0) {
     // 컷 없음 — 타임라인 항등. -vf/-af 단순 경로

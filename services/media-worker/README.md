@@ -58,6 +58,14 @@ FFmpeg/ffprobe는 `ffmpeg-static`/`ffprobe-static` 번들 바이너리 사용 �
 | `MEDIA_RENDITION_HEIGHT` / `MEDIA_RENDITION_VBR_KBPS` | 720 / 2500 | 렌디션 프로파일 |
 | `MEDIA_PREVIEW_HEIGHT` / `MEDIA_PREVIEW_BITRATE_KBPS` | 360 / 600 | 프리뷰 프로파일(payload 우선) |
 | `MEDIA_THUMBNAIL_WIDTH` / `MEDIA_THUMBNAIL_AT_SEC` | 640 / 1 | 썸네일 프로파일 |
+| `MEDIA_MASTER_LONG_EDGE` / `MEDIA_MASTER_SHORT_EDGE` | 1920 / 1080 | 송출 마스터(`auto_edit`) 규격 — 회전 대칭 바운딩 박스(대장 #240): 긴 변 ≤ `LONG_EDGE` ∧ 짧은 변 ≤ `SHORT_EDGE`, 업스케일 금지. 방향 판정은 ffmpeg 필터 식 안(`iw`/`ih`, 자동회전 이후 값)에서만 한다 — ffprobe 치수로 TS에서 미리 판정하면 회전 메타가 있는 세로 촬영본(예: iPhone `1920×1080`+`rotation=-90`)을 가로로 오판한다. ⚠️ 舊 `MEDIA_MASTER_HEIGHT`(단일 높이 캡)는 **폐기 키** — 설정하면 부팅이 즉사한다(조용한 오설정 방지) |
+| `MEDIA_MASTER_VBR_KBPS` | 8000 | 송출 마스터 비디오 비트레이트(YouTube 1080p/30fps SDR 권장치) |
+
+`auto_edit`의 오디오 규격(대장 #241, env 미노출 — 코드 상수)은 AAC-LC **48kHz·256kbps**다. YouTube
+권장치(384k)보다 일부러 낮췄다 — 소스가 휴대폰 마이크 AAC(~128kbps)라 384k로 올려도 없던 정보가
+생기지 않고, 256k면 2세대 손실 누적이 청각 임계 아래로 내려간다. 채널(모노/스테레오)은 소스 그대로
+유지한다(강제 변환 없음). `loudnorm`(라우드니스 정규화, `MEDIA_LOUDNORM_I` 기본 -16 LUFS 방송 표준)은
+이 변경과 무관하게 그대로다.
 
 부팅 시 `REDIS_URL`·`S3_*` 누락이면 **즉사(fail-fast)**, 누락 키를 나열한다.
 `DATABASE_URL`·`JWT_*`는 **참조 금지**(worker는 DB·api 무접근).
