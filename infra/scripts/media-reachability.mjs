@@ -62,7 +62,13 @@
  *
  * ── CLI(단독 실행) ───────────────────────────────────────────────────────────────────
  *   node media-reachability.mjs --api-url https://api.bapfull.com
+ *   node media-reachability.mjs --api-url https://api.bapfull.com --json-out ./media-verdict.json
+ * `--json-out`(대장 #243 — deploy-rollback.mjs가 이 판정 JSON을 축 입력으로 그대로 소비한다)은
+ * `checkMediaReachability`가 이미 계산한 verdict 객체를 그대로 파일에 적을 뿐이다 — 판정 로직은
+ * 이 플래그로 한 줄도 바뀌지 않는다.
  */
+
+import { writeFileSync } from 'node:fs';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -571,6 +577,9 @@ function parseArgs(argv) {
       case '--timeout-ms':
         opts.timeoutMs = argv[++i];
         break;
+      case '--json-out':
+        opts.jsonOut = argv[++i];
+        break;
       default:
         throw new Error(`알 수 없는 인자: ${arg}`);
     }
@@ -617,6 +626,10 @@ async function main() {
   for (const line of formatMediaVerdictLines(verdict)) {
     if (line.includes('✘') || line.startsWith('  판정: FAIL')) console.error(line);
     else console.log(line);
+  }
+
+  if (opts.jsonOut) {
+    writeFileSync(opts.jsonOut, JSON.stringify(verdict, null, 2));
   }
 
   process.exitCode = verdict.ok ? 0 : 1;
