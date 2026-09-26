@@ -23,15 +23,34 @@ name: Rollback Drill
 # ── 왜 이름이 "Build Images"·"Deploy Web"이 아닌가 ───────────────────────────────────────
 # `infra/scripts/monitor-freshness.mjs`가 배포 런을 **워크플로 이름만으로** 걸러 event 필터 없이
 # 조회한다(`.name == "Build Images" or .name == "Deploy Web"`, `.github/workflows/monitor.yml`의
-# `fetch-jobs` 스텝 실측). 이 드릴은 **의도적으로 최종 판정을 red로 낸다**(아래 참조) — 이름을
-# 저 둘 중 하나로 지으면 `monitor-freshness.mjs`가 이 드릴의 의도된 red를 진짜 배포 실패
-# (`deploy-failed`)로 오탐한다. 그래서 이름을 `Rollback Drill`로 분리했다.
+# `fetch-jobs` 스텝 실측). 이 드릴이 red로 끝나면(아래 "종료 판정" 절 참조 — 지금은 진짜 이상이
+# 있을 때만 red다) 진짜 배포 실패(`deploy-failed`)와 시각적으로 섞일 여지가 있다 — 이름을
+# `Rollback Drill`로 분리해 둔다.
 #
-# ── 최종 판정이 반드시 red인 이유 ────────────────────────────────────────────────────────
-# `computeFinalVerdict`(deploy-rollback.mjs)는 "롤백을 실제로 수행했다는 사실 자체가 이미 실패"로
-# 판정한다(재검증이 통과해도 뒤집지 않는다 — 롤백 성공을 초록으로 덮지 않는다는 이 파일의 핵심
-# 설계). 이 드릴은 항상 롤백을 트리거하므로 항상 red로 끝난다 — **이것이 정상 동작이다**(green이면
-# 오히려 `computeFinalVerdict`가 깨졌다는 뜻).
+# ── 종료 판정 — 단언 기반 (2026-09-26 반전, 사용자 결정) ─────────────────────────────────
+# ⚠️ **이 절은 최초 설계(모든 실행을 실패 판정으로 끝내던 것)를 뒤집은 결과다** — 다음 사람이 옛 서술로 오해하지 않도록
+# 이 절이 그 자리를 대신한다. 최초 설계는 롤백을 실제로 수행했다는 사실 자체를 실패로 잡는
+# `computeFinalVerdict`(deploy-rollback.mjs)의 exit code를 드릴의 결과로 **그대로 노출**했다 —
+# 일회성 수동 실행에는 맞았지만, 이 드릴이 아래 "주 1회 스케줄"로 바뀌면서 3가지가 틀렸다:
+#   1. 매주 "실패" 알림이 온다.
+#   2. **red를 무시하는 습관이 생긴다** — 이 워크플로 전체가 막으려는 실패 모드 그 자체다.
+#   3. 드릴이 **진짜로 깨졌을 때**(예: decide가 rollback=true를 내지 못함·롤백 실행이 안 됨·재검증
+#      실패)와 평소의(의도된) red가 **구분이 안 된다**.
+#
+# 그래서 이 드릴은 **`computeFinalVerdict`의 exit code를 결과로 그대로 노출하지 않는다** — 그
+# 값은 아래 4개 단언 중 **④번의 입력**으로만 쓴다. 4개 단언이 **전부 참**이면 이 워크플로는
+# **green**으로 끝난다("기계장치가 설계대로 행동했다"는 뜻). 하나라도 거짓이면 **red**다.
+#
+#   ① `decide`가 **rollback=true**를 냈다(api SHA 축을 의도적으로 실패시켰으니 그래야 한다)
+#   ② 롤백 실행 스텝이 **실제로 수행됐다**(skip이 아니고 성공)
+#   ③ 롤백 후 재검증이 **통과했다**(캡처한 실제 SHA로)
+#   ④ `deploy-rollback.mjs verdict`가 **exit 0이 아니었다** — 롤백을 초록으로 덮지 않는다는
+#      성질의 증명이다. `deploy-rollback.mjs` 자체는 이 반전으로 건드리지 않았다 — 그 파일의
+#      `verdict` 의미는 **실배포 경로(`build-images.yml`)에서 그대로 유지**된다(롤백을 수행하면
+#      여전히 그 잡은 red다, 그건 옳다). 바뀐 것은 **이 드릴이 그 값을 어떻게 해석하는가**뿐이다.
+#
+# `$GITHUB_STEP_SUMMARY`에 4개 단언을 **항목별로** 표로 남긴다 — red일 때 무엇이 깨졌는지 로그를
+# 뒤지지 않고 한눈에 보이게 하기 위함이다.
 #
 # ── mode=enforce를 이 워크플로에서만 쓰는 이유 ───────────────────────────────────────────
 # `build-images.yml`의 `deploy` 잡은 `--mode`를 주지 않아 `deploy-rollback.mjs`의
@@ -51,6 +70,23 @@ name: Rollback Drill
 # 끌어들이지 않는다 — 관여 축이 적을수록 드릴 결과의 원인이 명확하다.
 on:
   workflow_dispatch:
+  # 주 1회 자동 드릴(사용자 결정 2026-09-26) — "이 배선을 얼마간 report 모드로 관찰한 뒤 승격한다"는
+  # 절차를 **드릴 1회 통과로 대체**한다(사용자 승인 — 규율 24의 2주 관찰 요건 대체).
+  # ⚠️ **KST↔UTC 변환** — 사용자가 지정한 시각은 **수요일 03:00 KST**(이 프로젝트는 제주 기반)이고,
+  # GitHub Actions의 `cron`은 **UTC**로 해석된다(KST = UTC+9) → 수요일 03:00 KST = **화요일 18:00
+  # UTC**다. 이 주석이 없으면 다음 사람이 `0 3 * * 3`(UTC 기준 수요일 03:00)으로 오해해 정정하다
+  # 시간을 쓴다.
+  # ⚠️ **정각을 피한다** — `.github/workflows/monitor.yml` 헤더 주석의 실측 근거를 그대로 따른다
+  # ("공식 문서가 정각 부근은 지연·드롭 가능이라 명시 … 그래서 정각을 피해 7,22,37,52분에 걸고").
+  # 정각(`0 18 * * 2`)이 아니라 `7 18 * * 2`를 쓴다.
+  # ⚠️ **한계(규율 21 — 감지 장치 없음을 숨기지 않는다)**: `monitor.yml` 헤더의 실측이 보여주듯
+  # GitHub의 `schedule`은 선언한 주기대로 돌지 않는다(그 워크플로 실측 — 15분 선언에 실제 간격
+  # 2~5시간, 이론 대비 약 8.3%). 이 드릴의 주간 cron도 **수 시간 밀리거나 아예 드롭될 수 있다** —
+  # "드릴이 조용히 안 돌았다"를 감지하는 장치는 **지금은 없다**(하트비트 수신기 같은 것을 이번
+  # 변경에서 만들지 않았다 — 범위 밖, 별건으로 채번 예정. 지금 단계는 개발 중이고 퍼블릭 공개
+  # 전이라 사용자가 우선순위를 낮췄다, 2026-09-26 결정 — 정식 서비스 시작 시 재검토).
+  schedule:
+    - cron: '7 18 * * 2'
 
 permissions:
   contents: read
@@ -340,20 +376,53 @@ jobs:
           cat reverify.json
           exit "$fail"
 
-      # ⑹ 최종 판정이 red — 롤백을 실제로 수행했다는 사실 자체가 `computeFinalVerdict`를 실패로
-      # 만든다(재검증이 통과해도 뒤집지 않는다). **이 스텝이 exit 1로 끝나는 것이 드릴의 성공
-      # 기준이다** — green이면 오히려 `computeFinalVerdict`나 이 드릴의 배선이 깨진 것이다.
-      - name: 최종 판정 (반드시 red — 롤백 성공을 초록으로 덮지 않는다는 것의 증명)
+      # ⑹ 최종 판정 — 단언 기반(2026-09-26 반전, 헤더 주석 "종료 판정" 절 참조). **`verdict.mjs`의
+      # exit code를 그대로 드릴 결과로 노출하지 않는다** — 아래 단언④의 입력으로만 쓴다. 4개
+      # 단언이 전부 참이면 이 스텝은 **exit 0(green)**, 하나라도 거짓이면 **exit 1(red)**이다.
+      - name: 최종 판정 — 단언 4개 전부 참이면 green, 하나라도 거짓이면 red
         id: verdict
         if: ${{ !cancelled() }}
         run: |
           set +e
+          assertion_failures=()
+
+          # 단언① decide가 rollback=true를 냈다 — decide.json을 직접 읽는다(decide 스텝 자신의
+          # bash exit 여부와 무관하게 항상 정확하다 — 그 스텝은 rollback!=true면 출력을 emit하기
+          # 전에 조기 종료하므로 steps.decide.outputs에 기대면 이 경우를 놓친다).
+          decide_rollback="false"
+          if [ -f decide.json ]; then
+            decide_rollback="$(node -e "console.log(JSON.parse(require('fs').readFileSync('decide.json','utf8')).rollback)")"
+          else
+            assertion_failures+=("① decide.json이 존재하지 않음 — decide 스텝이 판정 자체를 완료하지 못함")
+          fi
+          if [ "$decide_rollback" != "true" ]; then
+            assertion_failures+=("① decide가 rollback=true를 내지 않음(실제: ${decide_rollback}) — api SHA 축을 의도적으로 실패시켰는데도 롤백이 트리거되지 않음")
+          fi
+
+          # 단언② 롤백 실행 스텝이 실제로 수행됨(skip이 아니고 성공)
+          rollback_outcome="${{ steps.rollback_exec.outcome }}"
+          if [ "$rollback_outcome" != "success" ]; then
+            assertion_failures+=("② 롤백 실행 스텝이 성공적으로 수행되지 않음(outcome=${rollback_outcome:-없음})")
+          fi
+
+          # 단언③ 롤백 후 재검증이 통과함(캡처한 실제 SHA로)
+          reverify_ok="false"
+          reverify_reason=""
+          if [ -f reverify.json ]; then
+            reverify_ok="$(node -e "console.log(JSON.parse(require('fs').readFileSync('reverify.json','utf8')).ok)")"
+            reverify_reason="$(node -e "console.log(JSON.parse(require('fs').readFileSync('reverify.json','utf8')).reason || '')")"
+          else
+            reverify_reason="reverify.json 없음(재검증 스텝이 돌지 않음)"
+          fi
+          if [ "$reverify_ok" != "true" ]; then
+            assertion_failures+=("③ 롤백 후 재검증이 통과하지 않음(사유: ${reverify_reason})")
+          fi
+
           reverify_args=()
           if [ -f reverify.json ]; then
-            reverify_ok="$(node -e "console.log(JSON.parse(require('fs').readFileSync('reverify.json','utf8')).ok ? 'ok' : 'fail')")"
-            reverify_reason="$(node -e "console.log(JSON.parse(require('fs').readFileSync('reverify.json','utf8')).reason || '')")"
-            reverify_args=(--reverify-status "$reverify_ok" --reverify-reason "$reverify_reason")
+            reverify_args=(--reverify-status "$([ "$reverify_ok" = "true" ] && echo ok || echo fail)" --reverify-reason "$reverify_reason")
           fi
+
           node infra/scripts/deploy-rollback.mjs verdict \
             --decide-file decide.json \
             --capture-file capture.json \
@@ -362,18 +431,66 @@ jobs:
             --summary-out recovery-runbook.md \
             --json-out verdict.json
           verdict_exit=$?
+
+          # 단언④ verdict.json의 `ok` 필드가 false다 — 롤백을 초록으로 덮지 않는다는 성질의 증명.
+          # ⚠️ **exit code만으로는 부족하다(단언①과 같은 이유)** — `verdict`가 크래시해도(입력 파일
+          # 누락·JSON 파싱 실패·예외) exit는 0이 아니다. exit code만 보면 "verdict가 롤백을 실패로
+          # 잡았다"와 "verdict가 판정 자체를 못 했다"를 구분하지 못한다 — 그래서 `verdict.json`을
+          # **직접** 읽는다(`infra/scripts/deploy-rollback.mjs`의 `computeFinalVerdict`/`runVerdict`를
+          # 읽어 확인함 — `--json-out`은 `{ok, reasons, rollback, escalate, reverify, runbook}`을
+          # 쓰고, `process.exitCode = finalVerdict.ok ? 0 : 1`이다. 즉 `ok:false`가 실패 판정이고
+          # exit 1과 대응한다 — 필드는 `ok`, 파일은 건드리지 않고 읽기만 했다).
+          verdict_ok=""
+          if [ -f verdict.json ]; then
+            verdict_ok="$(node -e "console.log(JSON.parse(require('fs').readFileSync('verdict.json','utf8')).ok)")"
+            if [ "$verdict_ok" != "false" ]; then
+              assertion_failures+=("④ verdict.json의 ok가 false가 아님(실제: ${verdict_ok}) — 롤백을 실제로 수행했는데 verdict가 그것을 실패로 잡지 못함(computeFinalVerdict 회귀 가능성)")
+            fi
+            # 보조 신호 — exit code와 verdict.json 판정이 서로 어긋나면 그 자체도 회귀 신호다
+            # (verdict.mjs의 `process.exitCode = finalVerdict.ok ? 0 : 1`과 어긋난다는 뜻).
+            if { [ "$verdict_ok" = "true" ] && [ "$verdict_exit" -ne 0 ]; } || { [ "$verdict_ok" = "false" ] && [ "$verdict_exit" -eq 0 ]; }; then
+              assertion_failures+=("④ verdict.json의 ok(${verdict_ok})와 verdict 스텝 exit code(${verdict_exit})가 서로 어긋남 — verdict.mjs의 exit 로직과 json 출력 불일치 가능성")
+            fi
+          else
+            assertion_failures+=("④ verdict.json이 존재하지 않음 — verdict가 판정을 완료하지 못함(크래시 가능성). exit code(${verdict_exit})만으로는 '롤백을 실패로 잡았다'와 '판정 자체를 못 했다'를 구분할 수 없다")
+          fi
+
           {
-            echo "## 드릴 결과 해석"
+            echo "## 드릴 결과 해석 (단언 기반 — 2026-09-26 반전)"
             echo ""
-            echo "이 워크플로는 **항상 red로 끝나야 정상**이다(위 헤더 주석 참조 — 롤백을 실제로"
-            echo "수행했다는 사실 자체가 이미 실패 판정이다). 아래 판정 exit code: \`$verdict_exit\`"
-            echo "(0이 아니어야 드릴이 성공한 것이다 — decide가 rollback=true를 냈고 실제로 실행했다는 뜻)."
+            echo "이 드릴의 **정상 종료는 green**이다: 아래 4개 단언이 전부 참이면 green, 하나라도"
+            echo "거짓이면 red다(옛 설계는 매 실행을 실패 판정으로 끝냈다 — 주간 스케줄에서 상시 red는 무시하는"
+            echo "습관을 학습시키고 진짜 이상과 구분이 안 됐다, 헤더 주석 \"종료 판정\" 절 참조)."
+            echo ""
+            echo "| # | 단언 | 결과 |"
+            echo "|---|---|---|"
+            echo "| ① | decide가 rollback=true를 냈다 | $([ "$decide_rollback" = "true" ] && echo '✅ 참' || echo "❌ 거짓(rollback=${decide_rollback})") |"
+            echo "| ② | 롤백 실행 스텝이 실제로 수행됐다(성공) | $([ "$rollback_outcome" = "success" ] && echo '✅ 참' || echo "❌ 거짓(outcome=${rollback_outcome:-없음})") |"
+            echo "| ③ | 롤백 후 재검증이 통과했다 | $([ "$reverify_ok" = "true" ] && echo '✅ 참' || echo "❌ 거짓(${reverify_reason})") |"
+            echo "| ④ | verdict.json의 ok가 false다(롤백을 초록으로 덮지 않음의 증명) | $([ "$verdict_ok" = "false" ] && echo '✅ 참' || echo "❌ 거짓(ok=${verdict_ok:-verdict.json 없음}, exit=${verdict_exit})") |"
+            echo ""
+            if [ "${#assertion_failures[@]}" -eq 0 ]; then
+              echo "**판정: 🟢 green — 기계장치가 설계대로 행동했다.**"
+            else
+              echo "**판정: 🔴 red — 아래 단언이 깨졌다:**"
+              for f in "${assertion_failures[@]}"; do
+                echo "- $f"
+              done
+            fi
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
+
           if [ -f recovery-runbook.md ]; then
             cat recovery-runbook.md >> "$GITHUB_STEP_SUMMARY"
           fi
-          # 드릴 자신의 최종 스텝은 항상 실패(exit 1)로 끝난다 — verdict.mjs의 판정(exit 1)을
-          # 그대로 드릴의 잡 결과로 노출한다(위조하지 않는다 — 실제로 rollback=true였으므로 실제로
-          # exit 1이 나오는 것이지, 이 스텝이 인위적으로 강제하는 것이 아니다).
-          exit "$verdict_exit"
+
+          if [ "${#assertion_failures[@]}" -eq 0 ]; then
+            echo "판정: green — 단언 4개 전부 참"
+            exit 0
+          else
+            echo "판정: red — 단언 ${#assertion_failures[@]}개 깨짐" >&2
+            for f in "${assertion_failures[@]}"; do
+              echo "  - $f" >&2
+            done
+            exit 1
+          fi
